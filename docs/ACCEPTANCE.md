@@ -1,0 +1,136 @@
+# Navi Protocol v0.2 acceptance criteria
+
+## Scope and artifact paths
+
+Refactor `src/navi.js`, `types/navi.d.ts`, `demo/index.html`, `tests/navi.spec.mjs`, `docs/AGENT-INTEGRATION.md`, and `README.md`. Produce `dist/navi.min.js` with **strictly <15,000 raw UTF-8 bytes**, no runtime dependencies or source maps. Save reproducible size, tick duration, long-task and completeness metrics in `reports/verification.json` and summarize in `reports/VERIFICATION.md`. Backend remains an architecture plan, not an implemented service. No public deployment is authorized.
+
+## Versioned public API
+
+- `version: '0.2.0'`.
+- `ready(): Promise<void>` waits for the current discovery/classification/mutation queue to drain. Initial API presence does not imply readiness. Work settles across idle/frame ticks.
+- `refresh(): Promise<void>` enqueues full rediscovery, not a synchronous scan. Automatically intercept newly attached roots without requiring refresh.
+- `actions({limit?: number}): Promise<{version, truncated, actions: Action[]}>` waits for indexing and computes fresh state in **time-sliced** batches. Bounded limit 1..5,000 (default 500). No selectors/HTML or values in the action dictionary.
+- `execute(targetId, actionType, payload?): Promise<{target_id, action, dispatched: true}>` resolves exactly one live target through the private index (including captured closed roots and same-origin frames). Supported actions: `click`, `type` with `{text}`, and `select` with `{value}`. Checks visibility, enabled state, viewport intersection and center-point hit testing immediately before dispatch. Rejects missing/ambiguous/unsupported/unavailable targets, invalid payloads, concurrent execution, and stopped instances. It focuses native controls, uses native value setters for controlled inputs, emits realm-correct key/input/change events, and awaits two animation frames plus indexing. A dispatched event is not proof of business success or trusted user input.
+- `stats()` reports cumulative generated tags, scanned elements, current live root/index counts, pending work, tick durations (bounded samples), maximum/over-budget ticks, and initial elapsed time. `stop()` cancels pending scheduler jobs, observers/listeners, restores owned shadow hooks, rejects waiters and releases strong references. Re-injection stays a no-op.
+
+Action format:
+
+```json
+{
+  "target_id": "checkout-submit",
+  "role": "button",
+  "name": "Complete Purchase",
+  "state": {"is_visible": true, "is_enabled": true, "is_in_viewport": true, "is_occluded": false},
+  "coordinates": {"x": 450, "y": 820, "width": 120, "height": 40},
+  "suggested_action": "click"
+}
+```
+
+Coordinates default to CSS pixels relative to the target's **own document viewport**, not global screen coordinates. Optional `coordinateSpace:'top'` converts same-origin offsets/borders for trusted driver fallback; optional `viewportOnly:true` returns only intersecting controls. `data-navi-trusted="true"` yields an explicit `success:false`, `untrusted_gesture_required`, `dispatched:false` pre-dispatch response. See [competitive benchmark acceptance](BENCHMARK-ACCEPTANCE.md) for extended measurement and fallback rules. Occlusion includes shadow-boundary retargeting and containing same-origin iframe hit tests; transformed frames use a conservative blocked result. Center-point hit testing is an approximation, not universal actionability. Do not auto-scroll or force-click; an executor may safely scroll separately and rediscover.
+
+## Distribution (package 0.3.0)
+
+The protocol stays 0.2.0. Packaging adds:
+
+- `dist/navi.min.js`: self-executing IIFE for `<script>`/CDN injection, strictly **<15,000 raw UTF-8 bytes**.
+- `dist/index.mjs`, `dist/index.cjs`, `dist/index.d.ts`: ESM and CommonJS exports of `NaviPlaywrightAdapter`, `naviAdapter`, `validateFlow`, `runFlow`, `installNavi`, `connectNavi`, `naviSdkPath`, `NAVI_PROTOCOL_VERSION`, plus the client-side SDK types (`NaviAPI`, `NaviAction`, `NaviActionMap`) re-exported from the package entry. Both module builds must resolve the shipped `navi.min.js` at runtime, and the `./navi.min.js` subpath must have a `types` condition pointing at `dist/navi.d.ts`.
+- `bin/navi-agent.js` (`navi` bin): `navi run --url <url> --action-file <flow.json>` and `navi discover --url <url>`, with `--timeout`, `--viewport`, `--headed`, `--json`, `--report`, `--discover`, `--strict-synthetic`, `--allow-consequential`, `--quiet`.
+- Flow documents are untrusted input: bounded size, strict unknown-key rejection, prototype-key rejection, no `eval`, and no implicit scrolling. Steps marked `"consequential": true` require `--allow-consequential`. Failed and timed-out steps are reported and **never retried**, because they may already have applied.
+- Only `http(s)` URLs without embedded credentials are opened. Exit codes: 0 success, 1 flow/assertion failure, 2 usage/invalid flow/blocked consequential step, 3 environment failure.
+- `bin/navi-mcp.js` (`navi-mcp` bin): a standalone Model Context Protocol server on **stdio**, using newline-delimited JSON-RPC 2.0. It must ship with **zero runtime dependencies** and expose exactly four tools:
+  - `navi_navigate` — open an http(s) URL, wait for Navi initialization, and report which install strategy succeeded (`already-present`, `tag` or `evaluate`).
+  - `navi_get_actions` — return the action map, viewport-filtered by default with `all: true` for the whole document.
+  - `navi_execute_action` — `target_id` + `action_type` (`click`/`type`/`select`) + optional `payload`, through the same guarded adapter the CLI uses, including the trusted native-coordinate fallback for `data-navi-trusted="true"` controls.
+  - `navi_assert_state` — assert existence, visibility, enabled/in-viewport state and expected accessible name for a target.
+- Every tool result is the structured envelope `{ content: [{ type: "text", text: JSON.stringify(payload) }], isError: boolean }`. Refusals must be actionable, distinguishing `NOT_FOUND` (re-read the map; ids change with re-renders), `UNAVAILABLE` (hidden, disabled, off-screen or occluded) and `INVALID_URL` (never echoing embedded credentials), and must carry the underlying adapter error code.
+- Diagnostics go to stderr only; stdout is reserved for the JSON-RPC stream. `--version` and `--help` work without a browser.
+- **Scope limit:** MCP tool calls are not gated by `--allow-consequential`. An agent holding this server can dispatch a consequential control, so the server is not an authorization boundary. Reviewed flows with that gate remain the CLI's job; the README states this plainly. `--no-fallback` narrows the session further: trusted-input controls are refused with `FALLBACK_DISABLED` instead of being driven by real mouse and keyboard input, and that refusal is covered by a test rather than only documented.
+- Publishing to a registry is out of scope; `package.json` is publish-ready but no release is made.
+
+## Remote transport and session hydration (package 0.3.0)
+
+- `navi-mcp --transport stdio|sse` selects the transport; stdio remains the default. `--transport sse --port <port> --host <host>` defaults to `3001` and `127.0.0.1`, and an invalid port is a usage error (exit 2) rather than a crash.
+- The SSE binding is implemented with `node:http` only — no HTTP framework, router, or SSE dependency — and exposes `GET /sse` (event stream whose first frame is `event: endpoint` carrying the same-origin POST URL), `POST /message?sessionId=<id>` (one JSON-RPC message, acknowledged `202` before the work happens, reply delivered on the stream), and `GET /healthz`.
+- Each SSE connection owns its own browser session, so one client cannot act on another's page. An unknown or expired `sessionId` is a `404` JSON-RPC error naming the recovery step, not a silent drop.
+- stdout stays a clean protocol surface on both transports; diagnostics go to stderr. The transport is **not** an authentication boundary: session ids are anonymous by design and the server must be bound to loopback or fronted by an authenticating proxy.
+- `navi_set_session` is the fifth tool. It accepts an inline `{ cookies, origins }` payload or a path to a Playwright `storageState.json` file (and may open `url` in the same call). Cookies require `name`, `value` and either `url` or `domain`+`path`; origins must be bare http(s) origins with a `localStorage` array of `{ name, value }`; unknown keys, a non-existent path, a malformed shape, or a state that would hydrate nothing are refused with `INVALID_SESSION` and actionable text.
+- Hydration rebuilds the context instead of patching a live document, because localStorage only applies at document start. Cookie and storage values never appear in a response, and a refused call must leave the existing session usable.
+
+## Host service: distribution and ingestion (package 0.3.0)
+
+`server/` is a standalone `node:http` service with no runtime dependencies:
+
+- `GET /v1/navi.js?key=<tenant_key>` serves the built bundle with `Cache-Control: public, max-age=3600, stale-while-revalidate=86400`, an `ETag` equal to the quoted SHA-384 from `dist/sri.txt`, `Content-Type: application/javascript`, `Vary: Accept-Encoding` and `nosniff`; `If-None-Match` yields `304`; a missing or unknown key yields `401 UNAUTHORIZED`; a missing bundle yields `503 SCRIPT_UNAVAILABLE`. The served bytes must equal `dist/navi.min.js` exactly.
+- `POST /v1/telemetry` accepts `{ tenant_id, url_origin, actions_indexed, actions_executed, execution_failures }` as `application/json` or as the `text/plain` shape `navigator.sendBeacon(string)` produces, and nothing else. Exactly those five keys; counters are integers in `0…1_000_000`; `tenant_id` must be a registered tenant; `url_origin` must be a canonical origin (no path, query, fragment, trailing slash or embedded credentials). Rejections are `400 INVALID_PAYLOAD`, `401 UNKNOWN_TENANT`, `413 PAYLOAD_TOO_LARGE` (hard 2 KB cap, enforced against both the declared length and the stream) or `415 UNSUPPORTED_MEDIA_TYPE`, each with a message naming the field and the rule. Raw DOM/HTML text is rejected and never persisted.
+- `GET /v1/telemetry?key=<tenant_key>` returns that tenant's aggregate; tenant-scoped responses are `Cache-Control: no-store`.
+- Aggregates persist through Node's built-in `node:sqlite` when the runtime provides it, and otherwise through an append-only JSONL log at the same path, so the service runs on Node 20 as well as Node 24; `store.mode` reports which is live, and both modes must produce identical summaries.
+- Tenant keys come from `NAVI_TENANTS` (`key:tenantId,…`). The built-in `dev-tenant-key`/`demo-tenant` pair is a documented local development value, **not** a secret, and must not be used in production.
+- Out of scope and documented as such: user authentication, rate limiting, quotas, deduplication, retention policy, TLS termination, and any dashboard.
+- **The client SDK must not gain telemetry.** `dist/navi.min.js` stays strictly under 15,000 bytes and keeps its verified no-network behaviour; the beacon is the hosting page's or tenant snippet's job, which the demo fixture demonstrates.
+
+## Enterprise security (package 0.3.0)
+
+### Strict CSP compliance
+
+The shipped `dist/navi.min.js` must evaluate and run unmodified under `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'`. Concretely:
+
+- No `eval()`, no `Function` constructor, no `document.write`, no `insertAdjacentHTML`, no `<style>` element creation and no element `style` attribute writes anywhere in the bundle. This is enforced at build time by a forbidden-pattern scan that **fails the build**, and re-checked by the compliance suite against the served bytes rather than the source.
+- Loading the bundle from the page origin and driving a real flow must produce zero `securitypolicyviolation` events and zero CSP-refused requests.
+- A page whose policy blocks script injection must fail the install with a documented, actionable error (serve from the page origin, add a matching nonce, or use the `evaluate` strategy), never a silent no-op.
+- The evaluator install strategy is allowed to work under a strict policy precisely because driver evaluation is not subject to the document's CSP; this is documented as the supported path rather than presented as a policy bypass.
+
+### Defensive prototype isolation
+
+Navi must cache the DOM primitives it depends on at initialization, in a closure, so that a host application that later replaces, wraps, nulls or freezes them cannot bend discovery or execution:
+
+- Pinned set: `document.createElement`, `Element.prototype.getBoundingClientRect`, `Element.prototype.attachShadow` (plus its original/wrapper identity for ownership checks), `Element.prototype.matches`/`closest`-class traversals, `window.getComputedStyle`, `document.elementFromPoint`, `document.createTreeWalker`, `MutationObserver`, `IntersectionObserver`, `requestIdleCallback`, `requestAnimationFrame` and `queueMicrotask`.
+- Freezing must not break startup: hook installation, identity comparison and restoration are guarded, so a frozen `attachShadow` yields a missing capability rather than a thrown exception during initialization.
+- The isolation is verified adversarially, not asserted: geometry, computed style, occlusion hit-testing, execution and post-tamper mutation indexing must all still work after a host script poisons the prototypes, with zero uncaught page errors and zero calls reaching the poisoned primitives.
+- Honest limit to retain in docs: a host that replaces `attachShadow` *after* Navi hooks it takes closed-root capture with it. Pinning cannot un-replace a function that was already swapped.
+
+### Subresource Integrity
+
+`npm run build` must write `dist/sri.txt` containing `sha384-<base64>` for the exact bytes of `dist/navi.min.js`, and the same value must appear in `reports/build.json` and `reports/verification.json`. The compliance suite re-derives the digest from the served bundle and fails on any drift, so the published integrity value can never describe a different artifact than the one shipped.
+
+## CI/CD gating (pipeline 0.3.0)
+
+- `.github/workflows/ci.yml` runs on all pull requests and pushes to `main` on Node.js 20.x, installing dependencies from the lockfile and Chromium through the locked Playwright version. `package.json` declares `engines.node >= 20`; the full suite and typecheck were verified on Node 20.20.2 as well as the current Node.
+- Gate 1: `dist/navi.min.js` must stay strictly under 15,000 raw bytes, and every release artifact must be present and measured — `navi.min.js`, `index.mjs`, `index.cjs`, `index.d.ts`, `cli.mjs` and `mcp.mjs`.
+- Gate 2: the 10,000-element traversal must record zero Long Tasks over 50ms.
+- Gate 3: every benchmarked traversal must record zero Long Tasks over 50ms, and 2,000-node viewport classification must stay at or below 25ms p95.
+- Every gate fails when its input report is missing or unmeasurable, and the gates are themselves self-tested (`npm run test:gates`, 16 expectations) because an untested failure path is an untrustworthy gate. The self-test includes the missing MCP bundle, so the artifact gate's newest requirement is exercised rather than assumed.
+- `tests/external-smoke.spec.mjs` verifies the shipped `dist/` bundle against a live public dynamic SPA, non-destructively, and is excluded from the hermetic suite. It runs nightly via `.github/workflows/smoke.yml` rather than gating pull requests on a third-party origin.
+- The pipelines were authored and validated locally; no hosted CI run has occurred, because this workspace is not a Git repository and no remote is configured.
+
+## Identity
+
+Preserve developer `data-agent-target` verbatim. Use `data-navi-key` on a control or repeated-item ancestor for stable entity identity across sorting. Otherwise generate a semantic prefix plus **MurmurHash3** of landmark + tag + accessible-name approximation + sibling-relative position. No numeric allocation/collision counters. Stable-key identities omit sibling position; structural fallbacks necessarily change when identifying inputs change. Hash collisions/duplicate explicit IDs remain ambiguous and execution fails closed. Generated IDs update when identity inputs change (not Navi's own attribute writes). This is deterministic for identical inputs, not a guarantee of semantic identity on arbitrary sites.
+
+## Traversal and lifecycle
+
+Incremental TreeWalker traversal, no whole-document querySelectorAll in discovery/action maps; MutationObserver records processed in scheduler chunks; self-tag writes excluded. IntersectionObserver classifies intersecting candidates before background candidates; offscreen candidates deferred to subsequent idle ticks. Without IO all candidates use the deferred fallback.
+
+Patch realm-local `Element.prototype.attachShadow` synchronously at initialization and on discovered same-origin frame documents. Preserve original mode/options/return value/exceptions. Store captured roots in WeakMap; support both open and closed roots. Closed roots created before interception (including parser-created declarative roots or early frame scripts) remain inaccessible. Roots/frame hooks/index entries for unmounted components are swept in incremental cleanup; weak element references and bounded tick samples avoid retaining detached control history. No perpetual strong collision registry.
+
+## Performance verification
+
+Cooperative scheduler aims for **≤6ms work per tick**, checks elapsed/idle budget between granular operations, uses a smaller internal budget for headroom, and caps operations per tick. Prefer requestIdleCallback with timeout, fallback to requestAnimationFrame followed by a microtask; schedule the next chunk as a new idle/frame callback (a microtask alone does not yield to rendering).
+
+Measure 20 fresh-page runs with **10,000 fixture elements / 1,000 controls**, open/closed roots and a loaded same-origin iframe. Include initial indexing, rich metadata and mutation cleanup in SDK tick instrumentation; record raw tick samples, p95/max, elapsed completion and supported Long Tasks API entries during SDK activity. Gate measured max tick ≤6ms (therefore <16ms), **zero observed tasks >50ms**, complete indexing and correctness, and raw bytes <15,000. Record hardware/browser and compare prior ~49ms synchronous classification only as historical context (different work; not a 10× claim).
+
+JavaScript cannot preempt a single native layout call, host event handler, browser GC or other scripts; universal hard frame/INP guarantees are impossible. Unsupported Long Tasks API is a verification blocker, not zero long tasks. Synthetic execute dispatch includes application handlers and cannot impose Navi's tick budget on the host application.
+
+## Required tests
+
+Real React controlled input/change state and keyed list replacement/sorting without target drift; structural replacement fingerprints; captured closed roots with original semantics and stop restoration; same-origin navigation and inaccessible sandbox; backdrop occlusion preventing dispatch; hidden/disabled/inert/offscreen controls; native select/type validation and canceled keydown; exclusive execute-driven full sandbox transaction with outcome checks; mutation burst convergence; detached-root/index cleanup; idle/frame fallback; no automatic network telemetry/field values/CSS/ARIA changes.
+
+Security and protocol additions, each with its own suite:
+
+- `tests/csp-compliance.spec.mjs`: boots the shipped bundle inside a document served with the strict policy, executes a multi-field flow including the trusted-input fallback, asserts zero policy violations and zero refused requests, asserts the served bytes contain no forbidden construct, and re-derives `dist/sri.txt` from those bytes. A negative test proves a script-blocking policy refuses injection with the documented error.
+- `tests/hardening.spec.mjs`: poisons `getBoundingClientRect`/`getComputedStyle`, freezes and nulls observers and schedulers, replaces `attachShadow`, and re-indexes through a tampered frame document, asserting discovery, state, execution and late mutations survive with zero uncaught errors and zero poisoned-primitive calls.
+- `tests/mcp-sse.spec.mjs`: launches `bin/navi-mcp.js --transport sse` on a free port, waits for the stream to become ready, connects the **official MCP SDK `SSEClientTransport`**, and asserts the five-tool surface, a pre-navigation `NO_PAGE` refusal, a real multi-step flow with a dynamic re-render observed through the remote transport, and that `SIGTERM` actually stops the child.
+- `tests/session-hydration.spec.mjs`: on a fixture whose gated controls are rendered from session state rather than a URL, asserts that anonymous discovery sees only `sign-in`, that inline cookies + per-origin localStorage unlock `account-balance` and `sign-out` before the document starts, that a `storageState.json` file produces the same result, that a gated control is really drivable, that no session value is echoed back, and that seven malformed payloads are refused with `INVALID_SESSION` without disturbing the live session.
+- `tests/backend-ingest.spec.mjs`: drives the host service entirely over HTTP — keyed distribution with exact headers, ETag and byte-for-byte bundle equality, `304`, both `401` paths, a beacon-shaped `text/plain` post reflected in the tenant summary, deterministic aggregation ordering, eleven rejection cases, raw-DOM rejection proving nothing was stored, `no-store` on tenant data, health and unknown routes.
+- `tests/mcp-server.spec.mjs`: connects the **official MCP SDK client** over stdio, lists the four tools, drives a multi-step form (type, select, click) to a verified business outcome, exercises the viewport/`all` map modes, checks `navi_assert_state` against a live target, and asserts a structured actionable refusal before any navigation. A `data-navi-trusted="true"` control is driven automatically by native hardware input in a default session, and the same call in a strict `--no-fallback` session is refused with `FALLBACK_DISABLED` while synthetic dispatch still succeeds. Raw JSON-RPC checks cover pre-initialize rejection, parse errors that do not kill the server, version negotiation, unanswered notifications, unknown methods, and a clean exit when stdin closes.
+
+No claim of 100% clickability, zero LLM tokens, official WebMCP registration, or 10× speedup without measurements and integration evidence. `window.Navi` is a custom in-page tool-provider protocol; this change does not register a browser-standard WebMCP interface.

@@ -1,0 +1,25 @@
+node_modules/
+test-results/
+playwright-report/
+.freebuff/
+.env
+.env.*
+*.log
+# Runtime store for the ingestion service (SQLite file plus its sidecars, or the
+# append-only log fallback at the same path). Never commit tenant telemetry.
+server/telemetry.db*
+
+# Credentials. An exported MCP bearer token is a working key to a browser driver,
+# and a storageState.json holds live cookies and session tokens.
+.navi-mcp-token
+*.pem
+*.key
+storageState.json
+*.storageState.json
+
+# npm and cloud credentials, in case a publish is ever run from this checkout.
+.npmrc
+.npmrc.local
+
+# Local scratch probes from earlier debugging; not part of any build or suite.
+/.probe*.mjs

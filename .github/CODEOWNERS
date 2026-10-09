@@ -1,0 +1,38 @@
+# Review ownership for this repository.
+#
+# Branch protection — required status checks, no force-push, no deletion — is a
+# repository setting rather than a file, so it cannot live here. This file is the
+# in-repo half of the same intent: it requests review on the paths that decide
+# what a release is, so a change to the protocol contract, the shipped bytes, the
+# gates or the publish boundary cannot land unnoticed.
+#
+# See the "Required status checks" section of README.md for the check names to
+# require on `main`.
+#
+# Syntax: <pattern> <owner>..., owner being a @user, @org/team or an email.
+# Replace the email below with the GitHub handle or team that should own reviews.
+
+*                                   wub67608@gmail.com
+
+# The protocol contract and the client that implements it.
+/src/navi.js                       wub67608@gmail.com
+/types/                             wub67608@gmail.com
+/docs/ACCEPTANCE.md                 wub67608@gmail.com
+
+# Shipped bytes: the build refuses to emit a bundle that breaks the documented
+# CSP contract, and the size budget gates the release.
+/scripts/build.mjs                  wub67608@gmail.com
+/dist/sri.txt                       wub67608@gmail.com
+
+# The gates themselves: a gate that can be weakened is not a gate.
+/scripts/ci-gates.mjs               wub67608@gmail.com
+/.github/workflows/                 wub67608@gmail.com
+
+# The publish boundary and the manifest that defines it.
+/package.json                       wub67608@gmail.com
+/scripts/pack-check.mjs             wub67608@gmail.com
+
+# The agent-facing attack surface: a transport that drives a real browser, and
+# the service that hands out tenant keys.
+/src/mcp/                           wub67608@gmail.com
+/server/                            wub67608@gmail.com

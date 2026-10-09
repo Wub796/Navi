@@ -1,0 +1,87 @@
+{
+  "name": "navi-interaction-bridge",
+  "version": "0.3.0",
+  "description": "Navi protocol: deterministic action maps and guarded execution tools for browser agents.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.mjs"
+    },
+    "./navi.min.js": {
+      "types": "./dist/navi.d.ts",
+      "default": "./dist/navi.min.js"
+    },
+    "./flows/example-checkout.json": "./flows/example-checkout.json",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "navi": "./bin/navi-agent.js",
+    "navi-mcp": "./bin/navi-mcp.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "server",
+    "flows",
+    "README.md",
+    "docs/AGENT-INTEGRATION.md"
+  ],
+  "sideEffects": [
+    "./dist/navi.min.js"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "keywords": [
+    "browser-agents",
+    "playwright",
+    "agent",
+    "automation",
+    "accessibility",
+    "shadow-dom"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p jsconfig.json",
+    "test": "npm run build && node node_modules/@playwright/test/cli.js test",
+    "benchmark": "npm run build && node tests/benchmark-comparison.js",
+    "dev": "node scripts/dev.mjs",
+    "navi": "node bin/navi-agent.js",
+    "mcp": "node bin/navi-mcp.js",
+    "mcp:sse": "node bin/navi-mcp.js --transport sse",
+    "serve": "node server/index.js",
+    "test:gates": "node scripts/ci-gates.mjs --self-test",
+    "pack:check": "node scripts/pack-check.mjs",
+    "test:smoke": "node node_modules/@playwright/test/cli.js test --config=playwright.smoke.config.mjs",
+    "gates": "node scripts/ci-gates.mjs --all",
+    "verify": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^24.19.1",
+    "esbuild": "^0.25.0",
+    "playwright-ax": "npm:playwright-core@1.48.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "^5.9.0"
+  },
+  "peerDependencies": {
+    "playwright": ">=1.40.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  }
+}

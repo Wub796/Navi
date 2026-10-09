@@ -1,0 +1,1995 @@
+{
+  "metadata": {
+    "recordedAt": "2026-10-09T19:00:41.193Z",
+    "iterations": 20,
+    "origin": "http://127.0.0.1:4173",
+    "browser": "156.0.8078.4",
+    "legacyPlaywright": "1.48.2",
+    "currentPlaywright": "1.64.0",
+    "node": "v24.21.0",
+    "hardware": {
+      "cpu": "Apple M5 Pro",
+      "logicalCpus": 15,
+      "os": "darwin 27.0.0 arm64"
+    },
+    "sizes": {
+      "rawBytes": 14246,
+      "gzipBytes": 5553,
+      "budgetBytes": 15000,
+      "integrity": "sha384-CP72syvDje0GOLUfEc2HTf613+RTYFkxrpUXZHOVhv1P+m4QhvRtzTKmFy0i68/T",
+      "artifacts": {
+        "dist/navi.min.js": {
+          "bytes": 14246,
+          "gzipBytes": 5553,
+          "minified": true,
+          "budgetBytes": 15000,
+          "integrity": "sha384-CP72syvDje0GOLUfEc2HTf613+RTYFkxrpUXZHOVhv1P+m4QhvRtzTKmFy0i68/T"
+        },
+        "dist/index.mjs": {
+          "bytes": 30301,
+          "gzipBytes": 7839,
+          "minified": false
+        },
+        "dist/index.cjs": {
+          "bytes": 31547,
+          "gzipBytes": 8171,
+          "minified": false
+        },
+        "dist/cli.mjs": {
+          "bytes": 39591,
+          "gzipBytes": 10567,
+          "minified": false
+        },
+        "dist/mcp.mjs": {
+          "bytes": 48104,
+          "gzipBytes": 13334,
+          "minified": false
+        },
+        "dist/index.d.ts": {
+          "bytes": 5968,
+          "minified": false
+        },
+        "dist/navi.d.ts": {
+          "bytes": 1342,
+          "minified": false
+        }
+      }
+    }
+  },
+  "fixtures": [
+    {
+      "name": "Local demo",
+      "methods": [
+        {
+          "id": "ax-full",
+          "name": "AX full snapshot",
+          "meanBytes": 30241,
+          "meanTokens": 7559,
+          "p50Ms": 4.460250000000087,
+          "p95Ms": 5.045833000000016,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 5.045833000000016,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 4.814624999999978,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 5.413374999999974,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 4.460250000000087,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 4.587332999999944,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 4.153374999999869,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 4.373042000000169,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 4.410916000000043,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 4.549915999999939,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 4.862875000000031,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 4.538125000000036,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 4.414083000000119,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 4.654457999999977,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 4.226208000000042,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 4.588500000000067,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 4.39387499999998,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 4.249000000000024,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 4.465832999999975,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 4.070749999999862,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 4.042790999999852,
+              "bytes": 30241,
+              "characters": 30236,
+              "estimatedTokens": 7559
+            }
+          ]
+        },
+        {
+          "id": "ax-filtered",
+          "name": "AX default filtered",
+          "meanBytes": 5772,
+          "meanTokens": 1442,
+          "p50Ms": 3.288332999999966,
+          "p95Ms": 3.5799999999999272,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 3.4541659999999865,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 3.350332999999978,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 3.9794999999999163,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 3.4448750000000246,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 3.2065830000000233,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 3.2061670000000504,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 3.3029579999999896,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 3.201958999999988,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 3.4220829999999296,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 3.288332999999966,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 3.5247079999999187,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 3.5799999999999272,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 3.429583999999977,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 3.248874999999998,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 3.1744589999998425,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 3.1509589999998298,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 3.2998340000001463,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 3.053542000000107,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 3.046875,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 3.0392080000001442,
+              "bytes": 5772,
+              "characters": 5768,
+              "estimatedTokens": 1442
+            }
+          ]
+        },
+        {
+          "id": "navi-viewport",
+          "name": "Navi viewport map",
+          "meanBytes": 2095,
+          "meanTokens": 524,
+          "p50Ms": 0.8572499999999081,
+          "p95Ms": 0.98050000000012,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 1.0581250000000182,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 0.8572499999999081,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 0.9258750000000191,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 0.8928750000000036,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 0.9139169999999694,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 0.6601249999999936,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 0.8977089999998498,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 0.6134170000000267,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 0.9245829999999842,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 0.6213749999999436,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 0.9206249999999727,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 0.9525830000000042,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 0.9124170000000049,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 0.6428329999998823,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 0.98050000000012,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 0.5834169999998267,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 0.7860830000001897,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 0.5709170000000086,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 0.7706659999998919,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 0.5460840000000644,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            }
+          ]
+        },
+        {
+          "id": "navi-full",
+          "name": "Navi full map",
+          "meanBytes": 2095,
+          "meanTokens": 524,
+          "p50Ms": 0.698291999999924,
+          "p95Ms": 0.9337500000000318,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 0.9337500000000318,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 1.1898330000000215,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 0.6972920000000613,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 0.698291999999924,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 0.7788749999999709,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 0.7373330000000351,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 0.7022080000001552,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 0.6328329999998914,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 0.6683339999999589,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 0.6237919999998667,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 0.7977920000000722,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 0.7595410000001266,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 0.747124999999869,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 0.6992090000001099,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 0.7142499999999927,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 0.6417919999998958,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 0.584833000000117,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 0.5291250000000218,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 0.6242499999998472,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 0.5859159999999974,
+              "bytes": 2095,
+              "characters": 2095,
+              "estimatedTokens": 524
+            }
+          ]
+        }
+      ],
+      "traversal": {
+        "supported": true,
+        "elapsedMs": 52.59999996423721,
+        "actions": 8,
+        "truncated": false,
+        "longTasksMs": [],
+        "postTraversalLongTasksMs": []
+      }
+    },
+    {
+      "name": "2,000 elements",
+      "methods": [
+        {
+          "id": "ax-full",
+          "name": "AX full snapshot",
+          "meanBytes": 657619,
+          "meanTokens": 164405,
+          "p50Ms": 81.5040839999997,
+          "p95Ms": 85.50324999999998,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 85.50324999999998,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 83.6139169999999,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 81.6075420000002,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 81.45179099999996,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 82.54520899999989,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 80.43233299999974,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 82.16483300000027,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 79.85566600000038,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 81.5040839999997,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 80.31054199999971,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 80.02170800000022,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 80.4802910000003,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 100.98649999999998,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 82.08649999999989,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 83.26766700000007,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 80.36549999999988,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 81.69866700000057,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 80.78641700000026,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 85.49024999999983,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 81.10020799999984,
+              "bytes": 657619,
+              "characters": 657618,
+              "estimatedTokens": 164405
+            }
+          ]
+        },
+        {
+          "id": "ax-filtered",
+          "name": "AX default filtered",
+          "meanBytes": 172363,
+          "meanTokens": 43091,
+          "p50Ms": 60.986917000000176,
+          "p95Ms": 64.24854200000027,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 62.61587499999996,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 60.4119169999999,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 62.57475000000022,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 59.82249999999976,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 63.505833000000166,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 60.0317500000001,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 60.300792,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 60.126958000000286,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 60.64054199999964,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 60.37424999999985,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 61.598207999999886,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 66.62579099999994,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 63.363292,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 63.51408300000003,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 61.245540999999776,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 61.36366700000053,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 60.156332999999904,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 60.1097920000002,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 64.24854200000027,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 60.986917000000176,
+              "bytes": 172363,
+              "characters": 172362,
+              "estimatedTokens": 43091
+            }
+          ]
+        },
+        {
+          "id": "navi-viewport",
+          "name": "Navi viewport map",
+          "meanBytes": 7219,
+          "meanTokens": 1805,
+          "p50Ms": 2.7174999999997453,
+          "p95Ms": 4.7796659999999065,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 3.1107079999999314,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 3.015416999999843,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 2.8145830000003116,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 5.051582999999937,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 4.7796659999999065,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 2.320083000000068,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 2.708625000000211,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 2.4756670000001577,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 2.6480420000002596,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 2.4907500000003893,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 2.758291999999983,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 2.7174999999997453,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 2.896874999999909,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 2.6008750000000873,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 2.771125000000211,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 2.4979169999996884,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 2.773624999999811,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 2.489958999999544,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 2.9194170000000668,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 2.4539169999998194,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            }
+          ]
+        },
+        {
+          "id": "navi-full",
+          "name": "Navi full map",
+          "meanBytes": 48868,
+          "meanTokens": 12217,
+          "p50Ms": 8.97566599999982,
+          "p95Ms": 9.443499999999858,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 9.10066699999993,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 9.443499999999858,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 9.529332999999951,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 9.326207999999951,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 9.052374999999756,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 8.855416999999761,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 8.586374999999862,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 9.228791999999885,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 8.356457999999748,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 8.974500000000262,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 8.97566599999982,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 9.368832999999995,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 8.972708000000239,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 9.215749999999844,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 8.580791999999747,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 8.782791000000543,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 8.601082999999562,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 9.12054099999932,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 8.579416999999921,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 9.02324999999928,
+              "bytes": 48868,
+              "characters": 48868,
+              "estimatedTokens": 12217
+            }
+          ]
+        }
+      ],
+      "traversal": {
+        "supported": true,
+        "elapsedMs": 66,
+        "actions": 202,
+        "truncated": false,
+        "longTasksMs": [],
+        "postTraversalLongTasksMs": []
+      },
+      "coldCompletionMs": [
+        96.8844999999992,
+        95.14141699999982,
+        115.82854099999986,
+        95.15958299999966,
+        78.59520900000007,
+        92.95329099999981,
+        97.61137500000041,
+        95.40645899999981,
+        94.31154200000037,
+        79.37720900000022,
+        79.27979199999936,
+        82.33449999999993,
+        96.72883299999921,
+        95.13916700000118,
+        94.62199999999939,
+        81.06429199999911,
+        94.33808400000089,
+        95.09979199999907,
+        95.34770799999933,
+        94.88200000000143
+      ]
+    },
+    {
+      "name": "10,000 elements",
+      "methods": [
+        {
+          "id": "ax-full",
+          "name": "AX full snapshot",
+          "meanBytes": 3296019,
+          "meanTokens": 824005,
+          "p50Ms": 441.03408299999865,
+          "p95Ms": 449.2757500000007,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 442.5704160000023,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 433.19808300000295,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 446.97641699999804,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 443.3350419999988,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 434.3542500000003,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 445.8133330000019,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 430.0563340000008,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 449.2757500000007,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 434.9069589999999,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 443.62829200000124,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 441.03408299999865,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 448.4360420000012,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 434.6158340000038,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 441.27237500000047,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 429.017958000004,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 445.5109169999996,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 429.5998330000002,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 450.5420840000006,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 431.5002499999973,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 440.0373330000002,
+              "bytes": 3296019,
+              "characters": 3296018,
+              "estimatedTokens": 824005
+            }
+          ]
+        },
+        {
+          "id": "ax-filtered",
+          "name": "AX default filtered",
+          "meanBytes": 865963,
+          "meanTokens": 216491,
+          "p50Ms": 346.4835419999981,
+          "p95Ms": 356.19554100000096,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 334.1709579999988,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 364.6769999999997,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 333.1109159999978,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 356.19554100000096,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 343.22520799999984,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 342.1389159999999,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 346.4835419999981,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 354.67454200000066,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 345.9125839999979,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 353.284249999997,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 344.98891600000206,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 348.4073749999952,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 344.3120839999974,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 353.34370800000033,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 343.9882080000025,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 346.5016250000044,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 343.40945900000224,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 353.526208999996,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 347.2762079999957,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 353.3842080000031,
+              "bytes": 865963,
+              "characters": 865962,
+              "estimatedTokens": 216491
+            }
+          ]
+        },
+        {
+          "id": "navi-viewport",
+          "name": "Navi viewport map",
+          "meanBytes": 7219,
+          "meanTokens": 1805,
+          "p50Ms": 217.87679199999548,
+          "p95Ms": 316.91154099999767,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 316.91154099999767,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 266.0560409999998,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 270.15858300000036,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 471.94541599999866,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 213.50174999999945,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 119.87566599999991,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 217.29812500000116,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 231.7375419999953,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 217.80491600000096,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 179.77395899999829,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 217.87679199999548,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 239.700708999997,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 272.34641700000066,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 180.9099589999969,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 266.98645899999974,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 195.0277919999935,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 217.6391250000015,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 237.2320830000026,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 217.77612500000396,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 234.90350000000035,
+              "bytes": 7219,
+              "characters": 7219,
+              "estimatedTokens": 1805
+            }
+          ]
+        },
+        {
+          "id": "navi-full",
+          "name": "Navi full map",
+          "meanBytes": 243955,
+          "meanTokens": 60989,
+          "p50Ms": 735.974374999998,
+          "p95Ms": 1146.798542000004,
+          "samples": [
+            {
+              "iteration": 0,
+              "latencyMs": 1042.341708,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 1,
+              "latencyMs": 483.11049999999886,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 2,
+              "latencyMs": 1209.8654580000002,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 3,
+              "latencyMs": 437.26774999999907,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 4,
+              "latencyMs": 888.2718749999985,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 5,
+              "latencyMs": 465.3504580000008,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 6,
+              "latencyMs": 837.4670000000006,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 7,
+              "latencyMs": 463.8248339999991,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 8,
+              "latencyMs": 933.8031249999985,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 9,
+              "latencyMs": 529.049500000001,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 10,
+              "latencyMs": 991.8958749999947,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 11,
+              "latencyMs": 420.46399999999994,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 12,
+              "latencyMs": 937.8292080000028,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 13,
+              "latencyMs": 472.7292080000043,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 14,
+              "latencyMs": 1146.798542000004,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 15,
+              "latencyMs": 577.1222500000003,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 16,
+              "latencyMs": 1089.7950829999972,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 17,
+              "latencyMs": 525.9363749999975,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 18,
+              "latencyMs": 892.0440839999937,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            },
+            {
+              "iteration": 19,
+              "latencyMs": 735.974374999998,
+              "bytes": 243955,
+              "characters": 243955,
+              "estimatedTokens": 60989
+            }
+          ]
+        }
+      ],
+      "traversal": {
+        "supported": true,
+        "elapsedMs": 1764.699999988079,
+        "actions": 1002,
+        "truncated": false,
+        "longTasksMs": [],
+        "postTraversalLongTasksMs": []
+      },
+      "coldCompletionMs": [
+        732.5073330000014,
+        829.8950830000031,
+        783.4409159999996,
+        826.450708999997,
+        772.8131250000006,
+        824.0561250000028,
+        723.9496670000008,
+        729.7739169999986,
+        827.0094589999935,
+        829.9477920000063,
+        777.7545830000017,
+        675.4030829999974,
+        720.6839999999938,
+        722.9711250000109,
+        829.5584579999995,
+        679.9476250000007,
+        720.0941670000029,
+        829.0978750000068,
+        822.2917080000043,
+        724.8360420000099
+      ]
+    }
+  ],
+  "shadowTrials": [
+    {
+      "method": "AX full snapshot",
+      "root": "open",
+      "discovered": 20,
+      "succeeded": 20,
+      "failures": []
+    },
+    {
+      "method": "AX full snapshot",
+      "root": "closed",
+      "discovered": 20,
+      "succeeded": 0,
+      "failures": [
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely",
+        "Discovered but native role locator cannot resolve uniquely"
+      ]
+    },
+    {
+      "method": "Navi execute",
+      "root": "open",
+      "discovered": 20,
+      "succeeded": 20,
+      "failures": []
+    },
+    {
+      "method": "Navi execute",
+      "root": "closed",
+      "discovered": 20,
+      "succeeded": 20,
+      "failures": []
+    }
+  ]
+}

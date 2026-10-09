@@ -1,0 +1,168 @@
+name: CI
+
+# Gating pipeline for every pull request and every push to main.
+# The external smoke suite is deliberately NOT here: it depends on a live
+# third-party origin, so it runs in smoke.yml on a schedule instead of making
+# pull requests fail for reasons outside this repository.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+
+jobs:
+  quality:
+    name: Quality gates (Node 20.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Cache the pinned Chromium build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # The Chromium revision is locked by the committed lockfile: `npm ci` pins
+      # @playwright/test exactly, and `playwright install` fetches the browser
+      # build that version maps to. A lockfile change invalidates the cache above.
+      - name: Install Chromium and its system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Record the exact locked browser toolchain
+        run: |
+          node -p "'@playwright/test ' + require('@playwright/test/package.json').version"
+          node -e "const {chromium}=require('@playwright/test');console.log('chromium executable: '+chromium.executablePath());const fs=require('fs');if(!fs.existsSync(chromium.executablePath()))throw new Error('Chromium executable missing after install');"
+          npx playwright --version
+
+      # Verifies the gates themselves before trusting them with real data.
+      - name: Gate self-test
+        run: npm run test:gates
+
+      - name: Build release artifacts
+        run: npm run build
+
+      - name: Gate 1 · bundle budget (dist/navi.min.js < 15,000 bytes)
+        run: node scripts/ci-gates.mjs --budget
+
+      - name: Typecheck (strict JavaScript)
+        run: npm run typecheck
+
+      - name: Run the Chromium regression and distribution suite
+        run: npm test
+
+      - name: Gate 2 · no Long Task over 50ms during the 10,000-element traversal
+        run: node scripts/ci-gates.mjs --traversal
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-reports-quality
+          path: |
+            reports/build.json
+            reports/verification.json
+          if-no-files-found: warn
+
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-playwright-failures
+          path: test-results/
+          if-no-files-found: ignore
+
+  benchmark:
+    name: Benchmark gate (Node 20.x)
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Cache the pinned Chromium build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium and its system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Build release artifacts
+        run: npm run build
+
+      - name: Start the local demo origin
+        run: |
+          node scripts/dev.mjs --host 127.0.0.1 --port 4173 > demo-server.log 2>&1 &
+          echo $! > demo-server.pid
+          ready=0
+          for attempt in $(seq 1 40); do
+            if curl -fsS -o /dev/null http://127.0.0.1:4173/; then ready=1; echo "demo origin ready after ${attempt} attempt(s)"; break; fi
+            sleep 0.5
+          done
+          if [ "$ready" != "1" ]; then
+            echo "demo origin never became ready"
+            cat demo-server.log
+            exit 1
+          fi
+          curl -fsS -o /dev/null http://127.0.0.1:4173/navi.min.js
+          echo "serving the built bundle"
+
+      - name: Run the competitive benchmark
+        run: npm run benchmark
+
+      # Gate 3: zero Long Tasks during every measured traversal, and 2,000-node
+      # viewport classification p95 within 25ms. A missing probe fails the gate.
+      - name: "Gate 3 · traversal Long Tasks <= 50ms and 2,000-node viewport p95 <= 25ms"
+        run: node scripts/ci-gates.mjs --benchmark
+
+      - name: Stop the demo origin
+        if: always()
+        run: |
+          if [ -f demo-server.pid ]; then
+            kill "$(cat demo-server.pid)" 2>/dev/null || true
+            rm -f demo-server.pid
+          fi
+
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-reports-benchmark
+          path: |
+            reports/BENCHMARK.md
+            reports/benchmark-comparison.json
+            demo-server.log
+          if-no-files-found: warn

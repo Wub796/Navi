@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Navi CSP lab</title>
+<link rel="stylesheet" href="/csp.css">
+</head>
+<body>
+<main>
+<h1>Navi CSP lab</h1>
+<p>This page is served with strict Content Security Policy headers. It contains no inline
+styles and no inline scripts, so it exercises the SDK exactly as an enterprise deployment would.</p>
+<form data-agent-target="csp-form" action="#">
+<fieldset>
+<legend>Request details</legend>
+<label for="csp-name-field">Full name</label>
+<input id="csp-name-field" data-agent-target="csp-name" type="text" name="name" aria-label="Full name">
+<label for="csp-email-field">Email</label>
+<input id="csp-email-field" data-agent-target="csp-email" type="email" name="email" aria-label="Email">
+</fieldset>
+</form>
+<p class="actions">
+<button data-agent-target="csp-submit" type="button">Continue</button>
+<button data-agent-target="csp-trusted" type="button" data-navi-trusted="true">Release funds</button>
+</p>
+<p id="csp-status" role="status">idle</p>
+<p id="csp-trusted-status" role="status">idle</p>
+</main>
+<script src="/navi.min.js"></script>
+<script src="/csp-lab.js"></script>
+</body>
+</html>

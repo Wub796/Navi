@@ -1,0 +1,104 @@
+{
+  "recordedAt": "2026-10-09T19:00:42.070Z",
+  "target": "https://demo.playwright.dev/todomvc/#/",
+  "browser": "Chromium 156.0.8078.4 headless",
+  "node": "v24.21.0",
+  "artifact": {
+    "rawBytes": 14246,
+    "budgetBytes": 15000
+  },
+  "gates": {
+    "longTaskMs": 50
+  },
+  "steps": [
+    {
+      "step": "navigate",
+      "detail": "HTTP 200 https://demo.playwright.dev/todomvc/#/",
+      "ms": 459
+    },
+    {
+      "step": "initialize",
+      "detail": "injected navi.min.js protocol v0.2.0",
+      "ms": 17
+    },
+    {
+      "step": "connect",
+      "detail": "same-origin protocol 0.2.0",
+      "ms": 0
+    },
+    {
+      "step": "traverse",
+      "detail": "refresh + 4 controls in 7.60ms",
+      "ms": 7.6
+    },
+    {
+      "step": "discover",
+      "detail": "4 controls: link, textbox, link, link",
+      "ms": 0
+    },
+    {
+      "step": "populate",
+      "detail": "typed into What needs to be done? via Navi.execute (mode synthetic), control left focused",
+      "ms": 0
+    },
+    {
+      "step": "dynamic-update",
+      "detail": "1 list row(s) rendered, 7 new control(s) indexed (checkbox, checkbox, button, textbox, link, link, link)",
+      "ms": 0
+    },
+    {
+      "step": "cleanup",
+      "detail": "created todo removed; target left unchanged",
+      "ms": 0
+    }
+  ],
+  "title": "React • TodoMVC",
+  "finalUrl": "https://demo.playwright.dev/todomvc/#/",
+  "traversal": {
+    "supported": true,
+    "elapsedMs": 7.599999964237213,
+    "actions": 4,
+    "longTasksMs": [],
+    "idleWindowLongTasksMs": []
+  },
+  "discovered": [
+    {
+      "role": "link",
+      "name": "real TodoMVC app.",
+      "suggested_action": "click"
+    },
+    {
+      "role": "textbox",
+      "name": "What needs to be done?",
+      "suggested_action": "type"
+    },
+    {
+      "role": "link",
+      "name": "Remo H. Jansen",
+      "suggested_action": "click"
+    },
+    {
+      "role": "link",
+      "name": "TodoMVC",
+      "suggested_action": "click"
+    }
+  ],
+  "dynamicUpdate": {
+    "domRows": 1,
+    "newControls": 7,
+    "roles": [
+      "checkbox",
+      "checkbox",
+      "button",
+      "textbox",
+      "link",
+      "link",
+      "link"
+    ],
+    "totalAfter": 11
+  },
+  "pageErrors": [],
+  "consoleErrors": [],
+  "longTaskGate": [],
+  "ok": true
+}

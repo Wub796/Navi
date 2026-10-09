@@ -1,0 +1,39 @@
+{
+  "name": "example-checkout",
+  "url": "http://127.0.0.1:4173/",
+  "steps": [
+    { "label": "wait for the bridge", "waitFor": { "selector": "[data-agent-target=\"checkout-submit\"]" } },
+    { "label": "email", "target": "checkout-email", "action": "type", "text": "agent@example.com" },
+    {
+      "label": "delivery",
+      "target": "checkout-delivery",
+      "action": "select",
+      "value": "Send me a link",
+      "expect": { "selector": "#shipping", "value": "Send me a link" }
+    },
+    { "label": "reveal promo field", "target": "checkout-add-discount", "action": "click" },
+    { "label": "promo code", "target": "checkout-discount", "action": "type", "text": "DEMO" },
+    {
+      "label": "gift wrapping",
+      "target": "checkout-gift",
+      "action": "click",
+      "expect": { "name": "Add gift wrapping (closed shadow DOM)" }
+    },
+    { "label": "payment method", "target": "payment-demo", "action": "click" },
+    {
+      "label": "payment selected",
+      "assert": "name",
+      "target": "payment-demo",
+      "contains": "Demo payment"
+    },
+    { "label": "bring submit into view", "scrollTo": "checkout-submit" },
+    { "label": "submit sandbox order", "target": "checkout-submit", "action": "click", "consequential": true },
+    {
+      "label": "confirm outcome",
+      "assert": "text",
+      "selector": "#status",
+      "equals": "Sandbox checkout complete — no payment was made."
+    },
+    { "label": "assert body copy", "assert": "text", "selector": "h1", "contains": "human UI" }
+  ]
+}

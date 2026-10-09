@@ -1,0 +1,1178 @@
+#!/usr/bin/env node
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+
+// src/adapter.js
+var NAVI_PROTOCOL_VERSION, ACTIONS, MAX_TEXT, NaviPlaywrightAdapter;
+var init_adapter = __esm({
+  "src/adapter.js"() {
+    "use strict";
+    NAVI_PROTOCOL_VERSION = "0.2.0";
+    ACTIONS = ["click", "type", "select"];
+    MAX_TEXT = 1e4;
+    NaviPlaywrightAdapter = class {
+      /** @param {NaviPageLike} page @param {NaviAdapterOptions} [options] */
+      constructor(page, options = {}) {
+        if (!page || typeof page.evaluate !== "function" || typeof page.url !== "function") {
+          throw new TypeError("NaviPlaywrightAdapter requires a Playwright page object");
+        }
+        this.page = page;
+        this.protocolVersion = options.protocolVersion || NAVI_PROTOCOL_VERSION;
+        this.fallback = options.fallback !== false;
+        this.maxFallbackAgeMs = Number.isFinite(options.maxFallbackAgeMs) ? Number(options.maxFallbackAgeMs) : 2e3;
+        this.origin = new URL(page.url()).origin;
+        this.busy = false;
+      }
+      checkOrigin() {
+        if (new URL(this.page.url()).origin !== this.origin) {
+          throw new Error("Adapter origin changed; reauthorize before continuing");
+        }
+      }
+      /** @param {{viewportOnly?: boolean, limit?: number}} [options] @returns {Promise<NaviActionMap>} */
+      async discover(options = {}) {
+        this.checkOrigin();
+        const expected = this.protocolVersion;
+        const snapshot = await this.page.evaluate(async (arg) => {
+          const navi = (
+            /** @type {any} */
+            globalThis.Navi
+          );
+          if (!navi) throw new Error("Navi is not installed on this page");
+          if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
+          return navi.actions({ limit: arg.limit ?? 5e3, coordinateSpace: "top", viewportOnly: arg.viewportOnly });
+        }, { expected, viewportOnly: options.viewportOnly, limit: options.limit });
+        if (!snapshot || typeof snapshot !== "object") throw new Error("Navi returned no action map");
+        if (snapshot.truncated) throw new Error("Incomplete action map; raise the limit or narrow the page");
+        return (
+          /** @type {NaviActionMap} */
+          snapshot
+        );
+      }
+      /**
+       * Execute one target. Returns a structured result instead of throwing for
+       * anticipated refusals so callers can decide policy.
+       * @param {string} targetId
+       * @param {'click'|'type'|'select'|string} actionType
+       * @param {{text?: string, value?: string}} [payload]
+       * @returns {Promise<AdapterResult>}
+       */
+      async execute(targetId, actionType, payload = {}) {
+        this.checkOrigin();
+        if (this.busy) return { ok: false, error: { code: "BUSY", message: "Adapter execution in flight" } };
+        if (!targetId || typeof targetId !== "string" || targetId.length > 512 || !ACTIONS.includes(actionType) || !payload || typeof payload !== "object" || Object.keys(payload).some((key) => key !== (actionType === "type" ? "text" : actionType === "select" ? "value" : "")) || actionType === "type" && (typeof payload.text !== "string" || payload.text.length > MAX_TEXT)) {
+          return { ok: false, error: { code: "INVALID_PAYLOAD", message: "Invalid adapter command" } };
+        }
+        this.busy = true;
+        try {
+          const expected = this.protocolVersion;
+          const response = await this.page.evaluate(async (arg) => {
+            const navi = (
+              /** @type {any} */
+              globalThis.Navi
+            );
+            if (!navi) throw new Error("Navi is not installed on this page");
+            if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
+            try {
+              return { ok: true, result: await navi.execute(arg.targetId, arg.actionType, arg.payload) };
+            } catch (error) {
+              const failure = (
+                /** @type {Error & {code?: string, reason?: string, dispatched?: boolean}} */
+                error
+              );
+              return { ok: false, error: {
+                code: failure.code || "EXECUTION_ERROR",
+                message: failure.message,
+                reason: failure.reason,
+                dispatched: failure.dispatched
+              } };
+            }
+          }, { targetId, actionType, payload, expected });
+          const returned = (
+            /** @type {{success?:boolean,reason?:string,dispatched?:boolean} | undefined} */
+            response.result
+          );
+          const needsTrusted = returned?.success === false && returned.reason === "untrusted_gesture_required" && returned.dispatched !== true;
+          const dispatchFailed = response.error?.reason === "dispatch_failed" && response.error.dispatched === false;
+          const safeReturnedFailure = returned?.success === false && returned.reason === "dispatch_failed" && returned.dispatched === false;
+          if (!needsTrusted && !dispatchFailed && !safeReturnedFailure) {
+            if (response.ok === false) return { ok: false, error: response.error };
+            if (returned?.success === false) {
+              return { ok: false, error: { code: "EXECUTION_FAILED", message: returned.reason || "Host reported failure" } };
+            }
+            return { ok: true, result: response.result, mode: "synthetic" };
+          }
+          if (!this.fallback) return { ok: false, error: { code: "FALLBACK_DISABLED", message: "Target requires trusted input and fallback is disabled" } };
+          if (actionType !== "click" && actionType !== "type") {
+            return { ok: false, error: { code: "FALLBACK_UNSUPPORTED", message: "Trusted fallback supports click and type only" } };
+          }
+          return await this.#fallback(targetId, actionType, payload);
+        } finally {
+          this.busy = false;
+        }
+      }
+      /**
+       * Native driver fallback: fresh coordinates, strict state checks, no blind retries.
+       * @param {string} targetId
+       * @param {string} actionType
+       * @param {{text?: string, value?: string}} payload
+       * @returns {Promise<AdapterResult>}
+       */
+      async #fallback(targetId, actionType, payload) {
+        const started = Date.now();
+        const snapshot = await this.discover({ viewportOnly: true });
+        if (Date.now() - started > this.maxFallbackAgeMs) {
+          return { ok: false, error: { code: "STALE_COORDINATES", message: "Fallback discovery exceeded its freshness deadline" } };
+        }
+        const matches = snapshot.actions.filter((action2) => action2.target_id === targetId);
+        if (matches.length !== 1) return { ok: false, error: { code: "TARGET_UNAVAILABLE", message: "Missing or ambiguous fallback target" } };
+        const action = matches[0], state = action.state, box = action.coordinates;
+        if (!state || !box || !state.is_visible || !state.is_enabled || !state.is_in_viewport || state.is_occluded || ![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0) {
+          return { ok: false, error: { code: "TARGET_UNAVAILABLE", message: "Fallback target is not actionable" } };
+        }
+        if (actionType === "type" && action.suggested_action !== "type") {
+          return { ok: false, error: { code: "TARGET_UNAVAILABLE", message: "Fallback type requires a text control" } };
+        }
+        const viewport = await this.page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+        const x = box.x + box.width / 2, y = box.y + box.height / 2;
+        if (!(x >= 0 && y >= 0 && x < viewport.width && y < viewport.height)) {
+          return { ok: false, error: { code: "TARGET_UNAVAILABLE", message: "Fallback point is outside the viewport" } };
+        }
+        this.checkOrigin();
+        await this.page.mouse.click(x, y);
+        if (actionType === "type") {
+          await this.page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+          if (payload.text) await this.page.keyboard.insertText(payload.text);
+          else await this.page.keyboard.press("Backspace");
+          await this.page.keyboard.press("Tab");
+        }
+        await this.page.evaluate(async () => {
+          await new Promise(requestAnimationFrame);
+          await new Promise(requestAnimationFrame);
+          await /** @type {any} */
+          globalThis.Navi?.ready();
+        });
+        return { ok: true, result: { target_id: targetId, action: actionType, dispatched: true }, mode: "native-driver" };
+      }
+    };
+  }
+});
+
+// src/mcp/server.js
+init_adapter();
+import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+
+// src/browser.js
+init_adapter();
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+function isAllowedUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    return !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+async function resolveChromium() {
+  const candidates = ["playwright", "playwright-core", "@playwright/test"];
+  const tried = [];
+  for (const name of candidates) {
+    try {
+      const module = await import(name);
+      if (module?.chromium?.launch) return (
+        /** @type {any} */
+        module.chromium
+      );
+      tried.push(`${name} (no chromium export)`);
+    } catch {
+      tried.push(name);
+    }
+  }
+  throw Object.assign(new Error(`Playwright is required. Install it (npm i -D playwright) and run "npx playwright install chromium". Tried: ${tried.join(", ")}`), { code: "NO_BROWSER" });
+}
+function resolveSdkPath(override) {
+  if (override) return realpathSync(override);
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [resolve(here, "navi.min.js"), resolve(here, "../dist/navi.min.js")];
+  for (const candidate of candidates) if (existsSync(candidate)) return realpathSync(candidate);
+  throw Object.assign(new Error('Could not locate navi.min.js; run "npm run build" first'), { code: "NO_SDK" });
+}
+async function ensureNavi(page, sdkPath, expected = NAVI_PROTOCOL_VERSION) {
+  const installed = await page.evaluate(() => Boolean(
+    /** @type {any} */
+    globalThis.Navi
+  ));
+  if (!installed) await page.addScriptTag({ path: sdkPath });
+  const version = await page.evaluate(async (want) => {
+    const navi = (
+      /** @type {any} */
+      globalThis.Navi
+    );
+    if (!navi) throw new Error("Navi failed to install");
+    if (navi.version !== want) throw new Error(`Navi protocol ${navi.version} does not match the expected ${want}`);
+    await navi.ready();
+    return navi.version;
+  }, expected);
+  return { injected: !installed, version: (
+    /** @type {string} */
+    version
+  ) };
+}
+
+// src/index.js
+import { readFile } from "node:fs/promises";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+var NAVI_SDK_FILE = "navi.min.js";
+function naviSdkPath() {
+  return fileURLToPath2(new URL(NAVI_SDK_FILE, import.meta.url));
+}
+async function installNavi(page, options = {}) {
+  const scriptPath = options.scriptPath || naviSdkPath();
+  const timeoutMs = options.timeoutMs ?? 5e3;
+  const inline = options.inline === true;
+  const requested = options.strategy ?? (inline ? "evaluate" : "auto");
+  const attempts = requested === "auto" ? ["tag", "evaluate"] : [requested];
+  const failures = [];
+  for (const attempt of attempts) {
+    try {
+      if (attempt === "tag") {
+        if (inline) await page.addScriptTag({ content: await readFile(scriptPath, "utf8") });
+        else await page.addScriptTag({ path: scriptPath });
+      } else {
+        await page.evaluate(await readFile(scriptPath, "utf8"));
+      }
+      await page.waitForFunction(() => Boolean(
+        /** @type {any} */
+        globalThis.Navi
+      ), void 0, { timeout: timeoutMs });
+      return scriptPath;
+    } catch (error) {
+      failures.push(`${attempt}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
+    }
+  }
+  throw Object.assign(new Error(
+    `Could not install the Navi SDK on ${typeof page.url === "function" ? page.url() : "the page"} (${failures.join("; ")}). A page whose Content-Security-Policy blocks inline scripts rejects <script> injection; serve navi.min.js from the page origin, add a matching nonce, or use strategy "evaluate".`
+  ), { code: "NAVI_INSTALL_FAILED" });
+}
+
+// src/mcp/sse.js
+import { createServer } from "node:http";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+var DEFAULT_SSE_PORT = 3001;
+var MAX_MESSAGE_BYTES = 1024 * 1024;
+var HEARTBEAT_MS = 15e3;
+var DEFAULT_MAX_SESSIONS = 10;
+var DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1e3;
+var AUTH_CHALLENGE = 'Bearer realm="navi-mcp"';
+function sendJson(res, status, body, extraHeaders = {}) {
+  const text = JSON.stringify(body, null, 2);
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(text), "X-Content-Type-Options": "nosniff", ...extraHeaders });
+  res.end(text);
+}
+function isAuthorized(req, token) {
+  const header = req.headers.authorization;
+  if (typeof header !== "string" || !header.startsWith("Bearer ")) return false;
+  const offered = Buffer.from(header.slice("Bearer ".length), "utf8");
+  const expected = Buffer.from(token, "utf8");
+  return offered.length === expected.length && timingSafeEqual(offered, expected);
+}
+function rejectUnauthorized(res) {
+  sendJson(res, 401, {
+    ok: false,
+    error: {
+      code: "UNAUTHORIZED",
+      message: 'This MCP server requires a Bearer token. Send "Authorization: Bearer <token>" on both GET /sse and POST /message.'
+    }
+  }, { "WWW-Authenticate": AUTH_CHALLENGE });
+}
+function seconds(ms) {
+  const value = ms / 1e3;
+  return value >= 1 ? String(Math.round(value)) : value.toFixed(1);
+}
+function readBody(req, limit) {
+  return new Promise((resolve2) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        req.destroy();
+        resolve2({ tooLarge: true });
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve2({ text: Buffer.concat(chunks).toString("utf8") }));
+    req.on("error", () => resolve2({ text: "" }));
+  });
+}
+async function createSseServer(options) {
+  const host = options.host ?? "127.0.0.1";
+  const port = options.port ?? DEFAULT_SSE_PORT;
+  const createSession = options.createSession;
+  const handleMessage2 = options.handleMessage;
+  const log = options.log ?? (() => {
+  });
+  const authToken = options.authToken ?? "";
+  const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
+  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const sessions = /* @__PURE__ */ new Map();
+  const release = (entry, reason) => {
+    if (!sessions.delete(entry.id)) return;
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    log(`sse session ${entry.id} closed after ${Math.round((Date.now() - entry.openedAt) / 1e3)}s (${reason}; ${sessions.size} open)`);
+    Promise.resolve(entry.session.close?.()).catch(() => {
+    });
+  };
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url || "/", `http://${req.headers.host ?? "localhost"}`);
+    if (req.method === "GET" && url.pathname === "/sse") {
+      if (authToken && !isAuthorized(req, authToken)) {
+        log("rejected an unauthenticated GET /sse");
+        rejectUnauthorized(res);
+        return;
+      }
+      if (sessions.size >= maxSessions) {
+        log(`refused GET /sse: ${sessions.size} of ${maxSessions} sessions are open`);
+        sendJson(res, 503, {
+          ok: false,
+          error: {
+            code: "TOO_MANY_SESSIONS",
+            message: `All ${maxSessions} session slots are in use. Close a stream, wait for an idle session to be reaped, or raise --max-sessions.`
+          }
+        }, { "Retry-After": "5", Connection: "close" });
+        return;
+      }
+      const id = randomUUID();
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+        "X-Content-Type-Options": "nosniff"
+      });
+      res.on("error", () => {
+      });
+      const write = (chunk) => {
+        if (res.writableEnded || res.destroyed) return false;
+        try {
+          res.write(chunk);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      write(`event: endpoint
+data: /message?sessionId=${id}
+
+`);
+      const session = createSession();
+      const entry = { id, res, session, initialized: { value: false }, queue: Promise.resolve(), openedAt: Date.now(), callsInFlight: 0, idleTimer: null, touch: () => {
+      } };
+      sessions.set(id, entry);
+      log(`sse session ${id} opened (${sessions.size} open)`);
+      const heartbeat = setInterval(() => {
+        write(": ping\n\n");
+      }, HEARTBEAT_MS);
+      heartbeat.unref?.();
+      const arm = () => {
+        if (entry.idleTimer) clearTimeout(entry.idleTimer);
+        if (!idleTimeoutMs) return;
+        entry.idleTimer = setTimeout(() => {
+          if (entry.callsInFlight > 0) {
+            arm();
+            return;
+          }
+          const idleLabel = seconds(idleTimeoutMs);
+          log(`sse session ${id} idle for ${idleLabel}s, reaping it`);
+          write(`: idle timeout after ${idleLabel}s; reconnect with a new GET /sse
+
+`);
+          res.end();
+          release(entry, "idle timeout");
+        }, idleTimeoutMs);
+        entry.idleTimer.unref?.();
+      };
+      entry.touch = arm;
+      arm();
+      const shutdown = () => {
+        clearInterval(heartbeat);
+        if (!sessions.has(id)) return;
+        release(entry, "client closed");
+      };
+      req.on("close", shutdown);
+      res.on("close", shutdown);
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/message") {
+      if (authToken && !isAuthorized(req, authToken)) {
+        log("rejected an unauthenticated POST /message");
+        rejectUnauthorized(res);
+        return;
+      }
+      const id = url.searchParams.get("sessionId") ?? "";
+      const entry = sessions.get(id);
+      if (!entry) {
+        sendJson(res, 404, { jsonrpc: "2.0", id: null, error: { code: -32001, message: `Unknown or expired sessionId "${id}". Open GET /sse first and use the sessionId from its endpoint event.` } });
+        return;
+      }
+      entry.touch();
+      const body = await readBody(req, MAX_MESSAGE_BYTES);
+      if ("tooLarge" in body) {
+        sendJson(res, 413, { jsonrpc: "2.0", id: null, error: { code: -32600, message: `Request body over ${MAX_MESSAGE_BYTES} bytes` } });
+        return;
+      }
+      let message;
+      try {
+        message = JSON.parse(body.text || "null");
+      } catch (error) {
+        sendJson(res, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: `Parse error: ${/** @type {Error} */
+        error.message}` } });
+        return;
+      }
+      sendJson(res, 202, { ok: true });
+      const push = (payload) => {
+        if (entry.res.writableEnded || entry.res.destroyed) return;
+        try {
+          entry.res.write(`data: ${JSON.stringify(payload)}
+
+`);
+        } catch {
+        }
+      };
+      entry.callsInFlight++;
+      entry.queue = entry.queue.then(async () => {
+        try {
+          const reply = await handleMessage2(message, { session: entry.session, initialized: entry.initialized, log });
+          if (reply) push(reply);
+        } catch (error) {
+          push({ jsonrpc: "2.0", id: message?.id ?? null, error: { code: -32603, message: `Internal error: ${error instanceof Error ? error.message : String(error)}` } });
+        } finally {
+          entry.callsInFlight--;
+          entry.touch();
+        }
+      });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/healthz") {
+      sendJson(res, 200, { ok: true, transport: "sse", sessions: sessions.size, maxSessions, auth: authToken ? "bearer" : "none", idleTimeoutMs });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/") {
+      sendJson(res, 200, { ok: true, transport: "sse", endpoints: { stream: "GET /sse", messages: "POST /message?sessionId=<id>", health: "GET /healthz" } });
+      return;
+    }
+    sendJson(res, 404, { ok: false, error: { code: "NOT_FOUND", message: `No route for ${req.method} ${url.pathname}.` } });
+  });
+  await new Promise(
+    /** @param {(value?: void) => void} resolve */
+    (resolve2) => server.listen(port, host, () => resolve2())
+  );
+  const address = server.address();
+  const boundPort = typeof address === "object" && address ? address.port : port;
+  return {
+    server,
+    port: boundPort,
+    host,
+    sessions,
+    close: async () => {
+      for (const entry of [...sessions.values()]) {
+        if (entry.idleTimer) clearTimeout(entry.idleTimer);
+        try {
+          entry.res.end();
+        } catch {
+        }
+        await Promise.resolve(entry.session.close?.()).catch(() => {
+        });
+      }
+      sessions.clear();
+      await new Promise(
+        /** @param {(value?: void) => void} resolve */
+        (resolve2) => server.close(() => resolve2())
+      );
+    }
+  };
+}
+
+// src/mcp/server.js
+var SERVER_NAME = "navi-mcp-server";
+var SERVER_VERSION = (() => {
+  for (const candidate of ["../package.json", "../../package.json"]) {
+    try {
+      const version = JSON.parse(readFileSync(new URL(candidate, import.meta.url), "utf8")).version;
+      if (typeof version === "string") return version;
+    } catch {
+    }
+  }
+  return "0.0.0";
+})();
+var PROTOCOL_VERSION = "2025-11-25";
+var SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
+var DEFAULT_VIEWPORT = { width: 1360, height: 900 };
+var DEFAULT_TIMEOUT_MS = 2e4;
+var MAX_ACTIONS = 5e3;
+var GUIDANCE = {
+  NOT_FOUND: "The target_id is not in the action map. Call navi_get_actions and use a target_id from that response; ids change when the page re-renders.",
+  AMBIGUOUS: "The target_id matched more than one element. Re-read the action map; the page has duplicate or unstable identities.",
+  UNAVAILABLE: "The element exists but is not actionable: hidden, disabled, off-screen or covered. Scroll it into view, wait for it to become enabled, or dismiss the overlay first.",
+  TARGET_UNAVAILABLE: "The element was not visible, enabled, in-viewport and unoccluded at execution time. Re-read the action map and retry once the element has settled.",
+  INVALID_PAYLOAD: 'The payload does not match the action. "type" takes {text}, "select" takes {value}, "click" takes no payload.',
+  INVALID_SESSION: "The session payload is not a usable storage state. Pass an inline { cookies, origins } object or a path to a Playwright storageState.json file; every cookie needs name and value plus url or domain+path, and every origin needs a bare origin plus localStorage entries.",
+  INVALID_ACTION: "The action type is not valid for this element. Use the suggested_action from navi_get_actions.",
+  BUSY: "Another execution is already in flight on this page. Wait for it to finish, then retry.",
+  CANCELED: 'The page canceled the synthesized event, so the control may be protected. Mark it data-navi-trusted="true" to use trusted native input instead.',
+  STOPPED: "The SDK was stopped on this page (window.Navi.stop()). Call navi_navigate again to reinstall it.",
+  FALLBACK_DISABLED: "This control requires trusted input and fallback is disabled for this session. Restart the server without --no-fallback, or drive the control with a real browser tool.",
+  FALLBACK_UNSUPPORTED: "Trusted native fallback supports click and type only. Use a click or type control for trusted actions.",
+  STALE_COORDINATES: "The fallback action map was too old to act on safely. Retry; nothing was dispatched.",
+  EXECUTION_FAILED: "The page reported a failed action. Nothing further is retried automatically because the action may already have applied.",
+  EXECUTION_ERROR: "The action failed inside the page. Read the action map again before retrying.",
+  NAVI_INSTALL_FAILED: "The SDK could not be installed on this page. A strict Content-Security-Policy blocks <script> injection, so serve navi.min.js from the page origin, add a matching nonce, or allow the evaluate strategy.",
+  NO_BROWSER: 'Playwright is not installed. Install it with "npm i -D playwright" and run "npx playwright install chromium".',
+  NO_SDK: 'The built browser bundle was not found. Run "npm run build" first.',
+  NO_PAGE: "No page is open. Call navi_navigate with a URL first.",
+  PAGE_ORIGIN_CHANGED: "The page navigated to a different origin, so the previous action map is void. Call navi_navigate again."
+};
+function guidance(code, message) {
+  const hint = GUIDANCE[code];
+  if (!hint) return message;
+  if (!message) return hint;
+  return hint.includes(message) ? hint : `${message} ${hint}`;
+}
+function redactUrl(value) {
+  return value.replace(/\/\/[^/@\s]*@/, "//[redacted]@");
+}
+function errorCode(error) {
+  const code = (
+    /** @type {{code?: unknown}} */
+    error?.code
+  );
+  return typeof code === "string" && code ? code : "EXECUTION_ERROR";
+}
+function toolError(code, message, extra = {}) {
+  return {
+    content: [{ type: "text", text: JSON.stringify({ ok: false, error: { code, message: guidance(code, message) }, ...extra }, null, 2) }],
+    isError: true
+  };
+}
+function toolResult(result) {
+  return { content: [{ type: "text", text: JSON.stringify({ ok: true, .../** @type {Record<string, unknown>} */
+  result }, null, 2) }], isError: false };
+}
+var TOOLS = [
+  {
+    name: "navi_navigate",
+    title: "Navigate and initialize Navi",
+    description: `Open an http(s) URL in the controlled browser, install or detect the Navi browser SDK (protocol ${NAVI_PROTOCOL_VERSION}), wait for indexing, and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Absolute http(s) URL to open." },
+        width: { type: "number", description: `Viewport width in CSS pixels. Default ${DEFAULT_VIEWPORT.width}.` },
+        height: { type: "number", description: `Viewport height in CSS pixels. Default ${DEFAULT_VIEWPORT.height}.` },
+        timeoutMs: { type: "number", description: `Navigation timeout in milliseconds. Default ${DEFAULT_TIMEOUT_MS}.` }
+      },
+      required: ["url"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "navi_get_actions",
+    title: "Read the Navi action map",
+    description: "Return the current NaviActionMap: target_id, role, accessible name, live visible/enabled/in-viewport/occluded state, CSS-pixel coordinates and the suggested action for each interactive control. Viewport-only by default; pass all=true for the whole document, including off-screen controls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        all: { type: "boolean", description: "Return every indexed control instead of only those in the viewport. Default false." },
+        limit: { type: "number", description: `Maximum controls to return, 1-${MAX_ACTIONS}. Default 500.` }
+      },
+      additionalProperties: false
+    }
+  },
+  {
+    name: "navi_execute_action",
+    title: "Execute an action on a target",
+    description: `Run click, type or select on a target_id from the action map. Uses the guarded synthetic path first; controls marked data-navi-trusted="true" automatically fall back to trusted native driver input at the target's live coordinates. Failed actions are never retried automatically, because they may already have applied.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        target_id: { type: "string", description: "target_id from navi_get_actions." },
+        action_type: { type: "string", enum: ["click", "type", "select"], description: "Action to perform." },
+        payload: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: 'Text for action_type "type".' },
+            value: { type: "string", description: 'Option value for action_type "select".' }
+          },
+          additionalProperties: false
+        }
+      },
+      required: ["target_id", "action_type"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "navi_assert_state",
+    title: "Assert a target's state",
+    description: "Check that a target_id exists and optionally that it is visible, enabled, in the viewport, and matches an expected accessible name. Returns the observed state and whether every requested expectation held.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        target_id: { type: "string", description: "target_id to check." },
+        exists: { type: "boolean", description: "Require the target to be present in the action map. Default true." },
+        visible: { type: "boolean", description: "Require is_visible to match this value." },
+        enabled: { type: "boolean", description: "Require is_enabled to match this value." },
+        in_viewport: { type: "boolean", description: "Require is_in_viewport to match this value." },
+        name: { type: "string", description: "Require the accessible name to equal this string." },
+        name_contains: { type: "string", description: "Require the accessible name to contain this substring." }
+      },
+      required: ["target_id"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "navi_set_session",
+    title: "Hydrate an authenticated session",
+    description: "Seed the browser context with cookies and localStorage before navigating, so navi_navigate opens a pre-authenticated page instead of a sign-in screen. Accepts an inline { cookies, origins } payload or a path to a Playwright storageState.json file. Hydration rebuilds the context, so it must be called before navi_navigate; passing url hydrates and opens the page in one step. Cookie values are never echoed back.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cookies: {
+          type: "array",
+          description: "Playwright cookies. Each entry needs name, value and either url or domain+path.",
+          items: { type: "object" }
+        },
+        origins: {
+          type: "array",
+          description: "Local storage per origin: [{ origin, localStorage: [{ name, value }] }].",
+          items: { type: "object" }
+        },
+        storage_state: {
+          description: "A path to a storageState.json file, or an inline { cookies, origins } object. Takes precedence over cookies/origins.",
+          anyOf: [{ type: "string" }, { type: "object" }]
+        },
+        url: { type: "string", description: "Optional http(s) URL to open immediately after hydrating, using the hydrated context." }
+      },
+      additionalProperties: false
+    }
+  }
+];
+function isCanonicalOrigin(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+function normalizeStorageState(input) {
+  let raw = input;
+  if (typeof raw === "string") {
+    const path = raw;
+    try {
+      raw = JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+      return { error: `Could not read storageState file "${path}": ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "Session state must be an object holding cookies and/or origins, or a path to a storageState JSON file." };
+  }
+  const state = (
+    /** @type {Record<string, unknown>} */
+    raw
+  );
+  const unknown = Object.keys(state).filter((key) => key !== "cookies" && key !== "origins");
+  if (unknown.length) return { error: `Unknown session key(s) ${unknown.join(", ")}; a storage state holds only cookies and origins.` };
+  const cookies = state.cookies ?? [];
+  const origins = state.origins ?? [];
+  if (!Array.isArray(cookies)) return { error: "cookies must be an array." };
+  if (!Array.isArray(origins)) return { error: "origins must be an array." };
+  for (const cookie of cookies) {
+    if (!cookie || typeof cookie !== "object") return { error: "Every cookie must be an object." };
+    const entry = (
+      /** @type {Record<string, unknown>} */
+      cookie
+    );
+    if (typeof entry.name !== "string" || !entry.name) return { error: "Every cookie needs a non-empty name." };
+    if (typeof entry.value !== "string") return { error: `Cookie "${entry.name}" needs a string value.` };
+    const scoped = typeof entry.url === "string" && entry.url || typeof entry.domain === "string" && typeof entry.path === "string";
+    if (!scoped) return { error: `Cookie "${entry.name}" needs either url or both domain and path.` };
+  }
+  let entries = 0;
+  for (const origin of origins) {
+    if (!origin || typeof origin !== "object") return { error: "Every origin entry must be an object." };
+    const entry = (
+      /** @type {Record<string, unknown>} */
+      origin
+    );
+    if (typeof entry.origin !== "string" || !isCanonicalOrigin(entry.origin)) {
+      return { error: `Origin "${String(entry.origin)}" must be a bare http(s) origin such as https://app.example.com, without a path, query or trailing slash.` };
+    }
+    if (!Array.isArray(entry.localStorage)) return { error: `Origin ${entry.origin} needs a localStorage array; it may be empty.` };
+    for (const item of entry.localStorage) {
+      if (!item || typeof item !== "object" || typeof /** @type {Record<string, unknown>} */
+      item.name !== "string" || typeof /** @type {Record<string, unknown>} */
+      item.value !== "string") {
+        return { error: `Every localStorage entry for ${entry.origin} needs string name and value.` };
+      }
+      entries++;
+    }
+  }
+  if (!cookies.length && !entries) return { error: "Nothing to hydrate: the session carries no cookies and no localStorage entries." };
+  return { state: { cookies, origins }, summary: { cookies: cookies.length, origins: origins.length, localStorage: entries } };
+}
+var NaviSession = class {
+  /** @param {{viewport?: {width: number, height: number}, headless?: boolean, fallback?: boolean, log?: (line: string) => void}} [options] */
+  constructor(options = {}) {
+    this.viewport = options.viewport ?? DEFAULT_VIEWPORT;
+    this.headless = options.headless !== false;
+    this.fallback = options.fallback !== false;
+    this.log = options.log ?? (() => {
+    });
+    this.browser = null;
+    this.page = null;
+    this.adapter = null;
+    this.sdkStrategy = null;
+    this.storageState = null;
+  }
+  async #ensurePage() {
+    if (this.page) return this.page;
+    const chromium = await resolveChromium();
+    this.browser = await chromium.launch({ headless: this.headless });
+    const context = await this.browser.newContext(this.storageState ? { viewport: this.viewport, storageState: this.storageState } : { viewport: this.viewport });
+    this.page = await context.newPage();
+    this.log(`browser launched (${this.viewport.width}x${this.viewport.height}, headless=${this.headless})`);
+    return this.page;
+  }
+  /** @param {Record<string, unknown>} args */
+  async navigate(args) {
+    const url = typeof args.url === "string" ? args.url : "";
+    if (!isAllowedUrl(url)) return toolError("INVALID_URL", `Refusing to open "${redactUrl(url)}": only absolute credential-free http(s) URLs are allowed.`);
+    const safe = url;
+    const width = Number.isFinite(args.width) ? Number(args.width) : this.viewport.width;
+    const height = Number.isFinite(args.height) ? Number(args.height) : this.viewport.height;
+    const timeout = Number.isFinite(args.timeoutMs) ? Number(args.timeoutMs) : DEFAULT_TIMEOUT_MS;
+    try {
+      const page = await this.#ensurePage();
+      await page.setViewportSize({ width, height });
+      const response = await page.goto(safe, { waitUntil: "load", timeout });
+      const status = response ? response.status() : null;
+      const installed = await page.evaluate(() => Boolean(
+        /** @type {any} */
+        globalThis.Navi
+      ));
+      const sdkPath = resolveSdkPath();
+      let strategy = installed ? "already-present" : "tag";
+      if (!installed) {
+        try {
+          await installNavi(page, { scriptPath: sdkPath, strategy: "tag" });
+        } catch {
+          await installNavi(page, { scriptPath: sdkPath, strategy: "evaluate" });
+          strategy = "evaluate";
+        }
+      }
+      const { version } = await ensureNavi(page, sdkPath);
+      this.adapter = new NaviPlaywrightAdapter(page, { fallback: this.fallback });
+      const map = await this.adapter.discover({ limit: MAX_ACTIONS });
+      this.sdkStrategy = strategy;
+      this.log(`navigated to ${page.url()} (HTTP ${status}, SDK ${strategy}, ${map.actions.length} controls)`);
+      return toolResult({
+        url: page.url(),
+        title: await page.title(),
+        status,
+        protocolVersion: version,
+        sdk: { strategy, injected: !installed },
+        viewport: { width, height },
+        actions: map.actions.length,
+        truncated: map.truncated
+      });
+    } catch (error) {
+      const code = errorCode(error);
+      return toolError(code === "EXECUTION_ERROR" ? "NAVIGATION_FAILED" : code, error instanceof Error ? error.message : String(error), { url: safe });
+    }
+  }
+  #requireAdapter() {
+    if (this.adapter) return this.adapter;
+    return null;
+  }
+  /**
+   * Rebuild the browser context around a storage state. Cookies and localStorage
+   * cannot be applied to a live document portably — localStorage only takes
+   * effect at document start — so hydration replaces the session instead of
+   * patching it, and the next navigation opens authenticated.
+   * @param {{cookies: any[], origins: any[]}} state
+   */
+  async hydrate(state) {
+    this.storageState = state;
+    this.page = null;
+    this.adapter = null;
+    if (!this.browser) return;
+    for (const context of this.browser.contexts()) {
+      try {
+        await context.close();
+      } catch {
+      }
+    }
+  }
+  /** @param {Record<string, unknown>} args */
+  async setSession(args) {
+    const url = typeof args.url === "string" ? args.url : "";
+    if (url && !isAllowedUrl(url)) return toolError("INVALID_URL", `Refusing to open "${redactUrl(url)}": only absolute credential-free http(s) URLs are allowed.`);
+    const inline = args.cookies !== void 0 || args.origins !== void 0 ? { cookies: args.cookies ?? [], origins: args.origins ?? [] } : void 0;
+    const input = args.storage_state !== void 0 ? args.storage_state : inline;
+    if (input === void 0) return toolError("INVALID_SESSION", "Provide storage_state, or cookies and/or origins.");
+    const normalized = normalizeStorageState(input);
+    if ("error" in normalized) return toolError("INVALID_SESSION", normalized.error);
+    try {
+      await this.hydrate(normalized.state);
+      this.log(`hydrated session: ${normalized.summary.cookies} cookie(s), ${normalized.summary.origins} origin(s), ${normalized.summary.localStorage} localStorage entr(ies)`);
+      if (url) return await this.navigate({ url });
+      return toolResult({
+        hydrated: normalized.summary,
+        applies_to: "the next navi_navigate call",
+        note: "Called without url, so no page is open yet; the next navigation starts inside this session."
+      });
+    } catch (error) {
+      return toolError(errorCode(error), error instanceof Error ? error.message : String(error));
+    }
+  }
+  /** @param {Record<string, unknown>} args */
+  async getActions(args) {
+    const adapter = this.#requireAdapter();
+    if (!adapter) return toolError("NO_PAGE", "No page is open.");
+    const limit = Number.isFinite(args.limit) ? Math.max(1, Math.min(MAX_ACTIONS, Math.floor(Number(args.limit)))) : 500;
+    try {
+      const map = await adapter.discover({ viewportOnly: args.all !== true, limit });
+      return toolResult({ ...map, viewportOnly: args.all !== true, url: adapter.page.url() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/Incomplete action map/.test(message)) {
+        return toolError("MAP_TRUNCATED", "The page holds more controls than the requested limit. Raise limit or narrow the page with a smaller viewport.");
+      }
+      return toolError(errorCode(error), message);
+    }
+  }
+  /** @param {Record<string, unknown>} args */
+  async executeAction(args) {
+    const adapter = this.#requireAdapter();
+    if (!adapter) return toolError("NO_PAGE", "No page is open.");
+    const targetId = typeof args.target_id === "string" ? args.target_id : "";
+    const actionType = typeof args.action_type === "string" ? args.action_type : "";
+    if (!targetId || !["click", "type", "select"].includes(actionType)) {
+      return toolError("INVALID_ACTION", "target_id is required and action_type must be click, type or select.");
+    }
+    const payload = (
+      /** @type {{text?: string, value?: string}} */
+      args.payload && typeof args.payload === "object" ? args.payload : {}
+    );
+    try {
+      const result = await adapter.execute(targetId, actionType, payload);
+      if (!result.ok) {
+        const code = result.error?.code ?? "EXECUTION_ERROR";
+        return toolError(code, result.error?.message ?? "The action failed.", { target_id: targetId, action_type: actionType });
+      }
+      return toolResult({
+        target_id: targetId,
+        action_type: actionType,
+        mode: result.mode,
+        trusted_fallback: result.mode === "native-driver",
+        dispatched: result.result?.dispatched === true,
+        url: adapter.page.url()
+      });
+    } catch (error) {
+      return toolError(errorCode(error), error instanceof Error ? error.message : String(error), { target_id: targetId, action_type: actionType, may_have_applied: true });
+    }
+  }
+  /** @param {Record<string, unknown>} args */
+  async assertState(args) {
+    const adapter = this.#requireAdapter();
+    if (!adapter) return toolError("NO_PAGE", "No page is open.");
+    const targetId = typeof args.target_id === "string" ? args.target_id : "";
+    if (!targetId) return toolError("INVALID_ACTION", "target_id is required.");
+    try {
+      const map = await adapter.discover({ limit: MAX_ACTIONS });
+      const matches = map.actions.filter((action2) => action2.target_id === targetId);
+      const action = matches.length === 1 ? matches[0] : null;
+      const expectExists = args.exists !== false;
+      const checks = [];
+      const add = (label, expected, observed, ok) => checks.push({ label, expected, observed, ok });
+      add("exists", expectExists, matches.length === 1, matches.length === 1 === expectExists);
+      add("unique", true, matches.length <= 1, matches.length <= 1);
+      if (action) {
+        const stateChecks = [
+          ["visible", args.visible, action.state.is_visible],
+          ["enabled", args.enabled, action.state.is_enabled],
+          ["in_viewport", args.in_viewport, action.state.is_in_viewport]
+        ];
+        for (const [label, expected, observed] of stateChecks) {
+          if (typeof expected === "boolean") add(label, expected, observed, observed === expected);
+        }
+        if (typeof args.name === "string") add("name", args.name, action.name, action.name === args.name);
+        if (typeof args.name_contains === "string") add("name_contains", args.name_contains, action.name, action.name.includes(args.name_contains));
+      }
+      return toolResult({
+        target_id: targetId,
+        passed: checks.every((check) => check.ok),
+        matches: matches.length,
+        observed: action ? { role: action.role, name: action.name, suggested_action: action.suggested_action, state: action.state, coordinates: action.coordinates } : null,
+        checks
+      });
+    } catch (error) {
+      return toolError(errorCode(error), error instanceof Error ? error.message : String(error));
+    }
+  }
+  async close() {
+    const browser = this.browser;
+    this.browser = null;
+    this.page = null;
+    this.adapter = null;
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+      }
+    }
+  }
+};
+async function handleMessage(message, state) {
+  const { session, initialized } = state;
+  const id = message?.id;
+  const isNotification = id === void 0 || id === null;
+  const reply = (result) => isNotification ? null : { jsonrpc: "2.0", id, result };
+  const fail = (code, message_, data) => isNotification ? null : { jsonrpc: "2.0", id, error: { code, message: message_, ...data === void 0 ? {} : { data } } };
+  const method = message?.method;
+  if (typeof method !== "string") return fail(-32600, "Invalid Request: method must be a string");
+  if (isNotification) {
+    if (method === "notifications/initialized") initialized.value = true;
+    if (method === "notifications/cancelled") state.log("client cancelled a request");
+    return null;
+  }
+  if (method === "initialize") {
+    const requested = (
+      /** @type {{protocolVersion?: unknown}} */
+      message.params?.protocolVersion
+    );
+    const negotiated = typeof requested === "string" && SUPPORTED_PROTOCOLS.includes(requested) ? requested : PROTOCOL_VERSION;
+    initialized.value = true;
+    return reply({
+      protocolVersion: negotiated,
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
+      instructions: "Navi exposes a validated action map and guarded execution. Call navi_navigate first, then navi_get_actions, then navi_execute_action with a current target_id."
+    });
+  }
+  if (!initialized.value) return fail(-32002, "Server not initialized: send initialize first");
+  if (method === "ping") return reply({});
+  if (method === "tools/list") return reply({ tools: TOOLS });
+  if (method === "tools/call") {
+    const params = (
+      /** @type {{name?: unknown, arguments?: unknown}} */
+      message.params
+    );
+    const name = typeof params?.name === "string" ? params.name : "";
+    const args = (
+      /** @type {Record<string, unknown>} */
+      params?.arguments && typeof params.arguments === "object" ? params.arguments : {}
+    );
+    state.log(`tools/call ${name}`);
+    if (name === "navi_navigate") return reply(await session.navigate(args));
+    if (name === "navi_get_actions") return reply(await session.getActions(args));
+    if (name === "navi_execute_action") return reply(await session.executeAction(args));
+    if (name === "navi_assert_state") return reply(await session.assertState(args));
+    if (name === "navi_set_session") return reply(await session.setSession(args));
+    return reply(toolError("UNKNOWN_TOOL", `Unknown tool "${name}". Available tools: ${TOOLS.map((tool) => tool.name).join(", ")}.`));
+  }
+  return fail(-32601, `Method not found: ${method}`);
+}
+async function runStdioServer(options = {}) {
+  const input = options.input ?? process.stdin;
+  const output = options.output ?? process.stdout;
+  const log = options.log ?? ((line) => process.stderr.write(`[navi-mcp] ${line}
+`));
+  const session = options.session ?? new NaviSession({ log });
+  const initialized = { value: false };
+  const send = (body) => {
+    if (body) output.write(`${JSON.stringify(body)}
+`);
+  };
+  let queue = Promise.resolve();
+  const reader = createInterface({ input, crlfDelay: Infinity });
+  reader.on("line", (line) => {
+    const text = line.trim();
+    if (!text) return;
+    let message;
+    try {
+      message = JSON.parse(text);
+    } catch (error) {
+      send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: `Parse error: ${/** @type {Error} */
+      error.message}` } });
+      return;
+    }
+    queue = queue.then(async () => {
+      try {
+        send(await handleMessage(message, { session, initialized, log }));
+      } catch (error) {
+        send({ jsonrpc: "2.0", id: message?.id ?? null, error: { code: -32603, message: `Internal error: ${error instanceof Error ? error.message : String(error)}` } });
+      }
+    });
+  });
+  await new Promise(
+    /** @param {(value?: void) => void} resolve */
+    (resolve2) => {
+      const finish = () => resolve2();
+      reader.on("close", finish);
+      input.on?.("end", finish);
+    }
+  );
+  await queue;
+  await session.close();
+  log("stdin closed, session closed");
+}
+function option(argv, flag, fallback) {
+  const index = argv.indexOf(flag);
+  return index === -1 ? fallback : argv[index + 1] ?? fallback;
+}
+function isLoopbackHost(host) {
+  const bare = host.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  return bare === "localhost" || bare === "::1" || bare === "0:0:0:0:0:0:0:1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare);
+}
+async function main(argv = []) {
+  if (argv.includes("--help")) {
+    process.stdout.write(`navi-mcp \xB7 MCP server for the Navi protocol
+
+Usage
+  navi-mcp                        Speak MCP over stdio (default)
+  navi-mcp --transport sse        Serve the remote SSE transport instead
+  navi-mcp --transport sse --port 3001 --host 127.0.0.1
+                                  Port defaults to 3001, host to 127.0.0.1
+  navi-mcp --transport sse --auth-token <token>
+                                  Require "Authorization: Bearer <token>" on /sse
+                                  and /message (or set NAVI_MCP_TOKEN). Mandatory
+                                  for any --host that is not loopback
+  navi-mcp --transport sse --max-sessions 10
+                                  Concurrent event streams; beyond the ceiling is
+                                  503. Default 10
+  navi-mcp --transport sse --idle-timeout 300
+                                  Reap a session idle this many seconds, closing its
+                                  browser. Default 300; 0 disables
+  navi-mcp --no-fallback          Refuse trusted native input; synthetic dispatch only
+  navi-mcp --version              Print the server and protocol version
+  navi-mcp --help                 Print this help
+
+SSE endpoints
+  GET  /sse                       Event stream; the first frame carries the POST URL
+  POST /message?sessionId=<id>    One JSON-RPC message per request
+  GET  /healthz                   Liveness, open-session count, transport posture
+
+Security
+  An open SSE port is an open browser: whoever can reach it can drive a real
+  Chromium. Only loopback is served without a bearer token, and a non-loopback
+  --host without one is refused rather than warned about.
+
+Environment
+  NAVI_MCP_TOKEN=<token>          Bearer token, same as --auth-token
+  NAVI_MCP_DEBUG=1                Log every tool call to stderr
+`);
+    return 0;
+  }
+  if (argv.includes("--version")) {
+    process.stdout.write(`${SERVER_VERSION} (protocol ${PROTOCOL_VERSION}, navi ${NAVI_PROTOCOL_VERSION})
+`);
+    return 0;
+  }
+  const debug = process.env.NAVI_MCP_DEBUG === "1";
+  const fallback = !argv.includes("--no-fallback");
+  const log = (line) => {
+    if (debug) process.stderr.write(`[navi-mcp] ${line}
+`);
+  };
+  const transport = option(argv, "--transport", "stdio");
+  if (transport === "sse") {
+    const port = Number(option(argv, "--port", String(DEFAULT_SSE_PORT)));
+    const host = option(argv, "--host", "127.0.0.1");
+    if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      process.stderr.write(`navi-mcp: --port must be an integer between 0 and 65535, got "${option(argv, "--port", "")}"
+`);
+      return 2;
+    }
+    const flagToken = option(argv, "--auth-token", "");
+    if (argv.includes("--auth-token") && (!flagToken || flagToken.startsWith("-"))) {
+      process.stderr.write('navi-mcp: --auth-token needs a value, e.g. --auth-token "$NAVI_MCP_TOKEN"\n');
+      return 2;
+    }
+    const authToken = flagToken || (typeof process.env.NAVI_MCP_TOKEN === "string" ? process.env.NAVI_MCP_TOKEN : "");
+    const maxSessions = Number(option(argv, "--max-sessions", String(DEFAULT_MAX_SESSIONS)));
+    if (!Number.isInteger(maxSessions) || maxSessions < 1) {
+      process.stderr.write(`navi-mcp: --max-sessions must be a positive integer, got "${option(argv, "--max-sessions", "")}"
+`);
+      return 2;
+    }
+    const idleSeconds = Number(option(argv, "--idle-timeout", String(DEFAULT_IDLE_TIMEOUT_MS / 1e3)));
+    if (!Number.isFinite(idleSeconds) || idleSeconds < 0) {
+      process.stderr.write(`navi-mcp: --idle-timeout must be a non-negative number of seconds, got "${option(argv, "--idle-timeout", "")}"
+`);
+      return 2;
+    }
+    if (!isLoopbackHost(host) && !authToken) {
+      process.stderr.write(`navi-mcp: refusing to bind ${host} without an auth token, which would expose a browser driver to every host that can reach it. Pass --auth-token <token> (or set NAVI_MCP_TOKEN), or bind 127.0.0.1.
+`);
+      return 2;
+    }
+    const remote = await createSseServer({
+      host,
+      port,
+      log,
+      handleMessage,
+      authToken,
+      maxSessions,
+      idleTimeoutMs: Math.round(idleSeconds * 1e3),
+      createSession: () => new NaviSession({ fallback, log })
+    });
+    process.stderr.write(`navi-mcp: SSE transport listening on http://${host}:${remote.port}/sse (endpoint POST /message?sessionId=<id>; auth ${authToken ? "bearer" : "none, loopback only"}, max-sessions ${maxSessions}, idle-timeout ${idleSeconds}s)
+`);
+    await new Promise(
+      /** @param {(value?: void) => void} resolve */
+      (resolve2) => {
+        const stop = () => resolve2();
+        for (
+          const signal of
+          /** @type {const} */
+          ["SIGTERM", "SIGINT"]
+        ) process.once(signal, stop);
+      }
+    );
+    await remote.close();
+    log("remote transport closed");
+    return 0;
+  }
+  if (transport !== "stdio") {
+    process.stderr.write(`navi-mcp: unknown --transport "${transport}"; use stdio or sse
+`);
+    return 2;
+  }
+  await runStdioServer({
+    session: new NaviSession({ fallback, log }),
+    log
+  });
+  return 0;
+}
+export {
+  NaviSession,
+  PROTOCOL_VERSION,
+  SERVER_NAME,
+  SERVER_VERSION,
+  SUPPORTED_PROTOCOLS,
+  TOOLS,
+  handleMessage,
+  main,
+  normalizeStorageState,
+  runStdioServer,
+  toolError,
+  toolResult
+};

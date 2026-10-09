@@ -1,0 +1,43 @@
+{
+  "rawBytes": 14246,
+  "gzipBytes": 5553,
+  "budgetBytes": 15000,
+  "integrity": "sha384-CP72syvDje0GOLUfEc2HTf613+RTYFkxrpUXZHOVhv1P+m4QhvRtzTKmFy0i68/T",
+  "artifacts": {
+    "dist/navi.min.js": {
+      "bytes": 14246,
+      "gzipBytes": 5553,
+      "minified": true,
+      "budgetBytes": 15000,
+      "integrity": "sha384-CP72syvDje0GOLUfEc2HTf613+RTYFkxrpUXZHOVhv1P+m4QhvRtzTKmFy0i68/T"
+    },
+    "dist/index.mjs": {
+      "bytes": 30301,
+      "gzipBytes": 7839,
+      "minified": false
+    },
+    "dist/index.cjs": {
+      "bytes": 31547,
+      "gzipBytes": 8171,
+      "minified": false
+    },
+    "dist/cli.mjs": {
+      "bytes": 39591,
+      "gzipBytes": 10567,
+      "minified": false
+    },
+    "dist/mcp.mjs": {
+      "bytes": 54377,
+      "gzipBytes": 15175,
+      "minified": false
+    },
+    "dist/index.d.ts": {
+      "bytes": 5968,
+      "minified": false
+    },
+    "dist/navi.d.ts": {
+      "bytes": 1342,
+      "minified": false
+    }
+  }
+}

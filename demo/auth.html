@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Navi Protocol · session lab</title>
+  <script src="/navi.min.js"></script>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0c111b; color: #e5edf7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 40px 24px; }
+    main { max-width: 720px; margin: auto; }
+    .badge { color: #72debb; font: 12px ui-monospace, monospace; letter-spacing: 2px; }
+    h1 { font-size: clamp(26px, 4vw, 40px); margin: 14px 0; letter-spacing: -1px; }
+    p { color: #9aadc5; line-height: 1.6; }
+    #auth-state { color: #72debb; font: 13px ui-monospace, monospace; }
+    button { font: inherit; background: #72debb; color: #08271d; border: 1px solid #40536a; border-radius: 8px; padding: 11px 16px; margin: 8px 8px 0 0; cursor: pointer; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="badge">NAVI PROTOCOL / SESSION LAB</div>
+  <h1>A page that only exists for signed-in agents.</h1>
+  <p>The gated controls below are rendered from session state — a localStorage token and a session cookie — not from a query parameter. Log in by hydrating the session, not by clicking a form.</p>
+  <p id="auth-state" role="status">checking session…</p>
+  <div id="gated"></div>
+  <p class="note">Nothing here is a real account. The token is a fixed fixture value.</p>
+</main>
+<script>
+  // Fixture wiring: what an authenticated app would look like to an agent.
+  // localStorage proves inline storage hydration; the cookie proves cookie
+  // hydration. Both must be present for the full signed-in surface.
+  const token = localStorage.getItem('navi-auth-token');
+  const signedIn = token === 'valid-token';
+  const hasCookie = document.cookie.split('; ').some(part => part.startsWith('navi-session='));
+  const controls = [];
+  if (signedIn) controls.push('<button type="button" data-agent-target="account-balance">View balance</button>');
+  if (hasCookie) controls.push('<button type="button" data-agent-target="sign-out">Sign out</button>');
+  document.querySelector('#gated').innerHTML = controls.length
+    ? controls.join('')
+    : '<button type="button" data-agent-target="sign-in">Sign in</button>';
+  document.querySelector('#auth-state').textContent =
+    `localStorage:${signedIn ? 'signed-in' : 'anonymous'} cookie:${hasCookie ? 'present' : 'absent'}`;
+</script>
+</body>
+</html>

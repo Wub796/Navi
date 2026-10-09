@@ -1,0 +1,69 @@
+name: External smoke
+
+# Real-world target verification. Kept out of ci.yml on purpose: this job talks
+# to a live third-party origin, so it runs nightly and on demand rather than
+# gating pull requests on someone else's uptime.
+on:
+  schedule:
+    # 06:17 UTC daily. An off-the-hour time avoids the top-of-hour runner crush.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Override the smoke target (must be public and non-destructive)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  external:
+    name: Live SPA smoke (Node 20.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Cache the pinned Chromium build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium and its system dependencies
+        run: npx playwright install --with-deps chromium
+
+      # The smoke test reads reports/build.json and drives dist/, so the shipped
+      # artifacts must exist before it runs.
+      - name: Build release artifacts
+        run: npm run build
+
+      - name: Run the external smoke suite
+        env:
+          NAVI_SMOKE_URL: ${{ inputs.target }}
+        run: npm run test:smoke
+
+      - name: Upload smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report
+          path: |
+            reports/smoke-external.json
+            test-results/
+          if-no-files-found: warn
