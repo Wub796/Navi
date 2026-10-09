@@ -111,7 +111,11 @@ export async function verifyRelease(options) {
   checks.push(await evaluate('version-tag', async () => {
     const tagRef = attempt('git', ['rev-parse', '-q', '--verify', `refs/tags/${tagName}`]);
     if (!tagRef.ok) {
-      return { ok: options.tag, detail: `${tagName} does not exist${options.tag ? '; it will be created after all checks pass' : '; run with --tag to create it'}` };
+      // A tag that does not exist yet is a release that has not happened, not a
+      // broken one: an existing tag is what must agree with package.json (and a
+      // tag push re-runs this in that mode). `--tag` creates it once every other
+      // check has passed, so the tag can never point at an unverified revision.
+      return { ok: true, detail: `${tagName} does not exist yet${options.tag ? '; it will be created after all checks pass' : ' (create it with --tag once this gate is green)'}` };
     }
     const tagCommit = run('git', ['rev-list', '-n', '1', tagName]).trim();
     const head = run('git', ['rev-parse', 'HEAD']).trim();
