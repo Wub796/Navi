@@ -4,11 +4,203 @@ var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
 
+// src/settle.js
+import { randomUUID } from "node:crypto";
+function normalizeSettle(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { error: "settle must be an object with optional timeout_ms and wait_for." };
+  }
+  const record = (
+    /** @type {Record<string, unknown>} */
+    input
+  );
+  const unknown = Object.keys(record).filter((key) => key !== "timeout_ms" && key !== "wait_for");
+  if (unknown.length) return { error: `Unknown settle key(s) ${unknown.join(", ")}; expected timeout_ms and wait_for.` };
+  const waitFor = record.wait_for ?? "mutation_settle";
+  if (typeof waitFor !== "string" || !SETTLE_MODES.includes(
+    /** @type {SettleMode} */
+    waitFor
+  )) {
+    return { error: `wait_for must be one of ${SETTLE_MODES.join(", ")}; got ${JSON.stringify(waitFor)}.` };
+  }
+  const timeoutMs = record.timeout_ms ?? DEFAULT_SETTLE_TIMEOUT_MS;
+  if (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_SETTLE_TIMEOUT_MS) {
+    return { error: `timeout_ms must be an integer between 1 and ${MAX_SETTLE_TIMEOUT_MS}.` };
+  }
+  return { plan: { waitFor: (
+    /** @type {SettleMode} */
+    waitFor
+  ), timeoutMs, quietMs: MUTATION_QUIET_MS } };
+}
+async function prepareSettle(page, plan) {
+  if (plan.waitFor === "navigation") {
+    const token = randomUUID();
+    try {
+      await page.evaluate(
+        /** @param {string} value */
+        (value) => {
+          globalThis.__naviSettleToken = value;
+        },
+        token
+      );
+    } catch {
+      return { token: null, beforeUrl: null, armed: false };
+    }
+    return { token, beforeUrl: page.url(), armed: true };
+  }
+  if (plan.waitFor === "mutation_settle") {
+    try {
+      await page.evaluate(
+        /** @param {{quietMs: number}} arg */
+        (arg) => {
+          const scope = (
+            /** @type {any} */
+            globalThis
+          );
+          if (scope.__naviSettle) {
+            for (const observer of scope.__naviSettle.observers) observer.disconnect();
+          }
+          const observers = [];
+          const state = { last: performance.now(), quietMs: arg.quietMs, observers };
+          const watch = (node) => {
+            const observer = new MutationObserver(() => {
+              state.last = performance.now();
+            });
+            observer.observe(node, { subtree: true, childList: true, attributes: true, characterData: true });
+            observers.push(observer);
+          };
+          const seen = /* @__PURE__ */ new Set();
+          const walk = (root) => {
+            watch(root);
+            for (const element of root.querySelectorAll("*")) {
+              if (element.shadowRoot && !seen.has(element.shadowRoot)) {
+                seen.add(element.shadowRoot);
+                walk(element.shadowRoot);
+              }
+            }
+            for (const frame of root.querySelectorAll("iframe")) {
+              let doc = null;
+              try {
+                doc = /** @type {HTMLIFrameElement} */
+                frame.contentDocument;
+              } catch {
+                doc = null;
+              }
+              if (doc && !seen.has(doc)) {
+                seen.add(doc);
+                walk(doc);
+              }
+            }
+          };
+          walk(document);
+          scope.__naviSettle = state;
+        },
+        { quietMs: plan.quietMs }
+      );
+    } catch {
+      return { token: null, beforeUrl: null, armed: false };
+    }
+    return { token: null, beforeUrl: null, armed: true };
+  }
+  return { token: null, beforeUrl: null, armed: true };
+}
+async function completeSettle(page, plan, targetId, prepared) {
+  try {
+    if (plan.waitFor === "navigation") {
+      if (!prepared.armed || !prepared.token) return { settled: false, elapsedMs: 0, reason: "arm_failed" };
+      if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: 0 };
+      const started = Date.now();
+      while (Date.now() - started < plan.timeoutMs) {
+        await new Promise((resolve2) => setTimeout(resolve2, NAVIGATION_POLL_MS));
+        if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: Date.now() - started };
+        try {
+          const token = await page.evaluate(() => (
+            /** @type {any} */
+            globalThis.__naviSettleToken
+          ));
+          if (token !== prepared.token) return { settled: true, elapsedMs: Date.now() - started };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/execution context was destroyed|navigat/i.test(message)) return { settled: true, elapsedMs: Date.now() - started };
+          return { settled: false, elapsedMs: Date.now() - started, reason: "settle_failed" };
+        }
+      }
+      return { settled: false, elapsedMs: Date.now() - started, reason: "timeout" };
+    }
+    if (plan.waitFor === "mutation_settle") {
+      if (!prepared.armed) return { settled: false, elapsedMs: 0, reason: "arm_failed" };
+      const outcome2 = (
+        /** @type {SettleOutcome} */
+        await page.evaluate(async (arg) => {
+          const scope = (
+            /** @type {any} */
+            globalThis
+          );
+          const state = scope.__naviSettle;
+          if (!state) return { settled: false, elapsedMs: 0, reason: "not_armed" };
+          const start = performance.now();
+          const deadline = start + arg.timeoutMs;
+          try {
+            for (; ; ) {
+              const now = performance.now();
+              if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start };
+              if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: "timeout" };
+              await new Promise((resolve2) => setTimeout(resolve2, Math.min(50, Math.max(1, deadline - now))));
+            }
+          } finally {
+            for (const observer of state.observers) observer.disconnect();
+            delete scope.__naviSettle;
+          }
+        }, { timeoutMs: plan.timeoutMs })
+      );
+      return outcome2;
+    }
+    const outcome = (
+      /** @type {SettleOutcome} */
+      await page.evaluate(async (arg) => {
+        const navi = (
+          /** @type {any} */
+          globalThis.Navi
+        );
+        if (!navi) return { settled: false, elapsedMs: 0, reason: "no_sdk" };
+        const start = performance.now();
+        const deadline = start + arg.timeoutMs;
+        for (; ; ) {
+          const map = await navi.actions({ limit: 5e3, coordinateSpace: "top" });
+          const matches = map.actions.filter((action2) => action2.target_id === arg.targetId);
+          const action = matches.length === 1 ? matches[0] : null;
+          const hidden = action ? !action.state.is_visible || action.state.is_occluded : !map.truncated;
+          if (hidden) return { settled: true, elapsedMs: performance.now() - start };
+          if (performance.now() >= deadline) return { settled: false, elapsedMs: performance.now() - start, reason: "timeout" };
+          await new Promise((resolve2) => setTimeout(resolve2, arg.pollMs));
+        }
+      }, { targetId, timeoutMs: plan.timeoutMs, pollMs: TARGET_POLL_MS })
+    );
+    return outcome;
+  } catch (error) {
+    return { settled: false, elapsedMs: 0, reason: `settle_failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+var SETTLE_MODES, DEFAULT_SETTLE_TIMEOUT_MS, MAX_SETTLE_TIMEOUT_MS, MUTATION_QUIET_MS, TARGET_POLL_MS, NAVIGATION_POLL_MS;
+var init_settle = __esm({
+  "src/settle.js"() {
+    "use strict";
+    SETTLE_MODES = /** @type {const} */
+    ["mutation_settle", "navigation", "target_hidden"];
+    DEFAULT_SETTLE_TIMEOUT_MS = 3e3;
+    MAX_SETTLE_TIMEOUT_MS = 3e4;
+    MUTATION_QUIET_MS = 100;
+    TARGET_POLL_MS = 50;
+    NAVIGATION_POLL_MS = 50;
+  }
+});
+
 // src/adapter.js
 var NAVI_PROTOCOL_VERSION, ACTIONS, MAX_TEXT, NaviPlaywrightAdapter;
 var init_adapter = __esm({
   "src/adapter.js"() {
     "use strict";
+    init_settle();
     NAVI_PROTOCOL_VERSION = "0.2.0";
     ACTIONS = ["click", "type", "select"];
     MAX_TEXT = 1e4;
@@ -53,42 +245,75 @@ var init_adapter = __esm({
       /**
        * Execute one target. Returns a structured result instead of throwing for
        * anticipated refusals so callers can decide policy.
+       *
+       * The optional `settle` request is armed *before* dispatch and completed after
+       * it, inside the same busy window, so no other call can observe the page
+       * mid-action. Settlement never retries an action and never turns a dispatched
+       * action into an error; it only reports whether the requested condition held.
        * @param {string} targetId
        * @param {'click'|'type'|'select'|string} actionType
        * @param {{text?: string, value?: string}} [payload]
+       * @param {unknown} [settle] Optional settlement request, validated by src/settle.js.
        * @returns {Promise<AdapterResult>}
        */
-      async execute(targetId, actionType, payload = {}) {
+      async execute(targetId, actionType, payload = {}, settle) {
         this.checkOrigin();
         if (this.busy) return { ok: false, error: { code: "BUSY", message: "Adapter execution in flight" } };
         if (!targetId || typeof targetId !== "string" || targetId.length > 512 || !ACTIONS.includes(actionType) || !payload || typeof payload !== "object" || Object.keys(payload).some((key) => key !== (actionType === "type" ? "text" : actionType === "select" ? "value" : "")) || actionType === "type" && (typeof payload.text !== "string" || payload.text.length > MAX_TEXT)) {
           return { ok: false, error: { code: "INVALID_PAYLOAD", message: "Invalid adapter command" } };
         }
+        let plan = null;
+        if (settle !== void 0) {
+          const normalized = normalizeSettle(settle);
+          if ("error" in normalized) return { ok: false, error: { code: "INVALID_SETTLE", message: normalized.error } };
+          plan = normalized.plan;
+        }
         this.busy = true;
         try {
+          const prepared = plan ? await prepareSettle(this.page, plan) : null;
+          const dispatchedAt = Date.now();
           const expected = this.protocolVersion;
-          const response = await this.page.evaluate(async (arg) => {
-            const navi = (
-              /** @type {any} */
-              globalThis.Navi
-            );
-            if (!navi) throw new Error("Navi is not installed on this page");
-            if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
-            try {
-              return { ok: true, result: await navi.execute(arg.targetId, arg.actionType, arg.payload) };
-            } catch (error) {
-              const failure = (
-                /** @type {Error & {code?: string, reason?: string, dispatched?: boolean}} */
-                error
+          let response;
+          try {
+            response = await this.page.evaluate(async (arg) => {
+              const navi = (
+                /** @type {any} */
+                globalThis.Navi
               );
-              return { ok: false, error: {
-                code: failure.code || "EXECUTION_ERROR",
-                message: failure.message,
-                reason: failure.reason,
-                dispatched: failure.dispatched
-              } };
-            }
-          }, { targetId, actionType, payload, expected });
+              if (!navi) throw new Error("Navi is not installed on this page");
+              if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
+              try {
+                return { ok: true, result: await navi.execute(arg.targetId, arg.actionType, arg.payload) };
+              } catch (error) {
+                const failure = (
+                  /** @type {Error & {code?: string, reason?: string, dispatched?: boolean}} */
+                  error
+                );
+                return { ok: false, error: {
+                  code: failure.code || "EXECUTION_ERROR",
+                  message: failure.message,
+                  reason: failure.reason,
+                  dispatched: failure.dispatched
+                } };
+              }
+            }, { targetId, actionType, payload, expected });
+          } catch (error) {
+            if (!plan || plan.waitFor !== "navigation" || !prepared) throw error;
+            const receipt = await completeSettle(this.page, plan, targetId, prepared);
+            if (!receipt.settled) throw error;
+            return {
+              ok: true,
+              result: { target_id: targetId, action: actionType, dispatched: true },
+              mode: "synthetic",
+              settle: {
+                mode: plan.waitFor,
+                settled: true,
+                elapsed_ms: Date.now() - dispatchedAt,
+                final_url: this.page.url(),
+                ...receipt.reason ? { reason: receipt.reason } : {}
+              }
+            };
+          }
           const returned = (
             /** @type {{success?:boolean,reason?:string,dispatched?:boolean} | undefined} */
             response.result
@@ -101,19 +326,46 @@ var init_adapter = __esm({
             if (returned?.success === false) {
               return { ok: false, error: { code: "EXECUTION_FAILED", message: returned.reason || "Host reported failure" } };
             }
-            return { ok: true, result: response.result, mode: "synthetic" };
+            return await this.#withSettle({ ok: true, result: response.result, mode: "synthetic" }, plan, prepared, dispatchedAt, targetId);
           }
           if (!this.fallback) return { ok: false, error: { code: "FALLBACK_DISABLED", message: "Target requires trusted input and fallback is disabled" } };
           if (actionType !== "click" && actionType !== "type") {
             return { ok: false, error: { code: "FALLBACK_UNSUPPORTED", message: "Trusted fallback supports click and type only" } };
           }
-          return await this.#fallback(targetId, actionType, payload);
+          return await this.#withSettle(await this.#fallback(targetId, actionType, payload), plan, prepared, dispatchedAt, targetId);
         } finally {
           this.busy = false;
         }
       }
       /**
+       * Attach a settlement receipt to a dispatched outcome. The receipt carries the
+       * requested mode, whether the condition held, the wall time from dispatch to
+       * receipt, and where the page ended up.
+       * @param {AdapterResult} outcome
+       * @param {{waitFor: 'mutation_settle'|'navigation'|'target_hidden', timeoutMs: number, quietMs: number} | null} plan
+       * @param {{token: string | null, beforeUrl: string | null, armed: boolean} | null} prepared
+       * @param {number} dispatchedAt
+       * @param {string} targetId
+       * @returns {Promise<AdapterResult>}
+       */
+      async #withSettle(outcome, plan, prepared, dispatchedAt, targetId) {
+        if (!plan || !prepared || !outcome.ok) return outcome;
+        const receipt = await completeSettle(this.page, plan, targetId, prepared);
+        return {
+          ...outcome,
+          settle: {
+            mode: plan.waitFor,
+            settled: receipt.settled,
+            elapsed_ms: Date.now() - dispatchedAt,
+            final_url: this.page.url(),
+            ...receipt.reason ? { reason: receipt.reason } : {}
+          }
+        };
+      }
+      /**
        * Native driver fallback: fresh coordinates, strict state checks, no blind retries.
+       * When settlement was requested, the caller's #withSettle wraps this result, so
+       * the trusted path reports the same receipt fields as the synthetic one.
        * @param {string} targetId
        * @param {string} actionType
        * @param {{text?: string, value?: string}} payload
@@ -161,6 +413,7 @@ var init_adapter = __esm({
 
 // src/mcp/server.js
 init_adapter();
+init_settle();
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
@@ -262,7 +515,7 @@ async function installNavi(page, options = {}) {
 
 // src/mcp/sse.js
 import { createServer } from "node:http";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID as randomUUID2, timingSafeEqual } from "node:crypto";
 var DEFAULT_SSE_PORT = 3001;
 var MAX_MESSAGE_BYTES = 1024 * 1024;
 var HEARTBEAT_MS = 15e3;
@@ -348,7 +601,7 @@ async function createSseServer(options) {
         }, { "Retry-After": "5", Connection: "close" });
         return;
       }
-      const id = randomUUID();
+      const id = randomUUID2();
       res.writeHead(200, {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
@@ -522,6 +775,7 @@ var GUIDANCE = {
   UNAVAILABLE: "The element exists but is not actionable: hidden, disabled, off-screen or covered. Scroll it into view, wait for it to become enabled, or dismiss the overlay first.",
   TARGET_UNAVAILABLE: "The element was not visible, enabled, in-viewport and unoccluded at execution time. Re-read the action map and retry once the element has settled.",
   INVALID_PAYLOAD: 'The payload does not match the action. "type" takes {text}, "select" takes {value}, "click" takes no payload.',
+  INVALID_SETTLE: "The settle request is not valid. Use timeout_ms between 1 and 30000 and wait_for one of mutation_settle, navigation, target_hidden.",
   INVALID_SESSION: "The session payload is not a usable storage state. Pass an inline { cookies, origins } object or a path to a Playwright storageState.json file; every cookie needs name and value plus url or domain+path, and every origin needs a bare origin plus localStorage entries.",
   INVALID_ACTION: "The action type is not valid for this element. Use the suggested_action from navi_get_actions.",
   BUSY: "Another execution is already in flight on this page. Wait for it to finish, then retry.",
@@ -597,7 +851,7 @@ var TOOLS = [
   {
     name: "navi_execute_action",
     title: "Execute an action on a target",
-    description: `Run click, type or select on a target_id from the action map. Uses the guarded synthetic path first; controls marked data-navi-trusted="true" automatically fall back to trusted native driver input at the target's live coordinates. Failed actions are never retried automatically, because they may already have applied.`,
+    description: `Run click, type or select on a target_id from the action map. Uses the guarded synthetic path first; controls marked data-navi-trusted="true" automatically fall back to trusted native driver input at the target's live coordinates. Failed actions are never retried automatically, because they may already have applied. Pass settle to wait deterministically for the action's effect before this call returns; the receipt reports whether the requested condition held.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -608,6 +862,15 @@ var TOOLS = [
           properties: {
             text: { type: "string", description: 'Text for action_type "type".' },
             value: { type: "string", description: 'Option value for action_type "select".' }
+          },
+          additionalProperties: false
+        },
+        settle: {
+          type: "object",
+          description: "Optional deterministic settlement. mutation_settle waits for DOM silence (>=100ms with no mutation, including open shadow roots and same-origin frames); navigation waits for a URL change or document reload; target_hidden waits for the target to be removed, invisible or occluded. A timeout reports settled:false and never re-runs the action.",
+          properties: {
+            timeout_ms: { type: "number", description: `Settlement deadline in milliseconds, 1-${MAX_SETTLE_TIMEOUT_MS}. Default ${DEFAULT_SETTLE_TIMEOUT_MS}.` },
+            wait_for: { type: "string", enum: [...SETTLE_MODES], description: 'Which condition to wait for. Default "mutation_settle".' }
           },
           additionalProperties: false
         }
@@ -872,18 +1135,29 @@ var NaviSession = class {
       args.payload && typeof args.payload === "object" ? args.payload : {}
     );
     try {
-      const result = await adapter.execute(targetId, actionType, payload);
+      const result = await adapter.execute(targetId, actionType, payload, args.settle);
       if (!result.ok) {
         const code = result.error?.code ?? "EXECUTION_ERROR";
         return toolError(code, result.error?.message ?? "The action failed.", { target_id: targetId, action_type: actionType });
       }
+      const settle = result.settle;
       return toolResult({
+        executed: true,
         target_id: targetId,
         action_type: actionType,
         mode: result.mode,
         trusted_fallback: result.mode === "native-driver",
         dispatched: result.result?.dispatched === true,
-        url: adapter.page.url()
+        url: adapter.page.url(),
+        // The receipt is present only when the caller asked for settlement, so
+        // an unconfigured call cannot be mistaken for a verified one.
+        ...settle ? {
+          settled: settle.settled,
+          elapsed_ms: settle.elapsed_ms,
+          final_url: settle.final_url,
+          settle: settle.mode,
+          ...settle.reason ? { settle_reason: settle.reason } : {}
+        } : {}
       });
     } catch (error) {
       return toolError(errorCode(error), error instanceof Error ? error.message : String(error), { target_id: targetId, action_type: actionType, may_have_applied: true });
@@ -1098,6 +1372,11 @@ Environment
     const host = option(argv, "--host", "127.0.0.1");
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
       process.stderr.write(`navi-mcp: --port must be an integer between 0 and 65535, got "${option(argv, "--port", "")}"
+`);
+      return 2;
+    }
+    if (!host || host.startsWith("-")) {
+      process.stderr.write(`navi-mcp: --host needs a host name or address, got "${host}" (use 127.0.0.1 for loopback)
 `);
       return 2;
     }

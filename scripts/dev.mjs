@@ -22,6 +22,7 @@ const routes = new Map([
   ['/', ['demo/index.html', 'text/html; charset=utf-8']],
   ['/frame.html', ['demo/frame.html', 'text/html; charset=utf-8']],
   ['/auth.html', ['demo/auth.html', 'text/html; charset=utf-8']],
+  ['/settlement.html', ['demo/settlement.html', 'text/html; charset=utf-8']],
   ['/navi.min.js', ['dist/navi.min.js', 'application/javascript; charset=utf-8']],
   ['/favicon.ico', ['', 'image/x-icon']],
   ['/csp.html', ['demo/csp.html', 'text/html; charset=utf-8', csp]],

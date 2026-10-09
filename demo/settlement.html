@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Navi Protocol · settlement lab</title>
+  <script src="/navi.min.js"></script>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0c111b; color: #e5edf7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 40px 24px; }
+    main { max-width: 720px; margin: auto; }
+    .badge { color: #72debb; font: 12px ui-monospace, monospace; letter-spacing: 2px; }
+    h1 { font-size: clamp(24px, 4vw, 36px); margin: 14px 0; letter-spacing: -1px; }
+    p { color: #9aadc5; line-height: 1.6; }
+    button, a.button { font: inherit; background: #72debb; color: #08271d; border: 1px solid #40536a; border-radius: 8px; padding: 10px 14px; margin: 6px 8px 6px 0; cursor: pointer; }
+    #state { color: #72debb; font: 13px ui-monospace, monospace; }
+    #offer { border: 1px solid #40536a; border-radius: 10px; padding: 16px; margin-top: 14px; background: #111a28; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="badge">NAVI PROTOCOL / SETTLEMENT LAB</div>
+  <h1>Three deterministic waits, one fixture.</h1>
+  <p>Each control below has an effect a caller can settle on: a DOM insert, a self-hide, or a real navigation. The status line proves an action ran even when its settlement times out.</p>
+  <button type="button" data-agent-target="open-modal">Open the offer</button>
+  <button type="button" data-agent-target="inert">Do nothing</button>
+  <a class="button" href="/settlement.html?step=2" data-agent-target="go-step">Go to step 2</a>
+  <p id="state" role="status">idle</p>
+  <div id="modal-host"></div>
+</main>
+<script>
+  document.querySelector('[data-agent-target="open-modal"]').addEventListener('click', event => {
+    document.querySelector('#modal-host').innerHTML = '<div id="offer"><h2>Sandbox offer</h2><button type="button" data-agent-target="close-modal">Dismiss</button></div>';
+    event.currentTarget.hidden = true;
+    document.querySelector('#state').textContent = 'modal open';
+  });
+  document.addEventListener('click', event => {
+    const close = event.target.closest('[data-agent-target="close-modal"]');
+    if (!close) return;
+    close.closest('#offer').hidden = true;
+    document.querySelector('#state').textContent = 'modal dismissed';
+  });
+  if (new URL(location.href).searchParams.get('step') === '2') document.querySelector('#state').textContent = 'step 2';
+</script>
+</body>
+</html>

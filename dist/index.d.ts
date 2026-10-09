@@ -46,6 +46,12 @@ export interface NaviActionMap {
  */
 export interface NaviAPI {
   version: string;
+  /**
+   * Present only on the tenant loader's deferred stub (`true` while the bundle is
+   * still loading). A loaded SDK does not set it, which is also how the bundle
+   * knows it may install over a stub instead of refusing to boot.
+   */
+  stub?: boolean;
   ready(): Promise<void>;
   refresh(): Promise<void>;
   actions(options?: { limit?: number; viewportOnly?: boolean; coordinateSpace?: 'local' | 'top' }): Promise<NaviActionMap>;

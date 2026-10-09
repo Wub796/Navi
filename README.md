@@ -121,11 +121,28 @@ Exit codes: `0` success, `1` flow/assertion failure, `2` usage or invalid flow, 
 |---|---|
 | `navi_navigate` | Open an http(s) URL and wait for Navi initialization. Reports which SDK install strategy was used. |
 | `navi_get_actions` | Return the current action map. Viewport-filtered by default; `all: true` returns the whole document. |
-| `navi_execute_action` | Run `click`/`type`/`select` on a `target_id`. Falls back to trusted native input at live coordinates for `data-navi-trusted="true"` controls. |
+| `navi_execute_action` | Run `click`/`type`/`select` on a `target_id`. Falls back to trusted native input at live coordinates for `data-navi-trusted="true"` controls. Pass `settle` to wait for the action's effect before the call returns. |
 | `navi_assert_state` | Check that a target exists, is visible/enabled/in-viewport, and matches an expected accessible name. |
 | `navi_set_session` | Seed cookies and localStorage from an inline payload or a Playwright `storageState.json` path, so `navi_navigate` opens a pre-authenticated page instead of a sign-in screen. |
 
 Every tool answers with the structured envelope `{ content: [{ type: "text", text }], isError }`, where the text is JSON. Refusals carry the failure code and actionable guidance: `UNAVAILABLE` says the control is hidden, disabled, off-screen or covered, `NOT_FOUND` says to re-read the action map because ids change with re-renders, and `INVALID_URL` never echoes embedded credentials.
+
+#### Deterministic settlement
+
+An action returns when it is *dispatched*, which is not the same moment as the page having reacted. Pass `settle` to wait for one of three conditions before the call answers; the envelope then carries the receipt `{ executed: true, settled: true, elapsed_ms, final_url }`:
+
+```jsonc
+{ "target_id": "open-modal", "action_type": "click",
+  "settle": { "wait_for": "mutation_settle", "timeout_ms": 3000 } }
+```
+
+| `wait_for` | Waits until |
+|---|---|
+| `mutation_settle` (default) | the document, its open shadow roots and same-origin frames record no DOM mutation for 100 ms |
+| `navigation` | the top-level URL changed, or the document reloaded |
+| `target_hidden` | the dispatched target left the action map, or Navi now reports it invisible or occluded (a dismissed modal) |
+
+A settlement is a **receipt, never a retry**. `settled: false` with `settle_reason: "timeout"` still reports `executed: true` and never re-dispatches; an invalid request (`INVALID_SETTLE`) is refused *before* anything is dispatched; and a call made without `settle` omits the receipt fields, so it cannot be mistaken for a verified one. `mutation_settle` observes the same surfaces Navi indexes — a mutation inside a *closed* root is invisible to the driver, so those actions should settle on `target_hidden` or be confirmed by re-reading the map. The adapter exposes the same option as a fourth argument: `tools.execute('open-modal', 'click', {}, { wait_for: 'target_hidden' })`.
 
 ```sh
 npx navi-mcp --version      # server and protocol version
@@ -186,13 +203,31 @@ NAVI_TENANTS="live_key_abc:acme" node server/index.js --port 8790 --store server
 | Endpoint | Behaviour |
 |---|---|
 | `GET /v1/navi.js?key=<tenant_key>` | Serves `dist/navi.min.js` with `Cache-Control: public, max-age=3600, stale-while-revalidate=86400`, an `ETag` equal to the SRI SHA-384, and `304` on `If-None-Match`. `401` without a valid key. |
+| `GET /v1/loader.js` | Serves `dist/loader.min.js`, the tenant embed snippet. Carries no tenant key of its own. |
 | `POST /v1/telemetry` | Ingests the beacon payload `{ tenant_id, url_origin, actions_indexed, actions_executed, execution_failures }`, as `application/json` or beacon-shaped `text/plain`. Strict schema, ≤ 2 KB, canonical origins only. |
 | `GET /v1/telemetry?key=<tenant_key>` | The tenant's aggregate: totals, per-origin and per-tenant event counts. `no-store`. |
 | `GET /healthz` | `{ ok, mode, tenants }`, where `mode` is `sqlite` or `log`. |
 
+Both scripts are served with `Access-Control-Allow-Origin: *`, because the supported embed is a `crossorigin="anonymous"` script with an `integrity` hash: the browser then fetches in CORS mode and verifies the bytes before executing them.
+
 Aggregates are appended to `node:sqlite` where the runtime provides it (Node 22.5+), and to an append-only JSONL log at the same path otherwise, so the service still runs on Node 20. Rejected payloads — unknown keys, wrong types, negative or non-integer counters, a `url_origin` carrying a path, query, fragment, trailing slash or credentials, an unregistered tenant, or raw DOM/HTML text — never reach the store.
 
-**The client SDK sends no telemetry.** Its no-network guarantee is enforced by a test at 14,246 bytes; the beacon is built and dispatched by the hosting page or tenant script, and `demo/` shows the shape. Treat this service as a reference implementation: it has tenant keys, not user auth; no rate limiting, quotas, deduplication or retention policy; and it does not terminate TLS.
+**The client SDK sends no telemetry.** Its no-network guarantee is enforced by a test at 14,265 bytes; the beacon is built and dispatched by the hosting page or tenant script, and `demo/` shows the shape. Treat this service as a reference implementation: it has tenant keys, not user auth; no rate limiting, quotas, deduplication or retention policy; and it does not terminate TLS.
+
+### Tenant embed loader
+
+A tenant does not hand-wire the script: `dist/loader.min.js` (480 bytes, held under a strict 500-byte gate) is the whole embed.
+
+```html
+<script src="https://cdn.example.com/v1/loader.js"
+        data-key="YOUR_TENANT_KEY"
+        data-sri="sha384-…"></script>
+```
+
+* `data-key` is appended to the bundle request as `?key=`, where the host checks it; a refused key rejects every queued call instead of hanging.
+* `data-sri` is the published `dist/sri.txt` hash. The loader appends it as `integrity` and sets `crossorigin="anonymous"` on the tag it injects, so the browser verifies the bytes it runs. `npm run build` prints the exact snippet with the current hash filled in.
+* The bundle URL resolves from the loader's own origin, so the loader can be served from a CDN while the page runs on the tenant's domain. The hash is deliberately *not* baked into the snippet: 71 bytes of it would push the snippet past its budget, so it travels in the embed tag the way standard SRI embeds do.
+* Until the bundle executes, `window.Navi` is a stub (`Navi.stub === true`, `Navi.version === '0.0.0'`) that defers every API call and resolves it with the real result, so `await Navi.actions()` written above the SDK behaves the same as after it loads. The SDK recognises the stub and installs over it; any other pre-existing `Navi` is left alone.
 
 Diagnostics go to stderr only, so stdout stays a clean JSON-RPC stream. Unlike the flow runner, MCP tool calls are **not** gated by `--allow-consequential`: an agent holding this server can dispatch a consequential control directly. Use the CLI for reviewed flows with that gate, or leave this server off for destinations where an irreversible click matters. For a stricter posture, `--no-fallback` keeps the session synthetic-only, so a `data-navi-trusted` control is refused with `FALLBACK_DISABLED` instead of being driven by real mouse and keyboard input.
 
@@ -216,18 +251,23 @@ Two honest limits: a host that replaces `attachShadow` *after* Navi hooks it tak
 
 | Gate | Source | Fails when |
 |---|---|---|
-| Bundle budget + artifacts | `reports/build.json` | `dist/navi.min.js` is ≥ 15,000 bytes, or any of the six release artifacts (`navi.min.js`, `index.mjs`, `index.cjs`, `index.d.ts`, `cli.mjs`, `mcp.mjs`) is missing |
+| Bundle budget + artifacts | `reports/build.json` | `dist/navi.min.js` is ≥ 15,000 bytes, or any of the eight release artifacts (`navi.min.js`, `loader.min.js`, `index.mjs`, `index.cjs`, `index.d.ts`, `navi.d.ts`, `cli.mjs`, `mcp.mjs`) is missing |
+| Loader budget | `reports/build.json` | `dist/loader.min.js` is ≥ 500 bytes |
 | Traversal Long Tasks | `reports/verification.json` | the 10,000-element traversal records a Long Task over 50ms |
 | Benchmark | `reports/benchmark-comparison.json` | any measured traversal records a Long Task over 50ms, or 2,000-node viewport classification p95 exceeds 25ms |
 
 The benchmark gates run in a second job that starts the local demo origin on `127.0.0.1:4173`, waits for it to answer, and always stops it again.
 
 ```sh
-npm run test:gates   # self-test the gates themselves (16 expectations, no browser)
+npm run test:gates   # self-test the gates themselves (19 expectations, no browser)
 npm run gates        # run all three gates against the current reports
 npm run pack:check   # assert what `npm publish` would actually upload
 npm run test:smoke   # non-destructive check against a live public SPA
+node scripts/verify-release.mjs          # the release gate: git, SRI, tests, gates, pack
+node scripts/verify-release.mjs --tag    # ...and create the annotated v<version> tag
 ```
+
+[verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 61 passing tests, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. [release.yml](.github/workflows/release.yml) runs the same gate on a tag push and can create and push the tag on demand; it deliberately stops there, because publishing to a registry is a decision with a name, a license and provenance attached, not a side effect.
 
 ### Required status checks
 
@@ -248,9 +288,11 @@ The two CI jobs — `Quality gates (Node 20.x)` and `Benchmark gate (Node 20.x)`
 - [Acceptance contract](docs/ACCEPTANCE.md) · [browser tests](tests/navi.spec.mjs)
 - [Verification summary](reports/VERIFICATION.md) · [raw measurements](reports/verification.json)
 - [Competitive benchmark script](tests/benchmark-comparison.js) · [comparison report](reports/BENCHMARK.md)
-- [CI gates](scripts/ci-gates.mjs) · [PR/push pipeline](.github/workflows/ci.yml) · [nightly external smoke](.github/workflows/smoke.yml) · [external smoke test](tests/external-smoke.spec.mjs)
-- [MCP server](src/mcp/server.js) · [SSE transport](src/mcp/sse.js) · [MCP launcher](bin/navi-mcp.js) · [MCP suite](tests/mcp-server.spec.mjs) · [SSE suite](tests/mcp-sse.spec.mjs) · [SSE hardening suite](tests/mcp-sse-hardening.spec.mjs)
+- [CI gates](scripts/ci-gates.mjs) · [release gate](scripts/verify-release.mjs) · [PR/push pipeline](.github/workflows/ci.yml) · [release pipeline](.github/workflows/release.yml) · [nightly external smoke](.github/workflows/smoke.yml) · [external smoke test](tests/external-smoke.spec.mjs)
+- [MCP server](src/mcp/server.js) · [SSE transport](src/mcp/sse.js) · [MCP launcher](bin/navi-mcp.js) · [MCP suite](tests/mcp-server.spec.mjs) · [SSE suite](tests/mcp-sse.spec.mjs) · [auth/concurrency suite](tests/mcp-auth-concurrency.spec.mjs)
 - [Session hydration suite](tests/session-hydration.spec.mjs) · [session fixture](demo/auth.html)
+- [Settlement engine](src/settle.js) · [settlement + adapter suite](tests/settlement.spec.mjs) · [settlement fixture](demo/settlement.html)
+- [Tenant loader](src/loader.js) · [built snippet](dist/loader.min.js) · [loader suite](tests/loader.spec.mjs)
 - [Host service](server/index.js) · [aggregate store](server/store.js) · [tenant keys](server/tenants.js) · [ingestion suite](tests/backend-ingest.spec.mjs)
 - [CSP compliance suite](tests/csp-compliance.spec.mjs) · [hardening suite](tests/hardening.spec.mjs) · [shared browser helpers](src/browser.js)
 - [External smoke report](reports/SMOKE.md) · [raw smoke log](reports/smoke-external.json)
@@ -268,5 +310,7 @@ The benchmark gates raw bytes <15,000, SDK ticks ≤6ms/<16ms and zero observed 
 Real React 19 state/sorting/replacement, closed roots, iframe navigation, occlusion and execution regressions are verified with Chromium. Vue-style native listeners are exercised, not a complete Vue app. Puppeteer adapter uses the same evaluate API but is not separately integration-tested. Firefox/Safari and customer frameworks remain rollout work.
 
 No service account, public deployment or hosted environment was created; the ingestion service runs locally over plain HTTP and was never exposed or load-tested. React dependencies are dev-only test fixtures; the production SDK has zero runtime dependencies.
+
+Settlement is a heuristic with a name, not a proof of completion. `mutation_settle` cannot see inside a *closed* shadow root, so a mutation that happens only there can read as silence; `target_hidden` believes Navi's own visibility/occlusion state, so a target that stays visible but inert times out; and `navigation` treats a URL change or a reload as the effect, which a same-page redirect can satisfy without the business outcome. Nothing here proves that a network write, a payment or a server-side transaction finished. The tenant loader inherits the browser's SRI/CORS rules: with `crossorigin="anonymous"` the script origin must send `Access-Control-Allow-Origin` (the reference host does), an `integrity` hash must match the bytes on the wire (a CDN that rewrites the bundle fails closed, which is the point), and a page that never supplies `data-sri` gets no verification at all.
 
 The SSE transport is gated, not identified: one shared bearer token guards the port when you set one, session ids stay anonymous as the MCP binding specifies, there is no per-caller identity, no rate limiting beyond the session ceiling and no TLS. Loopback is the default and a non-loopback bind without a token is refused. The hosted-session feature stores whatever cookies or storage state the caller supplies — the tool validates their shape, not their safety, and the same is true of the tenant keys the ingestion service accepts. Telemetry from an untrusted page is attacker-controlled input; the schema limits its shape, not its truthfulness.

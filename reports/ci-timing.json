@@ -1,6 +1,6 @@
 {
-  "recordedAt": "2026-10-09T19:00:42.956Z",
-  "note": "Local replay of the ci.yml/smoke.yml steps in workflow order on this workstation. The GitHub-hosted run was never executed: this workspace is not a Git repository and no remote is configured.",
+  "recordedAt": "2026-10-09T20:40:44.188Z",
+  "note": "Local replay of the ci.yml/smoke.yml steps in workflow order on this workstation, with the demo origin started and stopped around the benchmark the way the workflow does. No GitHub-hosted run was executed.",
   "host": {
     "os": "darwin 27.0.0 arm64",
     "cpu": "Apple M5 Pro",
@@ -13,16 +13,16 @@
     {
       "stage": "quality",
       "name": "Gate self-test",
-      "seconds": 0.1,
+      "seconds": 0.2,
       "exit": 0,
-      "summary": "gate self-test: 16/16 expectations held"
+      "summary": "gate self-test: 19/19 expectations held"
     },
     {
       "stage": "quality",
       "name": "Build release artifacts",
       "seconds": 0.2,
       "exit": 0,
-      "summary": "  dist/navi.d.ts 1342 bytes"
+      "summary": "  dist/loader.min.js 480 bytes"
     },
     {
       "stage": "quality",
@@ -41,9 +41,9 @@
     {
       "stage": "quality",
       "name": "Chromium regression + distribution suite",
-      "seconds": 46.1,
+      "seconds": 53.3,
       "exit": 0,
-      "summary": "  46 passed (45.7s)"
+      "summary": "  61 passed (52.9s)"
     },
     {
       "stage": "quality",
@@ -55,29 +55,29 @@
     {
       "stage": "benchmark",
       "name": "Competitive benchmark",
-      "seconds": 77.1,
+      "seconds": 81.6,
       "exit": 0,
-      "summary": "Saved reports/BENCHMARK.md and reports/benchmark-comparison.json"
+      "summary": "demo origin ready in 0.5s; Saved reports/BENCHMARK.md and reports/benchmark-comparison.json"
     },
     {
       "stage": "benchmark",
       "name": "Gate 3 benchmark",
-      "seconds": 0,
+      "seconds": 0.1,
       "exit": 0,
       "summary": "All selected gates passed."
     },
     {
       "stage": "smoke",
       "name": "External smoke suite",
-      "seconds": 1.6,
+      "seconds": 2,
       "exit": 0,
-      "summary": "  1 passed (1.3s)"
+      "summary": "  1 passed (1.5s)"
     }
   ],
   "totalsByJob": {
-    "quality": 47.3,
-    "benchmark": 77.1,
-    "smoke": 1.6
+    "quality": 54.6,
+    "benchmark": 81.7,
+    "smoke": 2
   },
   "failure": false
 }

@@ -5,6 +5,7 @@
 // without a build step:
 //
 //   GET  /v1/navi.js?key=<tenant_key>   serve the shipped browser bundle
+//   GET  /v1/loader.js                  serve the tenant embed loader
 //   POST /v1/telemetry                  ingest one navigator.sendBeacon payload
 //   GET  /v1/telemetry?key=<tenant_key> read that tenant's aggregate
 //   GET  /healthz                       liveness, store mode and tenant count
@@ -22,8 +23,16 @@ import { loadTenants, tenantFor, tenantIds } from './tenants.js';
 
 /** Hard cap for one telemetry beacon body. */
 export const MAX_PAYLOAD_BYTES = 2048;
-/** Cache policy for the distributed script; the SRI hash is the ETag. */
+/** Cache policy for the distributed scripts; the SRI hash is the ETag. */
 export const SCRIPT_CACHE_CONTROL = 'public, max-age=3600, stale-while-revalidate=86400';
+/**
+ * Both scripts are served with `Access-Control-Allow-Origin: *`, because the
+ * supported embed uses `crossorigin="anonymous"` plus an `integrity` hash: the
+ * browser then fetches the script in CORS mode and verifies it before executing.
+ * The bytes are public and tenant-keyed, so the wildcard exposes nothing that a
+ * plain <script> tag did not already expose.
+ */
+export const SCRIPT_CORS = '*';
 /** Largest counter value accepted; anything bigger is not a plausible page metric. */
 export const MAX_COUNTER = 1_000_000;
 export const DEFAULT_PORT = 8790;
@@ -39,6 +48,7 @@ Usage
 
 Endpoints
   GET  /v1/navi.js?key=<tenant_key>
+  GET  /v1/loader.js
   POST /v1/telemetry
   GET  /v1/telemetry?key=<tenant_key>
   GET  /healthz
@@ -53,6 +63,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 /** @returns {string} */
 function defaultSdkPath() {
   return resolve(here, '../dist/navi.min.js');
+}
+
+/** @returns {string} */
+function defaultLoaderPath() {
+  return resolve(here, '../dist/loader.min.js');
 }
 
 /** @returns {Promise<string | null>} */
@@ -201,7 +216,7 @@ function validateTelemetry(payload, allowedTenantIds) {
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
  * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
- * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, integrity?: string | null, log?: (line: string) => void}} HostOptions
+ * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, log?: (line: string) => void}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: Map<string, string>, close(): Promise<void>}} NaviHost
  */
 
@@ -216,19 +231,33 @@ export async function createNaviHostServer(options = {}) {
   const tenants = options.tenants ?? loadTenants();
   const store = options.store ?? (await createStore(options.storeFile ?? resolve(DEFAULT_STORE_FILE)));
   const sdkPath = options.sdkPath ?? defaultSdkPath();
+  const loaderPath = options.loaderPath ?? defaultLoaderPath();
   const integrity = options.integrity === undefined ? await defaultIntegrity() : options.integrity;
   const log = options.log ?? (() => {});
   const allowedTenantIds = tenantIds(tenants);
 
-  /** Cached bundle bytes, keyed on the file's identity so a rebuild is picked up. */
-  let cached = { mtimeMs: 0, size: 0, bytes: /** @type {Buffer | null} */ (null) };
-  const readSdk = async () => {
-    const info = await stat(sdkPath);
-    if (cached.bytes && cached.mtimeMs === info.mtimeMs && cached.size === info.size) return cached.bytes;
-    const bytes = await readFile(sdkPath);
-    cached = { mtimeMs: info.mtimeMs, size: info.size, bytes };
-    return bytes;
+  /** Cached file bytes, keyed on the file's identity so a rebuild is picked up. */
+  const cachedFile = (/** @type {string} */ file) => {
+    let cached = { mtimeMs: 0, size: 0, bytes: /** @type {Buffer | null} */ (null) };
+    return async () => {
+      const info = await stat(file);
+      if (cached.bytes && cached.mtimeMs === info.mtimeMs && cached.size === info.size) return cached.bytes;
+      const bytes = await readFile(file);
+      cached = { mtimeMs: info.mtimeMs, size: info.size, bytes };
+      return bytes;
+    };
   };
+  const readSdk = cachedFile(sdkPath);
+  const readLoader = cachedFile(loaderPath);
+
+  /** Headers every distributable script carries; callers add length/cache specifics. @returns {Record<string, string>} */
+  const scriptHeaders = () => ({
+    'Content-Type': 'application/javascript; charset=utf-8',
+    'Cache-Control': SCRIPT_CACHE_CONTROL,
+    'X-Content-Type-Options': 'nosniff',
+    'Access-Control-Allow-Origin': SCRIPT_CORS,
+    Vary: 'Accept-Encoding'
+  });
 
   const server = createServer((req, res) => {
     void handle(req, res).catch(error => {
@@ -264,13 +293,7 @@ export async function createNaviHostServer(options = {}) {
       } catch {
         return sendError(res, 503, 'SCRIPT_UNAVAILABLE', 'The browser bundle is not available on this host. Build it with "npm run build" and restart the service.');
       }
-      /** @type {Record<string, string>} */
-      const headers = {
-        'Content-Type': 'application/javascript; charset=utf-8',
-        'Cache-Control': SCRIPT_CACHE_CONTROL,
-        'X-Content-Type-Options': 'nosniff',
-        Vary: 'Accept-Encoding'
-      };
+      const headers = scriptHeaders();
       if (integrity) {
         const etag = `"${integrity}"`;
         headers.ETag = etag;
@@ -280,6 +303,23 @@ export async function createNaviHostServer(options = {}) {
           return;
         }
       }
+      headers['Content-Length'] = String(bytes.length);
+      res.writeHead(200, headers);
+      res.end(bytes);
+      return;
+    }
+
+    if (path === '/v1/loader.js') {
+      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /v1/loader.js.');
+      // The loader carries no tenant key of its own: it reads data-key from the
+      // embed tag and appends it to the bundle request, where it is checked.
+      let bytes;
+      try {
+        bytes = await readLoader();
+      } catch {
+        return sendError(res, 503, 'SCRIPT_UNAVAILABLE', 'The tenant loader is not available on this host. Build it with "npm run build" and restart the service.');
+      }
+      const headers = scriptHeaders();
       headers['Content-Length'] = String(bytes.length);
       res.writeHead(200, headers);
       res.end(bytes);

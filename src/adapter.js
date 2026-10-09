@@ -1,6 +1,7 @@
 // Navi adapter: drives Navi targets in a Playwright page and falls back to real
 // driver input only when the host certifies that nothing was dispatched.
 // This module is environment-agnostic: it only needs the small page surface below.
+import { completeSettle, normalizeSettle, prepareSettle } from './settle.js';
 
 /** @typedef {{x:number,y:number,width:number,height:number}} NaviBox */
 /**
@@ -21,6 +22,14 @@
  * @property {{target_id?:string,action?:string,dispatched:boolean}} [result]
  * @property {AdapterError} [error]
  * @property {AdapterMode} [mode]
+ * @property {{mode:string,settled:boolean,elapsed_ms:number,final_url:string,reason?:string}} [settle] Present only when the caller requested settlement.
+ */
+/**
+ * Optional post-action settlement, forwarded from the caller. "mutation_settle"
+ * waits for DOM silence (>=100ms with no mutation), "navigation" waits for a URL
+ * change or document reload, "target_hidden" waits for the dispatched target to
+ * leave the action map or be reported invisible/occluded.
+ * @typedef {{timeout_ms?:number,wait_for?:'mutation_settle'|'navigation'|'target_hidden'}} SettleRequest
  */
 /**
  * Structural subset of a Playwright page used by the adapter.
@@ -84,12 +93,18 @@ export class NaviPlaywrightAdapter {
   /**
    * Execute one target. Returns a structured result instead of throwing for
    * anticipated refusals so callers can decide policy.
+   *
+   * The optional `settle` request is armed *before* dispatch and completed after
+   * it, inside the same busy window, so no other call can observe the page
+   * mid-action. Settlement never retries an action and never turns a dispatched
+   * action into an error; it only reports whether the requested condition held.
    * @param {string} targetId
    * @param {'click'|'type'|'select'|string} actionType
    * @param {{text?: string, value?: string}} [payload]
+   * @param {unknown} [settle] Optional settlement request, validated by src/settle.js.
    * @returns {Promise<AdapterResult>}
    */
-  async execute(targetId, actionType, payload = {}) {
+  async execute(targetId, actionType, payload = {}, settle) {
     this.checkOrigin();
     if (this.busy) return { ok: false, error: { code: 'BUSY', message: 'Adapter execution in flight' } };
     if (!targetId || typeof targetId !== 'string' || targetId.length > 512 || !ACTIONS.includes(actionType) ||
@@ -98,22 +113,51 @@ export class NaviPlaywrightAdapter {
       (actionType === 'type' && (typeof payload.text !== 'string' || payload.text.length > MAX_TEXT))) {
       return { ok: false, error: { code: 'INVALID_PAYLOAD', message: 'Invalid adapter command' } };
     }
+    let plan = null;
+    if (settle !== undefined) {
+      const normalized = normalizeSettle(settle);
+      if ('error' in normalized) return { ok: false, error: { code: 'INVALID_SETTLE', message: normalized.error } };
+      plan = normalized.plan;
+    }
     this.busy = true;
     try {
+      // Arming happens before the dispatch so a mutation made *during* the click
+      // is observed, and so a reload that keeps the same URL is distinguishable.
+      const prepared = plan ? await prepareSettle(this.page, plan) : null;
+      const dispatchedAt = Date.now();
       // Transport exceptions deliberately propagate: the action may already have happened.
       const expected = this.protocolVersion;
-      const response = await this.page.evaluate(async (/** @type {{targetId:string,actionType:string,payload:object,expected:string}} */ arg) => {
-        const navi = /** @type {any} */ (globalThis).Navi;
-        if (!navi) throw new Error('Navi is not installed on this page');
-        if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
-        try {
-          return { ok: true, result: await navi.execute(arg.targetId, arg.actionType, arg.payload) };
-        } catch (error) {
-          const failure = /** @type {Error & {code?: string, reason?: string, dispatched?: boolean}} */ (error);
-          return { ok: false, error: { code: failure.code || 'EXECUTION_ERROR', message: failure.message,
-            reason: failure.reason, dispatched: failure.dispatched } };
-        }
-      }, { targetId, actionType, payload, expected });
+      /** @type {any} */
+      let response;
+      try {
+        response = await this.page.evaluate(async (/** @type {{targetId:string,actionType:string,payload:object,expected:string}} */ arg) => {
+          const navi = /** @type {any} */ (globalThis).Navi;
+          if (!navi) throw new Error('Navi is not installed on this page');
+          if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
+          try {
+            return { ok: true, result: await navi.execute(arg.targetId, arg.actionType, arg.payload) };
+          } catch (error) {
+            const failure = /** @type {Error & {code?: string, reason?: string, dispatched?: boolean}} */ (error);
+            return { ok: false, error: { code: failure.code || 'EXECUTION_ERROR', message: failure.message,
+              reason: failure.reason, dispatched: failure.dispatched } };
+          }
+        }, { targetId, actionType, payload, expected });
+      } catch (error) {
+        // A navigating action can take the execution context down before the
+        // in-page settle returns. When the caller asked to wait for navigation,
+        // that navigation is the receipt: surfacing the transport error instead
+        // would tell an agent to retry a click that already applied.
+        if (!plan || plan.waitFor !== 'navigation' || !prepared) throw error;
+        const receipt = await completeSettle(this.page, plan, targetId, prepared);
+        if (!receipt.settled) throw error;
+        return {
+          ok: true,
+          result: { target_id: targetId, action: actionType, dispatched: true },
+          mode: 'synthetic',
+          settle: { mode: plan.waitFor, settled: true, elapsed_ms: Date.now() - dispatchedAt, final_url: this.page.url(),
+            ...(receipt.reason ? { reason: receipt.reason } : {}) }
+        };
+      }
       const returned = /** @type {{success?:boolean,reason?:string,dispatched?:boolean} | undefined} */ (response.result);
       const needsTrusted = returned?.success === false && returned.reason === 'untrusted_gesture_required' && returned.dispatched !== true;
       const dispatchFailed = response.error?.reason === 'dispatch_failed' && response.error.dispatched === false;
@@ -125,20 +169,48 @@ export class NaviPlaywrightAdapter {
         if (returned?.success === false) {
           return { ok: false, error: { code: 'EXECUTION_FAILED', message: returned.reason || 'Host reported failure' } };
         }
-        return { ok: true, result: response.result, mode: 'synthetic' };
+        return await this.#withSettle({ ok: true, result: response.result, mode: 'synthetic' }, plan, prepared, dispatchedAt, targetId);
       }
       if (!this.fallback) return { ok: false, error: { code: 'FALLBACK_DISABLED', message: 'Target requires trusted input and fallback is disabled' } };
       if (actionType !== 'click' && actionType !== 'type') {
         return { ok: false, error: { code: 'FALLBACK_UNSUPPORTED', message: 'Trusted fallback supports click and type only' } };
       }
-      return await this.#fallback(targetId, actionType, payload);
+      return await this.#withSettle(await this.#fallback(targetId, actionType, payload), plan, prepared, dispatchedAt, targetId);
     } finally {
       this.busy = false;
     }
   }
 
   /**
+   * Attach a settlement receipt to a dispatched outcome. The receipt carries the
+   * requested mode, whether the condition held, the wall time from dispatch to
+   * receipt, and where the page ended up.
+   * @param {AdapterResult} outcome
+   * @param {{waitFor: 'mutation_settle'|'navigation'|'target_hidden', timeoutMs: number, quietMs: number} | null} plan
+   * @param {{token: string | null, beforeUrl: string | null, armed: boolean} | null} prepared
+   * @param {number} dispatchedAt
+   * @param {string} targetId
+   * @returns {Promise<AdapterResult>}
+   */
+  async #withSettle(outcome, plan, prepared, dispatchedAt, targetId) {
+    if (!plan || !prepared || !outcome.ok) return outcome;
+    const receipt = await completeSettle(this.page, plan, targetId, prepared);
+    return {
+      ...outcome,
+      settle: {
+        mode: plan.waitFor,
+        settled: receipt.settled,
+        elapsed_ms: Date.now() - dispatchedAt,
+        final_url: this.page.url(),
+        ...(receipt.reason ? { reason: receipt.reason } : {})
+      }
+    };
+  }
+
+  /**
    * Native driver fallback: fresh coordinates, strict state checks, no blind retries.
+   * When settlement was requested, the caller's #withSettle wraps this result, so
+   * the trusted path reports the same receipt fields as the synthetic one.
    * @param {string} targetId
    * @param {string} actionType
    * @param {{text?: string, value?: string}} payload

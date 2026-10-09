@@ -1,6 +1,6 @@
 {
   "name": "navi-interaction-bridge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Navi protocol: deterministic action maps and guarded execution tools for browser agents.",
   "type": "module",
   "engines": {

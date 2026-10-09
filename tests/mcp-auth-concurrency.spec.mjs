@@ -297,6 +297,12 @@ test('a non-loopback bind without an auth token is refused, and bad bounds are r
   expect(nextFlag.code).toBe(2);
   expect(nextFlag.stderr).toContain('--auth-token needs a value');
 
+  // An empty host reaches Node as "every interface", so it is refused before the
+  // token rule can be satisfied by it.
+  const emptyHost = await runCli(['--transport', 'sse', '--host', '']);
+  expect(emptyHost.code).toBe(2);
+  expect(emptyHost.stderr).toContain('--host needs a host name or address');
+
   const zeroSessions = await runCli(['--transport', 'sse', '--max-sessions', '0']);
   expect(zeroSessions.code).toBe(2);
   expect(zeroSessions.stderr).toContain('--max-sessions must be a positive integer');

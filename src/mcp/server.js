@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { NaviPlaywrightAdapter, NAVI_PROTOCOL_VERSION } from '../adapter.js';
+import { DEFAULT_SETTLE_TIMEOUT_MS, MAX_SETTLE_TIMEOUT_MS, SETTLE_MODES } from '../settle.js';
 import { ensureNavi, isAllowedUrl, resolveChromium, resolveSdkPath } from '../browser.js';
 import { installNavi } from '../index.js';
 // sse.js deliberately does not import this module back: the message handler is
@@ -48,6 +49,7 @@ const GUIDANCE = {
   UNAVAILABLE: 'The element exists but is not actionable: hidden, disabled, off-screen or covered. Scroll it into view, wait for it to become enabled, or dismiss the overlay first.',
   TARGET_UNAVAILABLE: 'The element was not visible, enabled, in-viewport and unoccluded at execution time. Re-read the action map and retry once the element has settled.',
   INVALID_PAYLOAD: 'The payload does not match the action. "type" takes {text}, "select" takes {value}, "click" takes no payload.',
+  INVALID_SETTLE: 'The settle request is not valid. Use timeout_ms between 1 and 30000 and wait_for one of mutation_settle, navigation, target_hidden.',
   INVALID_SESSION: 'The session payload is not a usable storage state. Pass an inline { cookies, origins } object or a path to a Playwright storageState.json file; every cookie needs name and value plus url or domain+path, and every origin needs a bare origin plus localStorage entries.',
   INVALID_ACTION: 'The action type is not valid for this element. Use the suggested_action from navi_get_actions.',
   BUSY: 'Another execution is already in flight on this page. Wait for it to finish, then retry.',
@@ -140,7 +142,7 @@ export const TOOLS = [
   {
     name: 'navi_execute_action',
     title: 'Execute an action on a target',
-    description: 'Run click, type or select on a target_id from the action map. Uses the guarded synthetic path first; controls marked data-navi-trusted="true" automatically fall back to trusted native driver input at the target\'s live coordinates. Failed actions are never retried automatically, because they may already have applied.',
+    description: 'Run click, type or select on a target_id from the action map. Uses the guarded synthetic path first; controls marked data-navi-trusted="true" automatically fall back to trusted native driver input at the target\'s live coordinates. Failed actions are never retried automatically, because they may already have applied. Pass settle to wait deterministically for the action\'s effect before this call returns; the receipt reports whether the requested condition held.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -151,6 +153,15 @@ export const TOOLS = [
           properties: {
             text: { type: 'string', description: 'Text for action_type "type".' },
             value: { type: 'string', description: 'Option value for action_type "select".' }
+          },
+          additionalProperties: false
+        },
+        settle: {
+          type: 'object',
+          description: 'Optional deterministic settlement. mutation_settle waits for DOM silence (>=100ms with no mutation, including open shadow roots and same-origin frames); navigation waits for a URL change or document reload; target_hidden waits for the target to be removed, invisible or occluded. A timeout reports settled:false and never re-runs the action.',
+          properties: {
+            timeout_ms: { type: 'number', description: `Settlement deadline in milliseconds, 1-${MAX_SETTLE_TIMEOUT_MS}. Default ${DEFAULT_SETTLE_TIMEOUT_MS}.` },
+            wait_for: { type: 'string', enum: [...SETTLE_MODES], description: 'Which condition to wait for. Default "mutation_settle".' }
           },
           additionalProperties: false
         }
@@ -427,18 +438,29 @@ export class NaviSession {
     }
     const payload = /** @type {{text?: string, value?: string}} */ (args.payload && typeof args.payload === 'object' ? args.payload : {});
     try {
-      const result = await adapter.execute(targetId, actionType, payload);
+      const result = await adapter.execute(targetId, actionType, payload, args.settle);
       if (!result.ok) {
         const code = result.error?.code ?? 'EXECUTION_ERROR';
         return toolError(code, result.error?.message ?? 'The action failed.', { target_id: targetId, action_type: actionType });
       }
+      const settle = result.settle;
       return toolResult({
+        executed: true,
         target_id: targetId,
         action_type: actionType,
         mode: result.mode,
         trusted_fallback: result.mode === 'native-driver',
         dispatched: result.result?.dispatched === true,
-        url: adapter.page.url()
+        url: adapter.page.url(),
+        // The receipt is present only when the caller asked for settlement, so
+        // an unconfigured call cannot be mistaken for a verified one.
+        ...(settle ? {
+          settled: settle.settled,
+          elapsed_ms: settle.elapsed_ms,
+          final_url: settle.final_url,
+          settle: settle.mode,
+          ...(settle.reason ? { settle_reason: settle.reason } : {})
+        } : {})
       });
     } catch (error) {
       // Transport failures propagate from the adapter: the action may already have applied.
@@ -632,6 +654,13 @@ export async function main(argv = []) {
     const host = option(argv, '--host', '127.0.0.1');
     if (!Number.isInteger(port) || port < 0 || port > 65535) {
       process.stderr.write(`navi-mcp: --port must be an integer between 0 and 65535, got "${option(argv, '--port', '')}"\n`);
+      return 2;
+    }
+    // An empty or flag-looking host would otherwise reach listen(), where Node
+    // treats "" as every interface — which is the very case the token rule below
+    // exists to catch, so it is a usage error rather than a binding.
+    if (!host || host.startsWith('-')) {
+      process.stderr.write(`navi-mcp: --host needs a host name or address, got "${host}" (use 127.0.0.1 for loopback)\n`);
       return 2;
     }
     // The token may come from either place; the flag wins so a shell alias can

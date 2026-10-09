@@ -63,7 +63,7 @@ jobs:
       - name: Build release artifacts
         run: npm run build
 
-      - name: Gate 1 · bundle budget (dist/navi.min.js < 15,000 bytes)
+      - name: Gate 1 · bundle + loader budgets and all release artifacts
         run: node scripts/ci-gates.mjs --budget
 
       - name: Typecheck (strict JavaScript)

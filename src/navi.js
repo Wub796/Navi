@@ -1,6 +1,9 @@
 // Navi Protocol: custom in-page tools, not authorization or trusted browser input.
 (() => {
-  if (window.Navi) return;
+  // A tenant loader installs a deferred stub before this bundle arrives; it is not
+  // an SDK, so this installs over it and the loader replays the calls that the
+  // stub queued. Any other pre-existing Navi is left alone.
+  if (window.Navi && !window.Navi.stub) return;
   const version = '0.2.0', attr = 'data-agent-target';
   const native = new Set(['button', 'form', 'select', 'textarea', 'summary']);
   const roles = new Set(['button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'combobox', 'textbox']);

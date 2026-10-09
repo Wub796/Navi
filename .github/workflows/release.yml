@@ -1,0 +1,90 @@
+name: Release verification
+
+# Verifies a release candidate on the exact revision being shipped, and can
+# create the annotated v<version> tag itself when dispatched with create_tag.
+#
+# Nothing is published to a registry here on purpose: the npm name, license,
+# provenance and repository metadata are the owner's decisions, and an automated
+# publish would make them silently. The job stops at "this revision is verified
+# and tagged"; publishing stays a deliberate human step.
+#
+# A tag push re-runs verification with create_tag=false, so the tag cannot be
+# created twice and the two triggers cannot loop.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      create_tag:
+        description: 'Create and push the annotated v<package version> tag when verification passes'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: 'true'
+
+jobs:
+  verify:
+    name: Verify release (Node 20.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          # The version tag and its commit have to be visible for the tag check.
+          fetch-depth: 0
+
+      - name: Set up Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Cache the pinned Chromium build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium and its system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Build release artifacts
+        run: npm run build
+
+      - name: Verify the release
+        env:
+          CREATE_TAG: ${{ inputs.create_tag }}
+        run: |
+          if [ "$CREATE_TAG" = "true" ]; then
+            node scripts/verify-release.mjs --tag
+          else
+            node scripts/verify-release.mjs
+          fi
+
+      - name: Push the created tag
+        if: ${{ inputs.create_tag == true }}
+        run: git push origin "v$(node -p "require('./package.json').version")"
+
+      - name: Upload the verification record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verification
+          path: |
+            reports/build.json
+            reports/ci-timing.json
+            test-results/
+          if-no-files-found: warn

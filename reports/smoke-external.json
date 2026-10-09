@@ -1,10 +1,10 @@
 {
-  "recordedAt": "2026-10-09T19:00:42.070Z",
+  "recordedAt": "2026-10-09T20:40:43.173Z",
   "target": "https://demo.playwright.dev/todomvc/#/",
   "browser": "Chromium 156.0.8078.4 headless",
   "node": "v24.21.0",
   "artifact": {
-    "rawBytes": 14246,
+    "rawBytes": 14265,
     "budgetBytes": 15000
   },
   "gates": {
@@ -14,12 +14,12 @@
     {
       "step": "navigate",
       "detail": "HTTP 200 https://demo.playwright.dev/todomvc/#/",
-      "ms": 459
+      "ms": 529
     },
     {
       "step": "initialize",
       "detail": "injected navi.min.js protocol v0.2.0",
-      "ms": 17
+      "ms": 21
     },
     {
       "step": "connect",
@@ -28,8 +28,8 @@
     },
     {
       "step": "traverse",
-      "detail": "refresh + 4 controls in 7.60ms",
-      "ms": 7.6
+      "detail": "refresh + 4 controls in 53.20ms",
+      "ms": 53.2
     },
     {
       "step": "discover",
@@ -56,7 +56,7 @@
   "finalUrl": "https://demo.playwright.dev/todomvc/#/",
   "traversal": {
     "supported": true,
-    "elapsedMs": 7.599999964237213,
+    "elapsedMs": 53.19999998807907,
     "actions": 4,
     "longTasksMs": [],
     "idleWindowLongTasksMs": []

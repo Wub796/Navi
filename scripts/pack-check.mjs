@@ -56,7 +56,7 @@ if (!files.length) {
 
 const outside = files.filter(path => !ALLOWED.some(allowed => path === allowed || path.startsWith(allowed)));
 const leaked = files.filter(path => FORBIDDEN.some(pattern => pattern.test(path)));
-const missing = ['dist/navi.min.js', 'dist/index.mjs', 'dist/index.cjs', 'dist/index.d.ts', 'dist/navi.d.ts', 'dist/cli.mjs', 'dist/mcp.mjs']
+const missing = ['dist/navi.min.js', 'dist/index.mjs', 'dist/index.cjs', 'dist/index.d.ts', 'dist/navi.d.ts', 'dist/cli.mjs', 'dist/mcp.mjs', 'dist/loader.min.js']
   .filter(path => !files.includes(path));
 
 const bytes = (/** @type {{files?: {path?: string, size?: number}[]}[]} */ (report))[0]?.files ?? [];

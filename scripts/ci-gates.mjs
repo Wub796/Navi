@@ -26,11 +26,12 @@ import { pathToFileURL } from 'node:url';
  * Fixed acceptance limits. The defaults are the published contract; the
  * environment overrides exist so a caller can deliberately re-run a gate at a
  * different threshold, not so CI can quietly relax the published numbers.
- * @typedef {{bundleRawBytes: number, longTaskMs: number, viewportClassificationP95Ms: number, viewportFixtureName: string, viewportMethodId: string}} GateLimits
+ * @typedef {{bundleRawBytes: number, loaderBytes: number, longTaskMs: number, viewportClassificationP95Ms: number, viewportFixtureName: string, viewportMethodId: string}} GateLimits
  * @type {GateLimits}
  */
 export const GATE_LIMITS = {
   bundleRawBytes: Number(process.env.NAVI_BUNDLE_BUDGET_BYTES ?? 15000),
+  loaderBytes: Number(process.env.NAVI_LOADER_BUDGET_BYTES ?? 500),
   longTaskMs: Number(process.env.NAVI_LONG_TASK_MS ?? 50),
   viewportClassificationP95Ms: Number(process.env.NAVI_VIEWPORT_P95_MS ?? 25),
   viewportFixtureName: process.env.NAVI_VIEWPORT_FIXTURE ?? '2,000 elements',
@@ -56,7 +57,8 @@ const allPassed = results => results.every(result => result.ok);
  */
 export function evaluateBudget(build, limits = GATE_LIMITS) {
   const raw = build?.rawBytes;
-  const requiredArtifacts = ['dist/navi.min.js', 'dist/index.mjs', 'dist/index.cjs', 'dist/index.d.ts', 'dist/cli.mjs', 'dist/mcp.mjs'];
+  const loader = build?.loaderBytes;
+  const requiredArtifacts = ['dist/navi.min.js', 'dist/loader.min.js', 'dist/index.mjs', 'dist/index.cjs', 'dist/index.d.ts', 'dist/navi.d.ts', 'dist/cli.mjs', 'dist/mcp.mjs'];
   const missing = requiredArtifacts.filter(artifact => !build?.artifacts?.[artifact]);
   return [
     {
@@ -65,6 +67,13 @@ export function evaluateBudget(build, limits = GATE_LIMITS) {
       measured: Number.isFinite(raw) ? `${raw} bytes raw` : 'missing reports/build.json rawBytes (run npm run build)',
       limit: `strictly < ${limits.bundleRawBytes} bytes`,
       detail: 'dist/navi.min.js is the CDN/direct-embed artifact.'
+    },
+    {
+      id: 'loader-budget',
+      ok: Number.isFinite(loader) && loader < limits.loaderBytes,
+      measured: Number.isFinite(loader) ? `${loader} bytes` : 'missing reports/build.json loaderBytes (run npm run build)',
+      limit: `strictly < ${limits.loaderBytes} bytes`,
+      detail: 'dist/loader.min.js is the snippet a tenant pastes; every byte is runtime cost before the SDK loads.'
     },
     {
       id: 'bundle-artifacts',
@@ -207,9 +216,11 @@ export function selfTest() {
   const healthyBuild = {
     rawBytes: 14246,
     budgetBytes: 15000,
+    loaderBytes: 464,
+    loaderBudgetBytes: 500,
     artifacts: {
-      'dist/navi.min.js': { bytes: 14246 }, 'dist/index.mjs': { bytes: 1 }, 'dist/index.cjs': { bytes: 1 },
-      'dist/index.d.ts': { bytes: 1 }, 'dist/cli.mjs': { bytes: 1 }, 'dist/mcp.mjs': { bytes: 1 }
+      'dist/navi.min.js': { bytes: 14246 }, 'dist/loader.min.js': { bytes: 464 }, 'dist/index.mjs': { bytes: 1 }, 'dist/index.cjs': { bytes: 1 },
+      'dist/index.d.ts': { bytes: 1 }, 'dist/navi.d.ts': { bytes: 1 }, 'dist/cli.mjs': { bytes: 1 }, 'dist/mcp.mjs': { bytes: 1 }
     }
   };
   const healthyVerification = { benchmark: { fixtureElements: 10000, longTasksOver50ms: 0, maxTickMs: 2.3 } };
@@ -224,7 +235,18 @@ export function selfTest() {
    * @type {Case[]}
    */
   const cases = [
-    { name: 'healthy reports pass every gate', expect: { 'bundle-budget': true, 'bundle-artifacts': true }, run: () => evaluateBudget(healthyBuild) },
+    { name: 'healthy reports pass every gate', expect: { 'bundle-budget': true, 'loader-budget': true, 'bundle-artifacts': true }, run: () => evaluateBudget(healthyBuild) },
+    { name: 'oversized loader fails', expect: { 'loader-budget': false }, run: () => evaluateBudget({ ...healthyBuild, loaderBytes: 500 }) },
+    {
+      name: 'a missing loader artifact fails the artifact gate',
+      expect: { 'bundle-artifacts': false },
+      run: () => evaluateBudget({ ...healthyBuild, artifacts: { ...healthyBuild.artifacts, 'dist/loader.min.js': undefined } })
+    },
+    {
+      name: 'a missing global type declaration fails the artifact gate',
+      expect: { 'bundle-artifacts': false },
+      run: () => evaluateBudget({ ...healthyBuild, artifacts: { ...healthyBuild.artifacts, 'dist/navi.d.ts': undefined } })
+    },
     { name: 'healthy traversal passes', expect: { 'traversal-long-tasks': true }, run: () => evaluateTraversal(healthyVerification) },
     { name: 'healthy benchmark passes', expect: { 'benchmark-long-tasks': true, 'viewport-classification-p95': true }, run: () => evaluateBenchmark(healthyBenchmark) },
     { name: 'oversized bundle fails', expect: { 'bundle-budget': false }, run: () => evaluateBudget({ ...healthyBuild, rawBytes: 15000 }) },
@@ -234,7 +256,7 @@ export function selfTest() {
       expect: { 'bundle-artifacts': false },
       run: () => evaluateBudget({ ...healthyBuild, artifacts: { ...healthyBuild.artifacts, 'dist/mcp.mjs': undefined } })
     },
-    { name: 'absent build report fails the budget gate', expect: { 'bundle-budget': false, 'bundle-artifacts': false }, run: () => evaluateBudget({}) },
+    { name: 'absent build report fails the budget gate', expect: { 'bundle-budget': false, 'loader-budget': false, 'bundle-artifacts': false }, run: () => evaluateBudget({}) },
     { name: 'traversal long task fails', expect: { 'traversal-long-tasks': false }, run: () => evaluateTraversal({ benchmark: { longTasksOver50ms: 1 } }) },
     { name: 'absent verification report fails', expect: { 'traversal-long-tasks': false }, run: () => evaluateTraversal({}) },
     {
