@@ -80,7 +80,28 @@ Tick instrumentation covers scheduled granular operations and maintains an all-t
 - `.github/workflows/release.yml` runs the same gate on a `v*` tag push or on dispatch, checking out with `fetch-depth: 0` because the tag has to be visible, and can create and push the tag itself. A tag push re-runs verification with tag creation off, so the two triggers cannot loop. Publishing to a registry is deliberately not automated: the npm name, license and provenance are the owner's decisions.
 - The gates are self-tested (`npm run test:gates`, **19 expectations**), including a missing MCP bundle, a missing loader bundle, a missing global type declaration and the byte/percentile boundaries. Missing input is a failure, never a skip. The artifact gate now requires all eight shipped artifacts, so a missing `dist/loader.min.js`, `dist/mcp.mjs` or `dist/navi.d.ts` fails CI instead of shipping green.
 - This repository is initialized on `main`; the revision this report describes is committed, the release tag is local, and no remote exists, so nothing was pushed or published anywhere.
+
 - CI composition, the local replay of every workflow step with exit codes, and the reasoning for excluding the external smoke suite from `ci.yml` are recorded in [SMOKE.md](SMOKE.md).
+
+### Release receipt
+
+The gate was run against the committed revision, on a clean tree, with the tag present:
+
+```
+Navi release verification
+  ok   git-repository: on main
+  ok   git-clean: clean apart from 0 generated path(s)
+  ok   version-tag: v0.4.0 points at HEAD
+  ok   artifact-budget: navi.min.js 14265 B (<15000), loader.min.js 480 B (<500)
+  ok   subresource-integrity: sha384-Tba+et2p7MlxplPN6… matches dist/sri.txt and reports/build.json
+  ok   test-suite: 61 passed, 0 failed (floor 61)
+  ok   ci-gates: All selected gates passed.
+  ok   pack-check: every published path is an intended release artifact
+  ok   rebuild-stable: rebuilt to identical bytes (14265 B bundle, 480 B loader)
+Release verified.
+```
+
+The annotated tag was created by that gate itself in its `--tag` invocation, which ended with `create-tag: created v0.4.0 at beb0198` after every other check had passed; the block above is a re-run on the tagged revision, where `version-tag` verifies `v0.4.0` against `package.json` at HEAD rather than creating anything. So `v0.4.0` points at commit `beb0198` on `main` — the revision whose reports, artifacts and hash are quoted throughout this document. The tag exists only in this local repository; there is no remote to push it to and nothing was published to any registry. Each run regenerates `reports/verification.json` and `reports/benchmark-comparison.json` with its own fresh measurements, so the recorded numbers in this document describe the reports as committed at that tag; a later run produces the same shape with different timings, which the variance note above covers.
 
 ## Regression coverage
 
