@@ -1,0 +1,53 @@
+{
+  "verifiedCommit": "3dd7685",
+  "command": "npm run verify:release -- --json",
+  "ok": true,
+  "checks": [
+    {
+      "id": "git-repository",
+      "ok": true,
+      "detail": "on main"
+    },
+    {
+      "id": "git-clean",
+      "ok": true,
+      "detail": "clean apart from 1 generated path(s)"
+    },
+    {
+      "id": "version-tag",
+      "ok": true,
+      "detail": "v0.5.0 does not exist yet (create it with --tag once this gate is green)"
+    },
+    {
+      "id": "artifact-budget",
+      "ok": true,
+      "detail": "navi.min.js 14265 B (<15000), loader.min.js 480 B (<500)"
+    },
+    {
+      "id": "subresource-integrity",
+      "ok": true,
+      "detail": "sha384-Tba+et2p7MlxplPN6… matches dist/sri.txt and reports/build.json"
+    },
+    {
+      "id": "test-suite",
+      "ok": true,
+      "detail": "63 passed, 0 failed (floor 63)"
+    },
+    {
+      "id": "ci-gates",
+      "ok": true,
+      "detail": "All selected gates passed."
+    },
+    {
+      "id": "pack-check",
+      "ok": true,
+      "detail": "every published path is an intended release artifact"
+    },
+    {
+      "id": "rebuild-stable",
+      "ok": true,
+      "detail": "rebuilt to identical bytes (14265 B bundle, 480 B loader)"
+    }
+  ],
+  "recordedAt": "2026-10-10T20:48:02.147Z"
+}
