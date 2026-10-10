@@ -81,14 +81,17 @@ jobs:
       - name: Build release artifacts
         run: npm run build
 
+      # The documented command, not a copy of what it expands to: `npm run verify:release`
+      # is what a maintainer runs in this checkout, so the job runs the same entry point
+      # and a script that stopped working locally would stop working here too.
       - name: Verify the release
         env:
           CREATE_TAG: ${{ inputs.create_tag }}
         run: |
           if [ "$CREATE_TAG" = "true" ]; then
-            node scripts/verify-release.mjs --tag
+            npm run verify:release -- --tag
           else
-            node scripts/verify-release.mjs
+            npm run verify:release
           fi
 
       - name: Push the created tag
@@ -151,7 +154,7 @@ jobs:
         run: npm run build
 
       - name: Refuse to publish without a license decision and a passing receipt
-        run: node scripts/publish-preflight.mjs --tag "$TAG"
+        run: npm run publish:preflight -- --tag "$TAG"
 
       - name: Assert the tarball matches package.json's allowlist
         run: npm run pack:check --silent
@@ -162,7 +165,7 @@ jobs:
         run: npm publish --provenance --access public
 
       - name: Generate release notes from the receipts
-        run: node scripts/release-notes.mjs --tag "$TAG" --out reports/release-notes.md
+        run: npm run release:notes -- --tag "$TAG" --out reports/release-notes.md
 
       - name: Publish the GitHub release
         env:
