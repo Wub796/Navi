@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-10-10T22:31:19.072Z",
+  "recordedAt": "2026-10-10T22:34:10.790Z",
   "iterations": 10,
   "manualWaitMs": 300,
   "environment": {
@@ -16,22 +16,22 @@
       "successes": 10,
       "trials": 10,
       "tcr": 100,
-      "totalContextTokens": 10258,
-      "meanContextTokens": 1025.8,
-      "meanWallMs": 1976.1324958999994,
-      "p95WallMs": 2083.9745000000003,
-      "totalWallMs": 19761.324958999994
+      "totalContextTokens": 10261,
+      "meanContextTokens": 1026.1,
+      "meanWallMs": 1974.279237399999,
+      "p95WallMs": 2050.881165999999,
+      "totalWallMs": 19742.79237399999
     },
     {
       "path": "Navi MCP + settlement receipts",
       "successes": 10,
       "trials": 10,
       "tcr": 100,
-      "totalContextTokens": 28881,
-      "meanContextTokens": 2888.1,
-      "meanWallMs": 1737.6643,
-      "p95WallMs": 1902.0071669999961,
-      "totalWallMs": 17376.643
+      "totalContextTokens": 28905,
+      "meanContextTokens": 2890.5,
+      "meanWallMs": 1740.5609582999998,
+      "p95WallMs": 1878.6550829999978,
+      "totalWallMs": 17405.609582999998
     }
   ],
   "trials": [
@@ -39,8 +39,8 @@
       "path": "Playwright role locators + explicit waits",
       "iteration": 1,
       "success": true,
-      "wallMs": 1897.2704589999998,
-      "contextTokens": 1028,
+      "wallMs": 1916.8842499999998,
+      "contextTokens": 1025,
       "contextBytes": 3817,
       "observations": 8,
       "receipts": []
@@ -49,7 +49,7 @@
       "path": "Navi MCP + settlement receipts",
       "iteration": 1,
       "success": true,
-      "wallMs": 1475.1910830000002,
+      "wallMs": 1456.3647499999997,
       "contextTokens": 2889,
       "contextBytes": 9407,
       "observations": 7,
@@ -57,12 +57,12 @@
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 181
+          "elapsedMs": 182
         },
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 109
+          "elapsedMs": 111
         },
         {
           "mode": "mutation_settle",
@@ -77,17 +77,17 @@
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 131
+          "elapsedMs": 130
         },
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 277
+          "elapsedMs": 266
         },
         {
           "mode": "navigation",
           "settled": true,
-          "elapsedMs": 120
+          "elapsedMs": 122
         }
       ]
     },
@@ -95,8 +95,8 @@
       "path": "Navi MCP + settlement receipts",
       "iteration": 2,
       "success": true,
-      "wallMs": 1628.2147919999998,
-      "contextTokens": 2877,
+      "wallMs": 1615.6254170000002,
+      "contextTokens": 2889,
       "contextBytes": 9407,
       "observations": 7,
       "receipts": [
@@ -108,17 +108,17 @@
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 122
+          "elapsedMs": 124
         },
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 225
+          "elapsedMs": 224
         },
         {
           "mode": "navigation",
           "settled": true,
-          "elapsedMs": 58
+          "elapsedMs": 57
         },
         {
           "mode": "mutation_settle",
@@ -128,12 +128,12 @@
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 311
+          "elapsedMs": 312
         },
         {
           "mode": "navigation",
           "settled": true,
-          "elapsedMs": 175
+          "elapsedMs": 173
         }
       ]
     },
@@ -141,8 +141,8 @@
       "path": "Playwright role locators + explicit waits",
       "iteration": 2,
       "success": true,
-      "wallMs": 1954.8769590000002,
-      "contextTokens": 1029,
+      "wallMs": 1954.4254999999994,
+      "contextTokens": 1024,
       "contextBytes": 3817,
       "observations": 8,
       "receipts": []
@@ -151,8 +151,8 @@
       "path": "Playwright role locators + explicit waits",
       "iteration": 3,
       "success": true,
-      "wallMs": 1980.188583,
-      "contextTokens": 1023,
+      "wallMs": 1993.5007079999996,
+      "contextTokens": 1029,
       "contextBytes": 3817,
       "observations": 8,
       "receipts": []
@@ -161,71 +161,25 @@
       "path": "Navi MCP + settlement receipts",
       "iteration": 3,
       "success": true,
-      "wallMs": 1772.7736249999998,
-      "contextTokens": 2892,
+      "wallMs": 1771.1874160000007,
+      "contextTokens": 2904,
       "contextBytes": 9407,
       "observations": 7,
       "receipts": [
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 234
+          "elapsedMs": 231
         },
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 123
+          "elapsedMs": 107
         },
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 277
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 58
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 131
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 363
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 225
-        }
-      ]
-    },
-    {
-      "path": "Navi MCP + settlement receipts",
-      "iteration": 4,
-      "success": true,
-      "wallMs": 1837.8214580000003,
-      "contextTokens": 2880,
-      "contextBytes": 9407,
-      "observations": 7,
-      "receipts": [
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 233
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 123
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 325
+          "elapsedMs": 274
         },
         {
           "mode": "navigation",
@@ -245,7 +199,53 @@
         {
           "mode": "navigation",
           "settled": true,
-          "elapsedMs": 225
+          "elapsedMs": 227
+        }
+      ]
+    },
+    {
+      "path": "Navi MCP + settlement receipts",
+      "iteration": 4,
+      "success": true,
+      "wallMs": 1836.2682909999985,
+      "contextTokens": 2889,
+      "contextBytes": 9407,
+      "observations": 7,
+      "receipts": [
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 234
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 123
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 326
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 57
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 130
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 364
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 226
         }
       ]
     },
@@ -253,8 +253,8 @@
       "path": "Playwright role locators + explicit waits",
       "iteration": 4,
       "success": true,
-      "wallMs": 2029.273333000001,
-      "contextTokens": 1028,
+      "wallMs": 2022.3129580000004,
+      "contextTokens": 1024,
       "contextBytes": 3817,
       "observations": 8,
       "receipts": []
@@ -263,8 +263,8 @@
       "path": "Playwright role locators + explicit waits",
       "iteration": 5,
       "success": true,
-      "wallMs": 2083.9745000000003,
-      "contextTokens": 1026,
+      "wallMs": 2050.881165999999,
+      "contextTokens": 1028,
       "contextBytes": 3817,
       "observations": 8,
       "receipts": []
@@ -273,25 +273,295 @@
       "path": "Navi MCP + settlement receipts",
       "iteration": 5,
       "success": true,
-      "wallMs": 1770.7583330000016,
-      "contextTokens": 2901,
+      "wallMs": 1796.9441250000018,
+      "contextTokens": 2886,
       "contextBytes": 9407,
       "observations": 7,
       "receipts": [
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 284
+          "elapsedMs": 287
         },
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 121
+          "elapsedMs": 118
         },
         {
           "mode": "mutation_settle",
           "settled": true,
-          "elapsedMs": 322
+          "elapsedMs": 327
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 57
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 131
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 228
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 282
+        }
+      ]
+    },
+    {
+      "path": "Navi MCP + settlement receipts",
+      "iteration": 6,
+      "success": true,
+      "wallMs": 1731.0847500000018,
+      "contextTokens": 2898,
+      "contextBytes": 9407,
+      "observations": 7,
+      "receipts": [
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 288
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 116
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 364
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 60
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 130
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 277
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 118
+        }
+      ]
+    },
+    {
+      "path": "Playwright role locators + explicit waits",
+      "iteration": 6,
+      "success": true,
+      "wallMs": 1909.086374999999,
+      "contextTokens": 1026,
+      "contextBytes": 3817,
+      "observations": 8,
+      "receipts": []
+    },
+    {
+      "path": "Playwright role locators + explicit waits",
+      "iteration": 7,
+      "success": true,
+      "wallMs": 1916.637208,
+      "contextTokens": 1028,
+      "contextBytes": 3817,
+      "observations": 8,
+      "receipts": []
+    },
+    {
+      "path": "Navi MCP + settlement receipts",
+      "iteration": 7,
+      "success": true,
+      "wallMs": 1688.3515420000003,
+      "contextTokens": 2898,
+      "contextBytes": 9407,
+      "observations": 7,
+      "receipts": [
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 287
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 118
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 225
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 57
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 132
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 312
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 170
+        }
+      ]
+    },
+    {
+      "path": "Navi MCP + settlement receipts",
+      "iteration": 8,
+      "success": true,
+      "wallMs": 1809.6468749999985,
+      "contextTokens": 2886,
+      "contextBytes": 9407,
+      "observations": 7,
+      "receipts": [
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 336
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 120
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 275
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 57
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 133
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 328
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 172
+        }
+      ]
+    },
+    {
+      "path": "Playwright role locators + explicit waits",
+      "iteration": 8,
+      "success": true,
+      "wallMs": 1971.112165999999,
+      "contextTokens": 1026,
+      "contextBytes": 3817,
+      "observations": 8,
+      "receipts": []
+    },
+    {
+      "path": "Playwright role locators + explicit waits",
+      "iteration": 9,
+      "success": true,
+      "wallMs": 1992.0902089999981,
+      "contextTokens": 1022,
+      "contextBytes": 3817,
+      "observations": 8,
+      "receipts": []
+    },
+    {
+      "path": "Navi MCP + settlement receipts",
+      "iteration": 9,
+      "success": true,
+      "wallMs": 1878.6550829999978,
+      "contextTokens": 2883,
+      "contextBytes": 9407,
+      "observations": 7,
+      "receipts": [
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 338
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 118
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 275
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 57
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 130
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 362
+        },
+        {
+          "mode": "navigation",
+          "settled": true,
+          "elapsedMs": 225
+        }
+      ]
+    },
+    {
+      "path": "Navi MCP + settlement receipts",
+      "iteration": 10,
+      "success": true,
+      "wallMs": 1821.4813339999964,
+      "contextTokens": 2883,
+      "contextBytes": 9411,
+      "observations": 7,
+      "receipts": [
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 338
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 116
+        },
+        {
+          "mode": "mutation_settle",
+          "settled": true,
+          "elapsedMs": 326
         },
         {
           "mode": "navigation",
@@ -316,281 +586,11 @@
       ]
     },
     {
-      "path": "Navi MCP + settlement receipts",
-      "iteration": 6,
-      "success": true,
-      "wallMs": 1740.2483749999992,
-      "contextTokens": 2886,
-      "contextBytes": 9407,
-      "observations": 7,
-      "receipts": [
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 287
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 117
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 378
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 58
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 133
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 277
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 119
-        }
-      ]
-    },
-    {
-      "path": "Playwright role locators + explicit waits",
-      "iteration": 6,
-      "success": true,
-      "wallMs": 1937.5667919999978,
-      "contextTokens": 1025,
-      "contextBytes": 3817,
-      "observations": 8,
-      "receipts": []
-    },
-    {
-      "path": "Playwright role locators + explicit waits",
-      "iteration": 7,
-      "success": true,
-      "wallMs": 1901.6690000000017,
-      "contextTokens": 1024,
-      "contextBytes": 3817,
-      "observations": 8,
-      "receipts": []
-    },
-    {
-      "path": "Navi MCP + settlement receipts",
-      "iteration": 7,
-      "success": true,
-      "wallMs": 1677.0876250000001,
-      "contextTokens": 2880,
-      "contextBytes": 9407,
-      "observations": 7,
-      "receipts": [
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 285
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 119
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 224
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 57
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 129
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 313
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 172
-        }
-      ]
-    },
-    {
-      "path": "Navi MCP + settlement receipts",
-      "iteration": 8,
-      "success": true,
-      "wallMs": 1790.3853339999987,
-      "contextTokens": 2892,
-      "contextBytes": 9407,
-      "observations": 7,
-      "receipts": [
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 340
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 114
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 278
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 57
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 131
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 329
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 170
-        }
-      ]
-    },
-    {
-      "path": "Playwright role locators + explicit waits",
-      "iteration": 8,
-      "success": true,
-      "wallMs": 1972.0304169999981,
-      "contextTokens": 1026,
-      "contextBytes": 3817,
-      "observations": 8,
-      "receipts": []
-    },
-    {
-      "path": "Playwright role locators + explicit waits",
-      "iteration": 9,
-      "success": true,
-      "wallMs": 1984.2979999999989,
-      "contextTokens": 1024,
-      "contextBytes": 3817,
-      "observations": 8,
-      "receipts": []
-    },
-    {
-      "path": "Navi MCP + settlement receipts",
-      "iteration": 9,
-      "success": true,
-      "wallMs": 1902.0071669999961,
-      "contextTokens": 2883,
-      "contextBytes": 9407,
-      "observations": 7,
-      "receipts": [
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 340
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 115
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 275
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 57
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 131
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 380
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 227
-        }
-      ]
-    },
-    {
-      "path": "Navi MCP + settlement receipts",
-      "iteration": 10,
-      "success": true,
-      "wallMs": 1782.1552080000038,
-      "contextTokens": 2901,
-      "contextBytes": 9411,
-      "observations": 7,
-      "receipts": [
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 339
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 116
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 327
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 57
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 130
-        },
-        {
-          "mode": "mutation_settle",
-          "settled": true,
-          "elapsedMs": 224
-        },
-        {
-          "mode": "navigation",
-          "settled": true,
-          "elapsedMs": 237
-        }
-      ]
-    },
-    {
       "path": "Playwright role locators + explicit waits",
       "iteration": 10,
       "success": true,
-      "wallMs": 2020.1769159999967,
-      "contextTokens": 1025,
+      "wallMs": 2015.8618339999957,
+      "contextTokens": 1029,
       "contextBytes": 3817,
       "observations": 8,
       "receipts": []
