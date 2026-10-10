@@ -206,12 +206,14 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
     const instrumented = await navigate(`${state.pageBase}/`);
     expect(instrumented.ok).toBe(true);
     expect(instrumented.protocolVersion).toBe(NAVI_PROTOCOL_VERSION);
-    expect(instrumented.sdk).toEqual({ strategy: 'already-present', injected: false, source: 'page' });
+    expect(instrumented.sdk).toEqual({ strategy: 'already-present', injected: false, source: 'host_inline' });
     expect(instrumented.discovery).toEqual({
       instrumented: true,
       source: 'link-header',
       declared_version: null,
-      manifest: `${state.pageBase}/.well-known/navi.json`
+      manifest: `${state.pageBase}/.well-known/navi.json`,
+      script: null,
+      integrity: 'not_declared'
     });
     expect(instrumented.warning).toBeUndefined();
     expect(instrumented.actions).toBeGreaterThan(0);
@@ -222,17 +224,20 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
     state.html = page(false, false);
     const uninstrumented = await navigate(`${state.pageBase}/`);
     expect(uninstrumented.ok).toBe(true);
-    expect(uninstrumented.discovery).toEqual({ instrumented: false, source: 'none', declared_version: null, manifest: null });
+    expect(uninstrumented.discovery).toEqual({ instrumented: false, source: 'none', declared_version: null, manifest: null, script: null, integrity: 'not_declared' });
     expect(uninstrumented.warning?.code).toBe('UNINSTRUMENTED_HOST');
     expect(uninstrumented.warning?.message).toContain('agent-bridge');
-    expect(uninstrumented.sdk.source).toBe('bundled');
+    expect(uninstrumented.sdk.source).toBe('bundled_fallback');
     expect(['tag', 'evaluate']).toContain(uninstrumented.sdk.strategy);
     expect(uninstrumented.sdk.injected).toBe(true);
     expect(uninstrumented.actions).toBeGreaterThan(0);
 
     // 3. A marker whose runtime never ran - the loader was blocked, refused or
-    //    stripped. The page is still automated, and the envelope says the map came
-    //    from the packaged build rather than pretending the host answered.
+    //    stripped - and no discovery document to fall back on, because this fixture
+    //    origin answers every path with HTML. The page is still automated, and the
+    //    envelope says the map came from the packaged build rather than pretending
+    //    the host answered. tests/manifest-loop.spec.mjs covers the case where the
+    //    host does publish a usable document.
     state.html = page(true, false);
     const unusable = await navigate(`${state.pageBase}/`);
     expect(unusable.ok).toBe(true);
@@ -240,10 +245,12 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
       instrumented: true,
       source: 'meta-tag',
       declared_version: NAVI_PROTOCOL_VERSION,
-      manifest: null
+      manifest: null,
+      script: null,
+      integrity: 'not_declared'
     });
-    expect(unusable.warning?.code).toBe('DISCOVERY_UNUSABLE');
-    expect(unusable.sdk.source).toBe('bundled');
+    expect(unusable.warning?.code).toBe('MANIFEST_UNREACHABLE');
+    expect(unusable.sdk.source).toBe('bundled_fallback');
     expect(unusable.sdk.injected).toBe(true);
     expect(unusable.actions).toBeGreaterThan(0);
     expect(unusable.protocolVersion).toBe(NAVI_PROTOCOL_VERSION);

@@ -5,6 +5,10 @@ import { writeFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { createTcrApp } from './fixtures/tcr-app.mjs';
+// The local mock model. It is a fixture, never a substitute for a live endpoint:
+// it exists so the whole autonomous harness can be exercised with no third-party
+// API key, and every report it produces says which one ran.
+import { createMockLlmServer } from './fixtures/mock-llm-server.mjs';
 // Harness-side taxonomy. No shipped entry point imports this module, so the
 // distributed bundles (including the client SDK) are byte-identical without it.
 import { classifyFailure, summarizeFailures } from '../src/failure-classifier.js';
@@ -12,7 +16,7 @@ import { classifyFailure, summarizeFailures } from '../src/failure-classifier.js
 const root = fileURLToPath(new URL('..', import.meta.url));
 const reportPath = new URL('../reports/LLM-TCR-BENCHMARK.md', import.meta.url);
 const rawPath = new URL('../reports/llm-tcr-benchmark.json', import.meta.url);
-/** @typedef {{baseUrl: string, model: string, apiKey?: string, iterations: number, maxTurns: number, inputPrice?: number, outputPrice?: number}} Config */
+/** @typedef {{baseUrl: string, model: string, apiKey?: string, iterations: number, maxTurns: number, inputPrice?: number, outputPrice?: number, fixture?: string}} Config */
 /** @typedef {{path: string, iteration: number, success: boolean, steps: number, requests: number, inputTokens: number, outputTokens: number, cachedTokens: number, usageComplete: boolean, cachedComplete: boolean, wallMs: number, failures: {category: string, detail: string}[]}} Trial */
 /** @param {unknown} condition @param {string} message */
 function assert(condition, message) { if (!condition) throw new Error(message); }
@@ -39,35 +43,43 @@ export function childEnvironment(source = process.env) {
 
 /**
  * Resolve the live model from environment variables only; there is no config
- * file, no default endpoint and no fallback model. A partial or invalid setup is
- * an error the caller must see, never a silently downgraded run.
+ * file, no default endpoint and no default model. A partial or invalid setup is an
+ * error the caller must see, never a silently downgraded run.
+ *
+ * The one case the caller may handle instead of failing is `reason:
+ * 'unconfigured'`: nothing at all was set, which `main()` answers with the local
+ * fixture rather than with a pretend live run. Anything half-configured stays an
+ * error, so `LLM_ENDPOINT` without `LLM_MODEL` can never be mistaken for a
+ * deliberate fixture run.
  * @param {NodeJS.ProcessEnv} [env]
- * @returns {{config: Config} | {error: string}}
+ * @returns {{config: Config} | {error: string, reason: 'unconfigured' | 'invalid'}}
  */
 export function resolveConfig(env = process.env) {
   const endpoint = (env.LLM_ENDPOINT || env.LLM_BASE_URL || '').trim();
   const model = (env.LLM_MODEL || '').trim();
   const apiKey = (env.LLM_API_KEY || env.OPENAI_API_KEY || '').trim() || undefined;
-  if (!endpoint && !model) return { error: 'LLM_ENDPOINT and LLM_MODEL are unset. Set both, then re-run; no benchmark is produced without a live model.' };
-  if (!endpoint) return { error: 'LLM_ENDPOINT is unset. Set the OpenAI-compatible base URL (for example http://127.0.0.1:11434/v1).' };
-  if (!model) return { error: 'LLM_MODEL is unset. Set the exact tool-calling model name the endpoint serves.' };
-  /** @type {URL} */
-  let url;
-  try { url = new URL(endpoint); } catch { return { error: 'LLM_ENDPOINT is not an absolute URL.' }; }
-  const loopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname);
-  if (url.username || url.password) return { error: 'LLM_ENDPOINT must not embed credentials; use LLM_API_KEY.' };
-  if (url.protocol === 'http:' && !loopback) return { error: 'LLM_ENDPOINT must use HTTPS unless it is loopback.' };
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return { error: 'LLM_ENDPOINT must be http(s).' };
-  if (!loopback && !apiKey) return { error: 'LLM_API_KEY is required for a remote LLM_ENDPOINT.' };
+  // The knobs are validated once, for the live path and the fixture path alike, so
+  // a bad iteration count can never be accepted just because no endpoint is set.
   const iterations = Number(env.LLM_ITERATIONS ?? 10);
   const maxTurns = Number(env.LLM_MAX_TURNS ?? 25);
-  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 10) return { error: 'LLM_ITERATIONS must be an integer from 1 to 10.' };
-  if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 50) return { error: 'LLM_MAX_TURNS must be an integer from 1 to 50.' };
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 10) return { error: 'LLM_ITERATIONS must be an integer from 1 to 10.', reason: 'invalid' };
+  if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 50) return { error: 'LLM_MAX_TURNS must be an integer from 1 to 50.', reason: 'invalid' };
   /** @param {string | undefined} value */
   const price = value => (value === undefined || value === '' ? undefined : Number(value));
   const inputPrice = price(env.LLM_INPUT_USD_PER_MILLION), outputPrice = price(env.LLM_OUTPUT_USD_PER_MILLION);
-  if (inputPrice !== undefined && (!Number.isFinite(inputPrice) || inputPrice < 0)) return { error: 'LLM_INPUT_USD_PER_MILLION must be a non-negative number.' };
-  if (outputPrice !== undefined && (!Number.isFinite(outputPrice) || outputPrice < 0)) return { error: 'LLM_OUTPUT_USD_PER_MILLION must be a non-negative number.' };
+  if (inputPrice !== undefined && (!Number.isFinite(inputPrice) || inputPrice < 0)) return { error: 'LLM_INPUT_USD_PER_MILLION must be a non-negative number.', reason: 'invalid' };
+  if (outputPrice !== undefined && (!Number.isFinite(outputPrice) || outputPrice < 0)) return { error: 'LLM_OUTPUT_USD_PER_MILLION must be a non-negative number.', reason: 'invalid' };
+  if (!endpoint && !model) return { error: 'LLM_ENDPOINT and LLM_MODEL are unset. Set both to benchmark a live model, or unset NAVI_LLM_FIXTURE (LLM_ITERATIONS/LLM_MAX_TURNS still apply) to run the local fixture instead.', reason: 'unconfigured' };
+  if (!endpoint) return { error: 'LLM_ENDPOINT is unset. Set the OpenAI-compatible base URL (for example http://127.0.0.1:11434/v1).', reason: 'invalid' };
+  if (!model) return { error: 'LLM_MODEL is unset. Set the exact tool-calling model name the endpoint serves.', reason: 'invalid' };
+  /** @type {URL} */
+  let url;
+  try { url = new URL(endpoint); } catch { return { error: 'LLM_ENDPOINT is not an absolute URL.', reason: 'invalid' }; }
+  const loopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname);
+  if (url.username || url.password) return { error: 'LLM_ENDPOINT must not embed credentials; use LLM_API_KEY.', reason: 'invalid' };
+  if (url.protocol === 'http:' && !loopback) return { error: 'LLM_ENDPOINT must use HTTPS unless it is loopback.', reason: 'invalid' };
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return { error: 'LLM_ENDPOINT must be http(s).', reason: 'invalid' };
+  if (!loopback && !apiKey) return { error: 'LLM_API_KEY is required for a remote LLM_ENDPOINT.', reason: 'invalid' };
   return { config: { baseUrl: endpoint, model, apiKey, iterations, maxTurns, inputPrice, outputPrice } };
 }
 
@@ -255,9 +267,9 @@ async function runTrial(path, iteration, origin, config) {
 /** @param {Config | null} config */
 export async function runBenchmark(config) {
   if (!config) {
-    const blocked = { status: 'blocked', reason: 'LLM_ENDPOINT/LLM_MODEL were not both set, so no live model was called. This file records a blocked harness, not a model result.', recordedAt: new Date().toISOString(), trials: [] };
+    const blocked = { status: 'blocked', reason: 'LLM_ENDPOINT/LLM_MODEL were not both set and the local fixture was disabled, so no model was called. This file records a blocked harness, not a model result.', recordedAt: new Date().toISOString(), trials: [] };
     await writeFile(rawPath, JSON.stringify(blocked, null, 2) + '\n');
-    await writeFile(reportPath, '# Autonomous LLM task benchmark\n\n**Status: blocked — no live model configured.** LLM_ENDPOINT and LLM_MODEL were not both set, so no model request was made and no mock model was substituted. No LLM success, step-count or billing results are claimed.\n\n## Run with a configured model\n\n```sh\n# A local OpenAI-compatible tool-capable endpoint (no key needed for most local servers):\nexport LLM_ENDPOINT=http://127.0.0.1:11434/v1\nexport LLM_MODEL=YOUR_TOOL_CAPABLE_MODEL\nnpm run benchmark:llm\n# Hosted: an HTTPS LLM_ENDPOINT plus LLM_API_KEY in this shell only. The key is\n# never written to a report and is stripped from every child process it spawns.\n```\n\nOptional: LLM_ITERATIONS=10 (default), LLM_MAX_TURNS=25 (default), LLM_INPUT_USD_PER_MILLION and LLM_OUTPUT_USD_PER_MILLION for explicitly supplied prices. Hosted runs incur charges.\n\nThe harness compares actual model-driven Playwright ARIA/locator tools with actual Navi MCP differential maps and required settlement receipts. Both receive the same task and independent server-side order oracle. It records first-attempt TCR, tool steps, request count, wall time, provider-reported prompt, cached-input and completion tokens, and failures classified with the five-bucket taxonomy in [failure-classifier.js](../src/failure-classifier.js) — selector hallucination, deterministic refusal, untrusted-gesture-required, timeout-unsettled and schema violation — plus an explicit UNCLASSIFIED sink. A bucket is assigned only from a structured code or receipt field, so an unresolved identifier is observable evidence while model intent is never claimed. Missing usage stays unknown, never estimated as billed.\n\nNo mock execution is presented as a model benchmark. Contract tests exercise the transport/accounting separately. [Harness](../tests/llm-agent-benchmark.mjs) · [Raw status/results](llm-tcr-benchmark.json)\n');
+    await writeFile(reportPath, '# Autonomous LLM task benchmark\n\n**Status: blocked — no live model configured.** LLM_ENDPOINT and LLM_MODEL were not both set and the local fixture was switched off with `NAVI_LLM_FIXTURE=0`, so no model request was made. No LLM success, step-count or billing results are claimed.\n\n## Run with a configured model\n\n```sh\n# A local OpenAI-compatible tool-capable endpoint (no key needed for most local servers):\nexport LLM_ENDPOINT=http://127.0.0.1:11434/v1\nexport LLM_MODEL=YOUR_TOOL_CAPABLE_MODEL\nnpm run benchmark:llm\n# Hosted: an HTTPS LLM_ENDPOINT plus LLM_API_KEY in this shell only. The key is\n# never written to a report and is stripped from every child process it spawns.\n# Fixture only, no model and no key: leave LLM_ENDPOINT/LLM_MODEL unset.\n```\n\nOptional: LLM_ITERATIONS=10 (default), LLM_MAX_TURNS=25 (default), LLM_INPUT_USD_PER_MILLION and LLM_OUTPUT_USD_PER_MILLION for explicitly supplied prices. Hosted runs incur charges.\n\nThe harness compares actual model-driven Playwright ARIA/locator tools with actual Navi MCP differential maps and required settlement receipts. Both receive the same task and independent server-side order oracle. It records first-attempt TCR, tool steps, request count, wall time, provider-reported prompt, cached-input and completion tokens, and failures classified with the five-bucket taxonomy in [failure-classifier.js](../src/failure-classifier.js) — selector hallucination, deterministic refusal, untrusted-gesture-required, timeout-unsettled and schema violation — plus an explicit UNCLASSIFIED sink. A bucket is assigned only from a structured code or receipt field, so an unresolved identifier is observable evidence while model intent is never claimed. Missing usage stays unknown, never estimated as billed.\n\nNo mock execution is presented as a model benchmark. Contract tests exercise the transport/accounting separately. [Harness](../tests/llm-agent-benchmark.mjs) · [Raw status/results](llm-tcr-benchmark.json)\n');
     return blocked;
   }
   assert(Number.isInteger(config.iterations) && config.iterations >= 1 && config.iterations <= 10, 'Iterations must be 1–10');
@@ -285,26 +297,45 @@ export async function runBenchmark(config) {
       cachedInputTokens: completeCached ? rows.reduce((sum, row) => sum + row.cachedTokens, 0) : null,
       costUsd: inputTokens !== null && outputTokens !== null && config.inputPrice !== undefined && config.outputPrice !== undefined ? (inputTokens * config.inputPrice + outputTokens * config.outputPrice) / 1e6 : null };
   });
-  const report = { status: 'measured', recordedAt: new Date().toISOString(), model: config.model, node: process.version, pricing: { inputPerMillion: config.inputPrice ?? null, outputPerMillion: config.outputPrice ?? null }, summaries, trials };
+  const report = { status: config.fixture ? 'fixture-baseline' : 'measured', fixture: config.fixture ?? null, recordedAt: new Date().toISOString(), model: config.model, node: process.version, pricing: { inputPerMillion: config.inputPrice ?? null, outputPerMillion: config.outputPrice ?? null }, summaries, trials };
   await writeFile(rawPath, JSON.stringify(report, null, 2) + '\n');
-  await writeFile(reportPath, '# Autonomous LLM task benchmark\n\nModel: ' + config.model + '. Node ' + process.version + '. Paired local sandbox tasks; real provider requests.\n\n| Path | Completed | TCR | Mean tool steps | Input tokens | Cached input tokens | Output tokens | Cost USD (supplied rates) |\n|---|---:|---:|---:|---:|---:|---:|---:|\n' + summaries.map(row => `| ${row.path} | ${row.successes}/${row.trials} | ${(row.successes / row.trials * 100).toFixed(1)}% | ${row.meanSteps.toFixed(1)} | ${row.inputTokens ?? 'unknown'} | ${row.cachedInputTokens ?? 'unknown'} | ${row.outputTokens ?? 'unknown'} | ${row.costUsd ?? 'unknown'} |`).join('\n') + '\n\nFailure buckets by path: ' + summaries.map(row => `${row.path} ${JSON.stringify(row.failureBuckets)}`).join(' · ') + '\n\nProvider-reported tokens include replayed conversation/tool schemas; unknown usage is not estimated, and cached reads are reported by the provider as a subset of input tokens rather than subtracted. Cost uses explicitly supplied rates only and is not a provider invoice. All trials/errors are retained, with no hidden reruns, and the failures of each path are grouped by taxonomy bucket rather than by prose. An unresolved identifier is not proof of model intent, and a Navi refusal does not imply execution; success requires a correct committed order. No external purchases. These measurements are local task/model-specific, not universal agent reliability. [Raw results](llm-tcr-benchmark.json)\n');
+  // A fixture run is labelled as one, at the top and in the raw record: telemetry
+  // about the harness must never be readable as a claim about a model.
+  const heading = config.fixture
+    ? '**Status: fixture baseline — no model was called.** The model side of this run was the local fixture in `' + config.fixture + '`, which drives the MCP server, the browser, the differential action maps and the settlement receipts exactly as a model would. It measures this repository\'s harness and its accounting path. Its token figures are *simulated* provider usage derived from the request body, so they are not a provider invoice, and no model capability, success rate or cost is claimed by this file. The two paths below are driven by scripts that are deliberately not the same length, so their step counts describe the fixture\'s plan and are **not** a comparison between the paths: the paired path comparison is [benchmark-agent-tcr.spec.mjs](../tests/benchmark-agent-tcr.spec.mjs) (deterministic, no model) or a run with a real `LLM_ENDPOINT`/`LLM_MODEL` (see below).\n\nModel id: ' + config.model + '. Node ' + process.version + '.\n\n'
+    : 'Model: ' + config.model + '. Node ' + process.version + '. Paired local sandbox tasks; real provider requests.\n\n';
+  await writeFile(reportPath, '# Autonomous LLM task benchmark\n\n' + heading + '| Path | Completed | TCR | Mean tool steps | Input tokens | Cached input tokens | Output tokens | Cost USD (supplied rates) |\n|---|---:|---:|---:|---:|---:|---:|---:|\n' + summaries.map(row => `| ${row.path} | ${row.successes}/${row.trials} | ${(row.successes / row.trials * 100).toFixed(1)}% | ${row.meanSteps.toFixed(1)} | ${row.inputTokens ?? 'unknown'} | ${row.cachedInputTokens ?? 'unknown'} | ${row.outputTokens ?? 'unknown'} | ${row.costUsd ?? 'unknown'} |`).join('\n') + '\n\nFailure buckets by path: ' + summaries.map(row => `${row.path} ${JSON.stringify(row.failureBuckets)}`).join(' · ') + '\n\nProvider-reported tokens include replayed conversation/tool schemas; unknown usage is not estimated, and cached reads are reported by the provider as a subset of input tokens rather than subtracted. Cost uses explicitly supplied rates only and is not a provider invoice. All trials/errors are retained, with no hidden reruns, and the failures of each path are grouped by taxonomy bucket rather than by prose. An unresolved identifier is not proof of model intent, and a Navi refusal does not imply execution; success requires a correct committed order. No external purchases. These measurements are local task/model-specific, not universal agent reliability. [Raw results](llm-tcr-benchmark.json)\n');
   return report;
 }
 
 export async function main(env = process.env) {
   if (process.argv.includes('--help')) {
-    console.log('Required: LLM_ENDPOINT (OpenAI-compatible base URL) and LLM_MODEL (tool-calling model). LLM_API_KEY is required for any non-loopback endpoint. Optional: LLM_ITERATIONS=10, LLM_MAX_TURNS=25, LLM_INPUT_USD_PER_MILLION, LLM_OUTPUT_USD_PER_MILLION. Missing configuration exits 2 without producing any benchmark result.');
+    console.log('Live model: LLM_ENDPOINT (OpenAI-compatible base URL) with LLM_MODEL (tool-calling model); LLM_API_KEY is required for any non-loopback endpoint. Fixture: leave both unset and the local mock in tests/fixtures/mock-llm-server.mjs runs instead, which needs no key and measures the harness rather than a model; NAVI_LLM_FIXTURE=0 turns that off and exits 2. Optional: LLM_ITERATIONS=10, LLM_MAX_TURNS=25, LLM_INPUT_USD_PER_MILLION, LLM_OUTPUT_USD_PER_MILLION.');
     return 0;
   }
-  // Fail fast on configuration, before any browser or network work: an
-  // unconfigured run must not be mistakable for a measured one, and no mock
-  // model is ever substituted for the live endpoint.
+  // Fail fast on configuration, before any browser or network work. A partial or
+  // invalid setup is always an error; only "nothing was configured at all" is
+  // answered with the local fixture, and only because that run cannot be mistaken
+  // for a live one: it is labelled as a fixture baseline in the report and in the
+  // raw record both.
   const resolved = resolveConfig(env);
   if ('error' in resolved) {
+    const useFixture = resolved.reason === 'unconfigured' && env.NAVI_LLM_FIXTURE !== '0';
     process.stderr.write(`llm-agent-benchmark: ${resolved.error}\n`);
-    await runBenchmark(null);
-    process.stderr.write('llm-agent-benchmark: no model request was made; the blocked status is recorded in reports/LLM-TCR-BENCHMARK.md\n');
-    return 2;
+    if (!useFixture) {
+      await runBenchmark(null);
+      process.stderr.write('llm-agent-benchmark: no model request was made; the blocked status is recorded in reports/LLM-TCR-BENCHMARK.md\n');
+      return 2;
+    }
+    const fixture = await createMockLlmServer();
+    try {
+      process.stderr.write(`llm-agent-benchmark: running the local fixture at ${fixture.baseUrl} (no model is called)\n`);
+      const report = await runBenchmark({ baseUrl: fixture.baseUrl, model: fixture.model, iterations: Number(env.LLM_ITERATIONS ?? 10), maxTurns: Number(env.LLM_MAX_TURNS ?? 25), fixture: 'tests/fixtures/mock-llm-server.mjs' });
+      console.log(`LLM benchmark: ${report.status} (fixture, ${fixture.requests} model turns served); see reports/LLM-TCR-BENCHMARK.md`);
+      return report.trials.every(row => row.success) ? 0 : 1;
+    } finally {
+      await fixture.close();
+    }
   }
   const report = await runBenchmark(resolved.config);
   console.log(`LLM benchmark: ${report.status}; see reports/LLM-TCR-BENCHMARK.md`);

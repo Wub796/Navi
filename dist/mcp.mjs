@@ -416,6 +416,7 @@ var init_adapter = __esm({
 // src/mcp/server.js
 init_adapter();
 init_settle();
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
@@ -771,6 +772,9 @@ var SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05
 var DEFAULT_VIEWPORT = { width: 1360, height: 900 };
 var DEFAULT_TIMEOUT_MS = 2e4;
 var MAX_ACTIONS = 5e3;
+var MANIFEST_TIMEOUT_MS = 500;
+var HOST_ASSET_TIMEOUT_MS = 4e3;
+var MAX_MANIFEST_BYTES = 16 * 1024;
 var GUIDANCE = {
   NOT_FOUND: "The target_id is not in the action map. Call navi_get_actions and use a target_id from that response; ids change when the page re-renders.",
   AMBIGUOUS: "The target_id matched more than one element. Re-read the action map; the page has duplicate or unstable identities.",
@@ -794,7 +798,11 @@ var GUIDANCE = {
   NO_PAGE: "No page is open. Call navi_navigate with a URL first.",
   PAGE_ORIGIN_CHANGED: "The page navigated to a different origin, so the previous action map is void. Call navi_navigate again.",
   UNINSTRUMENTED_HOST: 'The page publishes no agent-bridge discovery marker, so this session cannot know which Navi build the host runs. Serve the tenant loader, or declare <meta name="agent-bridge" content="active">, to make the host discoverable.',
-  DISCOVERY_UNUSABLE: "The page advertises an agent-bridge marker but no Navi runtime is live on it, so the packaged runtime was injected as a fallback. The host loader was most likely blocked, refused (a bad tenant key) or stripped by an integrity mismatch; the action map below came from the packaged build, not the host's."
+  MANIFEST_UNREACHABLE: "The page declares instrumentation but no usable discovery document could be read from its own origin, so the packaged runtime was injected instead. Serve /.well-known/navi.json (GET /.well-known/navi.json on the host) or fix the Link target it advertises.",
+  MANIFEST_CROSS_ORIGIN: "The page advertised a discovery document on another origin, which this client refuses to read: a page must not be able to point the agent at an arbitrary host. The packaged runtime was injected instead. Serve the document from the page origin.",
+  MANIFEST_INCOMPATIBLE: "The host published a discovery document declaring a different Navi protocol version, so the packaged runtime was injected instead. Upgrade the host runtime or install an agent that speaks that version.",
+  HOST_ASSET_MISMATCH: "The host declared a subresource integrity hash for its runtime and the served bytes did not match it, so nothing from that host was executed and the packaged runtime was injected instead. Redistribute the asset or update the hash in the manifest.",
+  HOST_ASSET_BLOCKED: "The host published a runtime endpoint, but injecting it was refused (most likely the page Content-Security-Policy forbids that script origin), so the packaged runtime was injected instead. Allow the script origin in script-src, or omit the manifest and let the packaged runtime be used deliberately."
 };
 function guidance(code, message) {
   const hint = GUIDANCE[code];
@@ -812,8 +820,9 @@ function errorCode(error) {
   );
   return typeof code === "string" && code ? code : "EXECUTION_ERROR";
 }
-function warningFor(code) {
-  return { code, message: GUIDANCE[code] ?? code };
+function warningFor(code, detail) {
+  const message = GUIDANCE[code] ?? code;
+  return { code, message: detail ? `${message} (${detail})` : message };
 }
 function agentBridgeLink(headers) {
   const raw = headers?.link;
@@ -844,8 +853,109 @@ async function probeAgentBridge(page, response) {
     instrumented: Boolean(meta) || Boolean(link),
     source: meta ? "meta-tag" : link ? "link-header" : "none",
     declared_version: declared,
-    manifest
+    manifest,
+    script: null,
+    integrity: "not_declared"
   };
+}
+function isIntegrityHash(value) {
+  return /^sha(256|384|512)-[A-Za-z0-9+/=]{16,}$/.test(value);
+}
+async function fetchHostManifest(pageUrl, link) {
+  const origin = new URL(pageUrl).origin;
+  let target;
+  try {
+    target = new URL(link ?? "/.well-known/navi.json", pageUrl);
+    if (target.protocol !== "http:" && target.protocol !== "https:") throw new Error("not http(s)");
+  } catch {
+    return { ok: false, code: "MANIFEST_UNREACHABLE", detail: "the advertised manifest URL could not be resolved" };
+  }
+  if (target.origin !== origin) {
+    return { ok: false, code: "MANIFEST_CROSS_ORIGIN", detail: `${target.origin} is not the page origin ${origin}` };
+  }
+  try {
+    const response = await fetch(target, { redirect: "follow", signal: AbortSignal.timeout(MANIFEST_TIMEOUT_MS), headers: { Accept: "application/json" } });
+    if (!response.ok) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `GET ${redactUrl(target.href)} answered HTTP ${response.status}` };
+    if (new URL(response.url).origin !== origin) return { ok: false, code: "MANIFEST_CROSS_ORIGIN", detail: `GET ${redactUrl(target.href)} redirected to ${redactUrl(response.url)}` };
+    const declaredLength = Number(response.headers.get("content-length") ?? "");
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `the document declares ${declaredLength} bytes` };
+    const text = await response.text();
+    if (text.length > MAX_MANIFEST_BYTES) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `the document is larger than ${MAX_MANIFEST_BYTES} bytes` };
+    const document2 = JSON.parse(text);
+    if (!document2 || typeof document2 !== "object" || Array.isArray(document2)) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: "the document is not a JSON object" };
+    return { ok: true, document: document2, url: target.href };
+  } catch (error) {
+    const timedOut = (
+      /** @type {{name?: unknown}} */
+      error?.name === "TimeoutError"
+    );
+    return { ok: false, code: "MANIFEST_UNREACHABLE", detail: timedOut ? `no answer within ${MANIFEST_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
+  }
+}
+async function fetchHostAsset(url, integrity) {
+  const algorithm = integrity.slice(0, integrity.indexOf("-"));
+  try {
+    const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(HOST_ASSET_TIMEOUT_MS) });
+    if (!response.ok) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `GET ${redactUrl(url.href)} answered HTTP ${response.status}` };
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const digest = `${algorithm}-${createHash(algorithm).update(bytes).digest("base64")}`;
+    if (digest !== integrity) return { ok: false, code: "HOST_ASSET_MISMATCH", detail: `the served bytes hash to ${digest.slice(0, 20)}\u2026, the manifest declared ${integrity.slice(0, 20)}\u2026` };
+    return { ok: true, text: bytes.toString("utf8") };
+  } catch (error) {
+    const timedOut = (
+      /** @type {{name?: unknown}} */
+      error?.name === "TimeoutError"
+    );
+    return { ok: false, code: "MANIFEST_UNREACHABLE", detail: timedOut ? `${redactUrl(url.href)} did not answer within ${HOST_ASSET_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
+  }
+}
+async function negotiateHostRuntime(page, discovery) {
+  const resolution = { source: "bundled_fallback", manifest: null, script: null, integrity: "not_declared", warning: null, detail: null };
+  const fallback = (code, detail) => {
+    resolution.warning = code;
+    resolution.detail = detail;
+    return resolution;
+  };
+  const fetched = await fetchHostManifest(page.url(), discovery.manifest);
+  if (!fetched.ok) return fallback(fetched.code, fetched.detail);
+  resolution.manifest = redactUrl(fetched.url);
+  const declaredVersion = fetched.document.version;
+  if (declaredVersion !== NAVI_PROTOCOL_VERSION) {
+    return fallback("MANIFEST_INCOMPATIBLE", `the manifest declares protocol ${typeof declaredVersion === "string" ? declaredVersion : "no version"}, this server speaks ${NAVI_PROTOCOL_VERSION}`);
+  }
+  const declared = fetched.document.endpoints?.script;
+  let scriptUrl;
+  try {
+    if (typeof declared !== "string" || !declared) throw new Error("no endpoints.script");
+    scriptUrl = new URL(declared, fetched.url);
+    if (scriptUrl.protocol !== "http:" && scriptUrl.protocol !== "https:") throw new Error("not http(s)");
+  } catch (error) {
+    return fallback("MANIFEST_UNREACHABLE", `the document declares no usable endpoints.script (${error instanceof Error ? error.message : String(error)})`);
+  }
+  resolution.script = redactUrl(scriptUrl.href);
+  const declaredIntegrity = typeof fetched.document.integrity === "string" && isIntegrityHash(fetched.document.integrity.trim()) ? fetched.document.integrity.trim() : null;
+  try {
+    if (declaredIntegrity) {
+      const asset = await fetchHostAsset(scriptUrl, declaredIntegrity);
+      if (!asset.ok) {
+        resolution.integrity = "failed";
+        return fallback(asset.code, asset.detail);
+      }
+      await page.addScriptTag({ content: asset.text });
+      resolution.integrity = "verified";
+    } else {
+      await page.addScriptTag({ url: scriptUrl.href });
+    }
+    await page.waitForFunction(() => Boolean(
+      /** @type {any} */
+      globalThis.Navi
+    ), void 0, { timeout: HOST_ASSET_TIMEOUT_MS });
+    resolution.source = "host_manifest";
+    return resolution;
+  } catch (error) {
+    if (declaredIntegrity) resolution.integrity = "failed";
+    return fallback("HOST_ASSET_BLOCKED", error instanceof Error ? error.message.split("\n")[0] : String(error));
+  }
 }
 function toolError(code, message, extra = {}) {
   return {
@@ -861,7 +971,7 @@ var TOOLS = [
   {
     name: "navi_navigate",
     title: "Navigate and initialize Navi",
-    description: `Open an http(s) URL in the controlled browser, detect the host's agent-bridge discovery marker (a Link response header or <meta name="agent-bridge">), bind to the Navi instance the host is already running instead of injecting a second copy, fall back to the packaged runtime (protocol ${NAVI_PROTOCOL_VERSION}) when the host publishes nothing or its loader never ran, wait for indexing, and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
+    description: `Open an http(s) URL in the controlled browser, detect the host's agent-bridge discovery marker (a Link response header or <meta name="agent-bridge">), read the host's own discovery document from the page origin and inject the runtime it designates (verifying a declared subresource integrity hash before executing anything), bind to a Navi instance the page is already running, or fall back to the packaged runtime (protocol ${NAVI_PROTOCOL_VERSION}) when the host publishes nothing usable. Every outcome is reported as sdk.source: host_manifest, host_inline or bundled_fallback. Then wait for indexing and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -1066,38 +1176,55 @@ var NaviSession = class {
       await page.setViewportSize({ width, height });
       const response = await page.goto(safe, { waitUntil: "load", timeout });
       const status = response ? response.status() : null;
-      const discovery = await probeAgentBridge(page, response);
+      let discovery = await probeAgentBridge(page, response);
       const installed = await page.evaluate(() => Boolean(
         /** @type {any} */
         globalThis.Navi
       ));
       const sdkPath = resolveSdkPath();
       let strategy;
+      let source;
       let warning = null;
-      if (installed) {
-        strategy = "already-present";
-        if (!discovery.instrumented) warning = warningFor("UNINSTRUMENTED_HOST");
-      } else {
-        warning = warningFor(discovery.instrumented ? "DISCOVERY_UNUSABLE" : "UNINSTRUMENTED_HOST");
-        strategy = "tag";
+      const installBundled = async () => {
         try {
           await installNavi(page, { scriptPath: sdkPath, strategy: "tag" });
+          return "tag";
         } catch {
           await installNavi(page, { scriptPath: sdkPath, strategy: "evaluate" });
-          strategy = "evaluate";
+          return "evaluate";
         }
+      };
+      if (installed) {
+        strategy = "already-present";
+        source = "host_inline";
+        if (!discovery.instrumented) warning = warningFor("UNINSTRUMENTED_HOST");
+      } else if (discovery.instrumented) {
+        const resolution = await negotiateHostRuntime(page, discovery);
+        discovery = { ...discovery, manifest: resolution.manifest ?? discovery.manifest, script: resolution.script, integrity: resolution.integrity };
+        if (resolution.source === "host_manifest") {
+          strategy = "tag";
+          source = "host_manifest";
+        } else {
+          warning = warningFor(resolution.warning ?? "MANIFEST_UNREACHABLE", resolution.detail ?? void 0);
+          strategy = await installBundled();
+          source = "bundled_fallback";
+        }
+      } else {
+        warning = warningFor("UNINSTRUMENTED_HOST");
+        strategy = await installBundled();
+        source = "bundled_fallback";
       }
       const { version } = await ensureNavi(page, sdkPath);
       this.adapter = new NaviPlaywrightAdapter(page, { fallback: this.fallback });
       const map = await this.adapter.discover({ limit: MAX_ACTIONS });
       this.sdkStrategy = strategy;
-      this.log(`navigated to ${page.url()} (HTTP ${status}, SDK ${strategy} from ${installed ? "the page" : "the packaged build"}, discovery ${discovery.source}, ${map.actions.length} controls)`);
+      this.log(`navigated to ${page.url()} (HTTP ${status}, SDK ${strategy} via ${source}, discovery ${discovery.source}${discovery.manifest ? ` ${discovery.manifest}` : ""}, ${map.actions.length} controls)`);
       return toolResult({
         url: page.url(),
         title: await page.title(),
         status,
         protocolVersion: version,
-        sdk: { strategy, injected: !installed, source: installed ? "page" : "bundled" },
+        sdk: { strategy, injected: !installed, source },
         discovery,
         ...warning ? { warning } : {},
         viewport: { width, height },

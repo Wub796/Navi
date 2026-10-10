@@ -5,6 +5,7 @@
 // a web framework, a validation library and a token library into an agent
 // runtime. Conformance is verified in tests against the official
 // @modelcontextprotocol/sdk Client, which is a development-only dependency.
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { NaviPlaywrightAdapter, NAVI_PROTOCOL_VERSION } from '../adapter.js';
@@ -36,6 +37,17 @@ export const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2
 const DEFAULT_VIEWPORT = { width: 1360, height: 900 };
 const DEFAULT_TIMEOUT_MS = 20000;
 const MAX_ACTIONS = 5000;
+/**
+ * Budget for reading a host's discovery document. It is a same-origin fetch of a
+ * few hundred bytes, so a host that cannot answer inside this window is treated as
+ * publishing nothing rather than as a slow host: the packaged runtime is a better
+ * answer than a navigation that hangs on metadata.
+ */
+const MANIFEST_TIMEOUT_MS = 500;
+/** Budget for the host's declared asset, which is a real script over a real network. */
+const HOST_ASSET_TIMEOUT_MS = 4000;
+/** A discovery document is a few hundred bytes; anything larger is not one. */
+const MAX_MANIFEST_BYTES = 16 * 1024;
 
 /**
  * Actionable guidance for every failure mode the adapter and SDK can report.
@@ -66,7 +78,11 @@ const GUIDANCE = {
   NO_PAGE: 'No page is open. Call navi_navigate with a URL first.',
   PAGE_ORIGIN_CHANGED: 'The page navigated to a different origin, so the previous action map is void. Call navi_navigate again.',
   UNINSTRUMENTED_HOST: 'The page publishes no agent-bridge discovery marker, so this session cannot know which Navi build the host runs. Serve the tenant loader, or declare <meta name="agent-bridge" content="active">, to make the host discoverable.',
-  DISCOVERY_UNUSABLE: 'The page advertises an agent-bridge marker but no Navi runtime is live on it, so the packaged runtime was injected as a fallback. The host loader was most likely blocked, refused (a bad tenant key) or stripped by an integrity mismatch; the action map below came from the packaged build, not the host\'s.'
+  MANIFEST_UNREACHABLE: 'The page declares instrumentation but no usable discovery document could be read from its own origin, so the packaged runtime was injected instead. Serve /.well-known/navi.json (GET /.well-known/navi.json on the host) or fix the Link target it advertises.',
+  MANIFEST_CROSS_ORIGIN: 'The page advertised a discovery document on another origin, which this client refuses to read: a page must not be able to point the agent at an arbitrary host. The packaged runtime was injected instead. Serve the document from the page origin.',
+  MANIFEST_INCOMPATIBLE: 'The host published a discovery document declaring a different Navi protocol version, so the packaged runtime was injected instead. Upgrade the host runtime or install an agent that speaks that version.',
+  HOST_ASSET_MISMATCH: 'The host declared a subresource integrity hash for its runtime and the served bytes did not match it, so nothing from that host was executed and the packaged runtime was injected instead. Redistribute the asset or update the hash in the manifest.',
+  HOST_ASSET_BLOCKED: 'The host published a runtime endpoint, but injecting it was refused (most likely the page Content-Security-Policy forbids that script origin), so the packaged runtime was injected instead. Allow the script origin in script-src, or omit the manifest and let the packaged runtime be used deliberately.'
 };
 
 /** @param {string} code @param {string} message */
@@ -99,10 +115,12 @@ function errorCode(error) {
  * something less authoritative than the host's own runtime. The text comes from
  * GUIDANCE so the code and the sentence cannot disagree.
  * @param {string} code
+ * @param {string} [detail] what actually went wrong, already redacted by the caller
  * @returns {{code: string, message: string}}
  */
-function warningFor(code) {
-  return { code, message: GUIDANCE[code] ?? code };
+function warningFor(code, detail) {
+  const message = GUIDANCE[code] ?? code;
+  return { code, message: detail ? `${message} (${detail})` : message };
 }
 
 /**
@@ -123,7 +141,7 @@ function agentBridgeLink(headers) {
 }
 
 /**
- * @typedef {{instrumented: boolean, source: 'meta-tag' | 'link-header' | 'none', declared_version: string | null, manifest: string | null}} Discovery
+ * @typedef {{instrumented: boolean, source: 'meta-tag' | 'link-header' | 'none', declared_version: string | null, manifest: string | null, script: string | null, integrity: 'verified' | 'not_declared' | 'failed'}} Discovery
  */
 
 /**
@@ -162,8 +180,146 @@ async function probeAgentBridge(page, response) {
     instrumented: Boolean(meta) || Boolean(link),
     source: meta ? 'meta-tag' : link ? 'link-header' : 'none',
     declared_version: declared,
-    manifest
+    manifest,
+    script: null,
+    integrity: 'not_declared'
   };
+}
+
+/** A subresource integrity hash this client is willing to verify with. @param {string} value */
+function isIntegrityHash(value) {
+  return /^sha(256|384|512)-[A-Za-z0-9+/=]{16,}$/.test(value);
+}
+
+/**
+ * Read the host's discovery document, if the host is allowed to have one.
+ *
+ * The fetch is deliberately constrained: it never leaves the page's own origin
+ * (including through a redirect), it is given a 500ms budget, and the body is
+ * capped and parsed rather than trusted. Without the origin rule, a `<meta>` tag
+ * or a `Link` header written by a hostile page would turn this server into an
+ * SSRF client against whatever network the agent runs on.
+ * @param {string} pageUrl
+ * @param {string | null} link the manifest URL the page advertised, if any
+ * @returns {Promise<{ok: true, document: Record<string, any>, url: string} | {ok: false, code: string, detail: string}>}
+ */
+async function fetchHostManifest(pageUrl, link) {
+  const origin = new URL(pageUrl).origin;
+  /** @type {URL} */
+  let target;
+  try {
+    target = new URL(link ?? '/.well-known/navi.json', pageUrl);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('not http(s)');
+  } catch {
+    return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: 'the advertised manifest URL could not be resolved' };
+  }
+  if (target.origin !== origin) {
+    return { ok: false, code: 'MANIFEST_CROSS_ORIGIN', detail: `${target.origin} is not the page origin ${origin}` };
+  }
+  try {
+    const response = await fetch(target, { redirect: 'follow', signal: AbortSignal.timeout(MANIFEST_TIMEOUT_MS), headers: { Accept: 'application/json' } });
+    if (!response.ok) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `GET ${redactUrl(target.href)} answered HTTP ${response.status}` };
+    if (new URL(response.url).origin !== origin) return { ok: false, code: 'MANIFEST_CROSS_ORIGIN', detail: `GET ${redactUrl(target.href)} redirected to ${redactUrl(response.url)}` };
+    const declaredLength = Number(response.headers.get('content-length') ?? '');
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `the document declares ${declaredLength} bytes` };
+    const text = await response.text();
+    if (text.length > MAX_MANIFEST_BYTES) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `the document is larger than ${MAX_MANIFEST_BYTES} bytes` };
+    const document = JSON.parse(text);
+    if (!document || typeof document !== 'object' || Array.isArray(document)) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: 'the document is not a JSON object' };
+    return { ok: true, document, url: target.href };
+  } catch (error) {
+    const timedOut = /** @type {{name?: unknown}} */ (error)?.name === 'TimeoutError';
+    return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: timedOut ? `no answer within ${MANIFEST_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Fetch a host-declared asset and check it against the hash the host's own
+ * document declared, before any of it is executed. This is the only way a
+ * manifest-pinned asset is injected as a script body rather than as a URL.
+ * @param {URL} url
+ * @param {string} integrity
+ * @returns {Promise<{ok: true, text: string} | {ok: false, code: string, detail: string}>}
+ */
+async function fetchHostAsset(url, integrity) {
+  const algorithm = integrity.slice(0, integrity.indexOf('-'));
+  try {
+    const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(HOST_ASSET_TIMEOUT_MS) });
+    if (!response.ok) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `GET ${redactUrl(url.href)} answered HTTP ${response.status}` };
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const digest = `${algorithm}-${createHash(algorithm).update(bytes).digest('base64')}`;
+    if (digest !== integrity) return { ok: false, code: 'HOST_ASSET_MISMATCH', detail: `the served bytes hash to ${digest.slice(0, 20)}…, the manifest declared ${integrity.slice(0, 20)}…` };
+    return { ok: true, text: bytes.toString('utf8') };
+  } catch (error) {
+    const timedOut = /** @type {{name?: unknown}} */ (error)?.name === 'TimeoutError';
+    return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: timedOut ? `${redactUrl(url.href)} did not answer within ${HOST_ASSET_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * @typedef {{source: 'host_manifest' | 'bundled_fallback', manifest: string | null, script: string | null, integrity: 'verified' | 'not_declared' | 'failed', warning: string | null, detail: string | null}} RuntimeResolution
+ */
+
+/**
+ * Negotiate the runtime with a host that declares itself instrumented: read its
+ * document, and inject the asset it designates rather than the packaged build.
+ *
+ * Every failure resolves to `bundled_fallback` with the reason attached, because
+ * a browser agent that refuses to run a page it cannot negotiate with is worse
+ * than one that says which build it used and why.
+ * @param {any} page
+ * @param {Discovery} discovery
+ * @returns {Promise<RuntimeResolution>}
+ */
+async function negotiateHostRuntime(page, discovery) {
+  /** @type {RuntimeResolution} */
+  const resolution = { source: 'bundled_fallback', manifest: null, script: null, integrity: 'not_declared', warning: null, detail: null };
+  /** @param {string} code @param {string} detail @returns {RuntimeResolution} */
+  const fallback = (code, detail) => {
+    resolution.warning = code;
+    resolution.detail = detail;
+    return resolution;
+  };
+  const fetched = await fetchHostManifest(page.url(), discovery.manifest);
+  if (!fetched.ok) return fallback(fetched.code, fetched.detail);
+  resolution.manifest = redactUrl(fetched.url);
+  const declaredVersion = fetched.document.version;
+  if (declaredVersion !== NAVI_PROTOCOL_VERSION) {
+    return fallback('MANIFEST_INCOMPATIBLE', `the manifest declares protocol ${typeof declaredVersion === 'string' ? declaredVersion : 'no version'}, this server speaks ${NAVI_PROTOCOL_VERSION}`);
+  }
+  const declared = fetched.document.endpoints?.script;
+  /** @type {URL} */
+  let scriptUrl;
+  try {
+    if (typeof declared !== 'string' || !declared) throw new Error('no endpoints.script');
+    scriptUrl = new URL(declared, fetched.url);
+    if (scriptUrl.protocol !== 'http:' && scriptUrl.protocol !== 'https:') throw new Error('not http(s)');
+  } catch (error) {
+    return fallback('MANIFEST_UNREACHABLE', `the document declares no usable endpoints.script (${error instanceof Error ? error.message : String(error)})`);
+  }
+  resolution.script = redactUrl(scriptUrl.href);
+  const declaredIntegrity = typeof fetched.document.integrity === 'string' && isIntegrityHash(fetched.document.integrity.trim()) ? fetched.document.integrity.trim() : null;
+  try {
+    if (declaredIntegrity) {
+      const asset = await fetchHostAsset(scriptUrl, declaredIntegrity);
+      if (!asset.ok) {
+        resolution.integrity = 'failed';
+        return fallback(asset.code, asset.detail);
+      }
+      // The hash covers exactly these bytes, so they are injected as a body rather
+      // than re-fetched by the browser as a URL that nothing verifies.
+      await page.addScriptTag({ content: asset.text });
+      resolution.integrity = 'verified';
+    } else {
+      await page.addScriptTag({ url: scriptUrl.href });
+    }
+    await page.waitForFunction(() => Boolean(/** @type {any} */ (globalThis).Navi), undefined, { timeout: HOST_ASSET_TIMEOUT_MS });
+    resolution.source = 'host_manifest';
+    return resolution;
+  } catch (error) {
+    if (declaredIntegrity) resolution.integrity = 'failed';
+    return fallback('HOST_ASSET_BLOCKED', error instanceof Error ? error.message.split('\n')[0] : String(error));
+  }
 }
 
 /**
@@ -187,7 +343,7 @@ export const TOOLS = [
   {
     name: 'navi_navigate',
     title: 'Navigate and initialize Navi',
-    description: `Open an http(s) URL in the controlled browser, detect the host's agent-bridge discovery marker (a Link response header or <meta name="agent-bridge">), bind to the Navi instance the host is already running instead of injecting a second copy, fall back to the packaged runtime (protocol ${NAVI_PROTOCOL_VERSION}) when the host publishes nothing or its loader never ran, wait for indexing, and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
+    description: `Open an http(s) URL in the controlled browser, detect the host's agent-bridge discovery marker (a Link response header or <meta name="agent-bridge">), read the host's own discovery document from the page origin and inject the runtime it designates (verifying a declared subresource integrity hash before executing anything), bind to a Navi instance the page is already running, or fall back to the packaged runtime (protocol ${NAVI_PROTOCOL_VERSION}) when the host publishes nothing usable. Every outcome is reported as sdk.source: host_manifest, host_inline or bundled_fallback. Then wait for indexing and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -404,45 +560,63 @@ export class NaviSession {
       await page.setViewportSize({ width, height });
       const response = await page.goto(safe, { waitUntil: 'load', timeout });
       const status = response ? response.status() : null;
-      const discovery = await probeAgentBridge(page, response);
+      /** @type {Discovery} */
+      let discovery = await probeAgentBridge(page, response);
       const installed = await page.evaluate(() => Boolean(/** @type {any} */ (globalThis).Navi));
       const sdkPath = resolveSdkPath();
       /** @type {string} */
       let strategy;
+      /** @type {'host_inline' | 'host_manifest' | 'bundled_fallback'} */
+      let source;
       /** @type {{code: string, message: string} | null} */
       let warning = null;
-      if (installed) {
-        // The host is already running its own Navi: bind to that instance rather
-        // than injecting a second copy over it, which is what the marker is for.
-        strategy = 'already-present';
-        if (!discovery.instrumented) warning = warningFor('UNINSTRUMENTED_HOST');
-      } else {
-        // Two ways to arrive here. A page that advertises a runtime which never ran
-        // has a broken loader (blocked, refused key, integrity mismatch); a page
-        // with no marker at all is simply not instrumented. Both are served by the
-        // same fallback, and the envelope says which one happened.
-        warning = warningFor(discovery.instrumented ? 'DISCOVERY_UNUSABLE' : 'UNINSTRUMENTED_HOST');
-        strategy = 'tag';
+      /** Install the packaged runtime, preferring a script tag and falling back to the driver path. @returns {Promise<string>} the strategy that worked */
+      const installBundled = async () => {
         try {
           await installNavi(page, { scriptPath: sdkPath, strategy: 'tag' });
+          return 'tag';
         } catch {
           // A strict script-src blocks <script> injection; the driver evaluation
           // path is not subject to the document's CSP.
           await installNavi(page, { scriptPath: sdkPath, strategy: 'evaluate' });
-          strategy = 'evaluate';
+          return 'evaluate';
         }
+      };
+      if (installed) {
+        // The page is already running its own Navi: bind to that instance rather
+        // than injecting a second copy over it, which is what the marker is for.
+        strategy = 'already-present';
+        source = 'host_inline';
+        if (!discovery.instrumented) warning = warningFor('UNINSTRUMENTED_HOST');
+      } else if (discovery.instrumented) {
+        // The page declares instrumentation, so the host is asked for its runtime
+        // before the packaged build is used at all.
+        const resolution = await negotiateHostRuntime(page, discovery);
+        discovery = { ...discovery, manifest: resolution.manifest ?? discovery.manifest, script: resolution.script, integrity: resolution.integrity };
+        if (resolution.source === 'host_manifest') {
+          strategy = 'tag';
+          source = 'host_manifest';
+        } else {
+          warning = warningFor(resolution.warning ?? 'MANIFEST_UNREACHABLE', resolution.detail ?? undefined);
+          strategy = await installBundled();
+          source = 'bundled_fallback';
+        }
+      } else {
+        warning = warningFor('UNINSTRUMENTED_HOST');
+        strategy = await installBundled();
+        source = 'bundled_fallback';
       }
       const { version } = await ensureNavi(page, sdkPath);
       this.adapter = new NaviPlaywrightAdapter(page, { fallback: this.fallback });
       const map = await this.adapter.discover({ limit: MAX_ACTIONS });
       this.sdkStrategy = strategy;
-      this.log(`navigated to ${page.url()} (HTTP ${status}, SDK ${strategy} from ${installed ? 'the page' : 'the packaged build'}, discovery ${discovery.source}, ${map.actions.length} controls)`);
+      this.log(`navigated to ${page.url()} (HTTP ${status}, SDK ${strategy} via ${source}, discovery ${discovery.source}${discovery.manifest ? ` ${discovery.manifest}` : ''}, ${map.actions.length} controls)`);
       return toolResult({
         url: page.url(),
         title: await page.title(),
         status,
         protocolVersion: version,
-        sdk: { strategy, injected: !installed, source: installed ? 'page' : 'bundled' },
+        sdk: { strategy, injected: !installed, source },
         discovery,
         ...(warning ? { warning } : {}),
         viewport: { width, height },

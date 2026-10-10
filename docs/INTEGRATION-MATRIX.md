@@ -42,14 +42,19 @@ Caching is the one thing worth reproducing exactly: the manifest answers with `C
 
 The meta marker's `data-version` is derived, not hardcoded: the loader writes it from the SDK that actually executed, so it cannot drift from the protocol the page is running. A page that installs `navi.min.js` directly (rather than through the loader) publishes no marker — add the same meta tag yourself, next to the bundle tag, if you want that page discoverable.
 
+A host MAY also publish a top-level `integrity` field: the SRI hash of the bytes served at `endpoints.script`. When it is present, an agent fetches that asset itself, verifies it against the declared hash, and injects those exact bytes — so a rewritten bundle is refused before anything executes. The reference host does not declare one today, because its `/v1/navi.js` route already returns the published hash as its `ETag`; a host that mirrors the bundle to a CDN should declare it.
+
 What Navi's own MCP server does with these signals:
 
 - `navi_navigate` reads the navigation response's `Link` header and the document's `meta[name="agent-bridge"]` after `load`.
-- A marker is reported back under `discovery` (whether instrumentation was declared, which signal declared it, and where the host's manifest lives) so a planner can tell "this host speaks Navi" from "we injected the runtime ourselves".
-- If a marker is present and `window.Navi` is live, the server binds to the instance the page is already running instead of injecting a second copy.
-- If a marker is present but no runtime is live — the loader was blocked by CSP, its tenant key was refused, or its hash did not match — the server warns, then injects the packaged runtime anyway. This is the discoverable-but-broken case, and it is the reason the fallback exists.
-- If no marker is present at all, the server warns `UNINSTRUMENTED_HOST` and injects the packaged runtime.
-- Discovery never changes the tool set and never fails a navigation: it only decides where the SDK came from, and every outcome is reported in the envelope rather than left implicit.
+- A marker is reported back under `discovery` (whether instrumentation was declared, which signal declared it, where the host's manifest lives, and — once negotiated — the script it designated and whether its hash was verified) so a planner can tell "this host speaks Navi" from "we injected the runtime ourselves".
+- If a marker is present and `window.Navi` is live, the server binds to the instance the page is already running instead of injecting a second copy. Nothing is fetched in that case.
+- If a marker is present and no runtime is live — the loader was blocked by CSP, its tenant key was refused, or its hash did not match — the server reads the host's own manifest and injects the asset it designates, verifying a declared hash first.
+- The manifest is only ever read from the page's own origin, inside a 500ms budget, and a redirect that leaves that origin is treated as a refusal. A page cannot point the agent's network at another host.
+- If the manifest is missing, unreachable, malformed, off-origin or declares a different protocol version, the server falls back to the packaged runtime and says which of those happened (`MANIFEST_UNREACHABLE`, `MANIFEST_CROSS_ORIGIN`, `MANIFEST_INCOMPATIBLE`), including the served-versus-declared hashes for a mismatch, and the number of milliseconds it waited for a timeout.
+- If a declared asset fails its hash check, is blocked by the page's CSP, or cannot be fetched, the packaged runtime is used and the reason is reported (`HOST_ASSET_MISMATCH`, `HOST_ASSET_BLOCKED`, `MANIFEST_UNREACHABLE`).
+- If no marker is present at all, the server never probes for a manifest: it warns `UNINSTRUMENTED_HOST` and injects the packaged runtime.
+- Every outcome is reported as `sdk.source` — `host_manifest`, `host_inline` or `bundled_fallback` — and discovery never changes the tool set and never fails a navigation: it only decides where the SDK came from, and the reason is always in the envelope rather than implicit.
 
 ## MCP client configuration
 
@@ -235,6 +240,7 @@ Verified by this repository's tests:
 - The loader's meta marker and its strict byte budget.
 - stdio registration as an MCP client uses it: a real `@modelcontextprotocol/sdk` client spawns `examples/claude-desktop-config.json`'s own entry — command and args, with only the placeholder path substituted — and lists the five tools (`navi_navigate`, `navi_get_actions`, `navi_execute_action`, `navi_assert_state`, `navi_set_session`).
 - Auto-negotiation itself: an instrumented page is bound to its own runtime, an uninstrumented page warns and still works, and a page reporting a different protocol version is refused rather than driven.
+- The manifest loop (`tests/manifest-loop.spec.mjs`): a declared runtime is fetched, hash-verified and injected instead of the packaged build; an unhashed asset is loaded by the browser as a URL; a rewritten asset is refused; an incompatible or slow or missing or off-origin manifest falls back with the documented code; and an uninstrumented page is not probed at all.
 
 Not verified here:
 

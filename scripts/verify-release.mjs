@@ -35,7 +35,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** Published floor for the suite: the release must not shrink its own coverage. */
-export const MIN_PASSING_TESTS = 81;
+export const MIN_PASSING_TESTS = 88;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
 export const LOADER_BUDGET_BYTES = 700;
@@ -237,13 +237,39 @@ export async function main(argv) {
 
   const checks = await verifyRelease({ skipTests: wants('--skip-tests'), tag: wants('--tag') });
   const ok = checks.every(check => check.ok);
+  // Structured evidence beside the prose details: the exact bytes this receipt is
+  // about, and the revision that produced them. Anything that acts on the receipt
+  // — the publish preflight, a human, release notes — can then check that it still
+  // describes the artifacts in front of it instead of trusting a timestamp.
+  /** @param {string} command @param {string[]} args @returns {string | null} */
+  const revisionOf = (command, args) => {
+    const result = attempt(command, args);
+    return result.ok ? result.output.trim() : null;
+  };
+  /** @type {{sri: string | null, bundleBytes: number | null, loaderBytes: number | null}} */
+  const artifacts = { sri: null, bundleBytes: null, loaderBytes: null };
+  try {
+    artifacts.sri = (await readFile(new URL('../dist/sri.txt', import.meta.url), 'utf8')).trim();
+    artifacts.bundleBytes = (await stat(new URL('../dist/navi.min.js', import.meta.url))).size;
+    artifacts.loaderBytes = (await stat(new URL('../dist/loader.min.js', import.meta.url))).size;
+  } catch { /* the artifact-budget check already reports a missing dist/ */ }
+  const evidence = {
+    revision: revisionOf('git', ['rev-parse', 'HEAD']),
+    branch: revisionOf('git', ['rev-parse', '--abbrev-ref', 'HEAD']),
+    ...artifacts,
+    // The floor this run was actually measured against. It travels with the
+    // measurement so a later reader can tell whether the floor has moved since,
+    // instead of comparing a recorded count to whatever the floor is today.
+    floor: MIN_PASSING_TESTS,
+    tests: /(\d+) passed, (\d+) failed/.exec(checks.find(check => check.id === 'test-suite')?.detail ?? '')?.slice(1).map(Number) ?? null
+  };
   // The receipt is written on failure too: a release gate that only records its
   // successes cannot be audited when it blocks a release.
   const receiptPath = fileURLToPath(new URL('../reports/release-verification.json', import.meta.url));
   await mkdir(dirname(receiptPath), { recursive: true });
-  await writeFile(receiptPath, `${JSON.stringify({ ok, node: process.version, recordedAt: new Date().toISOString(), checks }, null, 2)}\n`);
+  await writeFile(receiptPath, `${JSON.stringify({ ok, node: process.version, recordedAt: new Date().toISOString(), evidence, checks }, null, 2)}\n`);
   if (wants('--json')) {
-    process.stdout.write(`${JSON.stringify({ ok, checks, recordedAt: new Date().toISOString() }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ ok, evidence, checks, recordedAt: new Date().toISOString() }, null, 2)}\n`);
   } else {
     process.stdout.write('Navi release verification\n');
     for (const check of checks) process.stdout.write(`${check.ok ? '  ok  ' : ' FAIL '} ${check.id}: ${check.detail}\n`);

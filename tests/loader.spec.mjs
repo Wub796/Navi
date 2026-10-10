@@ -143,8 +143,8 @@ test('a refused tenant key rejects the queued calls instead of leaving them pend
   expect(await page.evaluate(() => /** @type {any} */ (window).__ready)).toBe('rejected');
   // The host answered 401, so the script never executed and the stub remains. The
   // marker is still injected, with no version: it claims instrumentation the loader
-  // could not complete, which is exactly the case `navi_navigate` reports as
-  // DISCOVERY_UNUSABLE rather than trusting the page.
+  // could not complete, which is exactly the case `navi_navigate` answers by reading
+  // the host's manifest (or reporting MANIFEST_UNREACHABLE) rather than trusting it.
   expect(await page.evaluate(() => /** @type {any} */ (window).Navi.version)).toBe('0.0.0');
   expect(await page.evaluate(() => document.querySelector('meta[name="agent-bridge"]')?.getAttribute('data-version'))).toBe('');
 });

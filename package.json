@@ -65,6 +65,8 @@
     "serve": "node server/index.js",
     "test:gates": "node scripts/ci-gates.mjs --self-test",
     "pack:check": "node scripts/pack-check.mjs",
+    "publish:preflight": "node scripts/publish-preflight.mjs",
+    "release:notes": "node scripts/release-notes.mjs",
     "test:smoke": "node node_modules/@playwright/test/cli.js test --config=playwright.smoke.config.mjs",
     "gates": "node scripts/ci-gates.mjs --all",
     "verify": "npm run typecheck && npm test",

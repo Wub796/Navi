@@ -1,12 +1,29 @@
-name: Release verification
+name: Release verification and publish
 
-# Verifies a release candidate on the exact revision being shipped, and can
-# create the annotated v<version> tag itself when dispatched with create_tag.
+# Verifies a release candidate on the exact revision being shipped, and publishes
+# that revision to npm when it arrives as a `v*` tag.
 #
-# Nothing is published to a registry here on purpose: the npm name, license,
-# provenance and repository metadata are the owner's decisions, and an automated
-# publish would make them silently. The job stops at "this revision is verified
-# and tagged"; publishing stays a deliberate human step.
+# The order matters and is not negotiable: verification runs first on the same
+# commit, its receipt is carried into the publish job, and the publish job refuses
+# to run without it. Two gates stand between a tag and a registry:
+#
+#   * `scripts/verify-release.mjs` — clean worktree, SRI that hashes to the shipped
+#     bytes, a suite with no failures, both byte budgets, the CI gates, the publish
+#     allowlist and a byte-identical rebuild, all recorded in
+#     reports/release-verification.json;
+#   * `scripts/publish-preflight.mjs` — the decisions a pipeline must not make for
+#     the owner (a license file and a `license` field), the access and provenance
+#     settings, and the tag agreeing with package.json.
+#
+# Provenance is requested with `--provenance`, which requires this repository to be
+# PUBLIC and the job to hold `id-token: write`; npm then publishes a signed
+# attestation tying the tarball to this workflow run. Publishing needs a
+# `NPM_TOKEN` secret (an automation token) unless the package is configured for npm
+# trusted publishing, in which case the token can be removed and OIDC used alone.
+#
+# The `environment: release` on the publish job is deliberate: add required
+# reviewers to that environment in repository settings and every publish waits for
+# a human, which is the right shape for the one action here that cannot be undone.
 #
 # A tag push re-runs verification with create_tag=false, so the tag cannot be
 # created twice and the two triggers cannot loop.
@@ -78,13 +95,95 @@ jobs:
         if: ${{ inputs.create_tag == true }}
         run: git push origin "v$(node -p "require('./package.json').version")"
 
-      - name: Upload the verification record
+      # The receipt is the publish job's evidence, so it travels with the artifacts
+      # rather than being trusted to exist in another runner's filesystem.
+      - name: Upload the verification receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: release-verification
+          name: release-receipt
           path: |
+            reports/release-verification.json
             reports/build.json
             reports/ci-timing.json
             test-results/
+          if-no-files-found: warn
+
+  publish:
+    name: Publish to npm (Node 22.x)
+    needs: verify
+    # Only a tag push publishes. A dispatched run may create and push the tag, and
+    # that push starts its own verified run of this job.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+      # Required by `npm publish --provenance`: the OIDC token that signs the
+      # attestation binding this tarball to this workflow run.
+      id-token: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Check out the tagged revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 22.x for the npm registry
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Download the verification receipt
+        uses: actions/download-artifact@v4
+        with:
+          name: release-receipt
+          path: reports
+
+      - name: Rebuild the artifacts from the tagged sources
+        run: npm run build
+
+      - name: Refuse to publish without a license decision and a passing receipt
+        run: node scripts/publish-preflight.mjs --tag "$TAG"
+
+      - name: Assert the tarball matches package.json's allowlist
+        run: npm run pack:check --silent
+
+      - name: Publish with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+      - name: Generate release notes from the receipts
+        run: node scripts/release-notes.mjs --tag "$TAG" --out reports/release-notes.md
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file reports/release-notes.md
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file reports/release-notes.md \
+              --verify-tag
+          fi
+
+      - name: Upload the published record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-publish
+          path: |
+            reports/release-notes.md
+            reports/release-verification.json
+            reports/build.json
           if-no-files-found: warn

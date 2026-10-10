@@ -29,8 +29,8 @@
       "minified": false
     },
     "dist/mcp.mjs": {
-      "bytes": 70540,
-      "gzipBytes": 19312,
+      "bytes": 78492,
+      "gzipBytes": 21345,
       "minified": false
     },
     "dist/index.d.ts": {

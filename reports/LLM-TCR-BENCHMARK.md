@@ -1,20 +1,14 @@
 # Autonomous LLM task benchmark
 
-**Status: blocked — no live model configured.** LLM_ENDPOINT and LLM_MODEL were not both set, so no model request was made and no mock model was substituted. No LLM success, step-count or billing results are claimed.
+**Status: fixture baseline — no model was called.** The model side of this run was the local fixture in `tests/fixtures/mock-llm-server.mjs`, which drives the MCP server, the browser, the differential action maps and the settlement receipts exactly as a model would. It measures this repository's harness and its accounting path. Its token figures are *simulated* provider usage derived from the request body, so they are not a provider invoice, and no model capability, success rate or cost is claimed by this file. The two paths below are driven by scripts that are deliberately not the same length, so their step counts describe the fixture's plan and are **not** a comparison between the paths: the paired path comparison is [benchmark-agent-tcr.spec.mjs](../tests/benchmark-agent-tcr.spec.mjs) (deterministic, no model) or a run with a real `LLM_ENDPOINT`/`LLM_MODEL` (see below).
 
-## Run with a configured model
+Model id: navi-mock-fixture-v1. Node v22.23.3.
 
-```sh
-# A local OpenAI-compatible tool-capable endpoint (no key needed for most local servers):
-export LLM_ENDPOINT=http://127.0.0.1:11434/v1
-export LLM_MODEL=YOUR_TOOL_CAPABLE_MODEL
-npm run benchmark:llm
-# Hosted: an HTTPS LLM_ENDPOINT plus LLM_API_KEY in this shell only. The key is
-# never written to a report and is stripped from every child process it spawns.
-```
+| Path | Completed | TCR | Mean tool steps | Input tokens | Cached input tokens | Output tokens | Cost USD (supplied rates) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| raw-playwright | 10/10 | 100.0% | 9.0 | 79634 | 34110 | 2090 | unknown |
+| navi-differential | 10/10 | 100.0% | 12.0 | 223031 | 87360 | 2660 | unknown |
 
-Optional: LLM_ITERATIONS=10 (default), LLM_MAX_TURNS=25 (default), LLM_INPUT_USD_PER_MILLION and LLM_OUTPUT_USD_PER_MILLION for explicitly supplied prices. Hosted runs incur charges.
+Failure buckets by path: raw-playwright {} · navi-differential {}
 
-The harness compares actual model-driven Playwright ARIA/locator tools with actual Navi MCP differential maps and required settlement receipts. Both receive the same task and independent server-side order oracle. It records first-attempt TCR, tool steps, request count, wall time, provider-reported prompt, cached-input and completion tokens, and failures classified with the five-bucket taxonomy in [failure-classifier.js](../src/failure-classifier.js) — selector hallucination, deterministic refusal, untrusted-gesture-required, timeout-unsettled and schema violation — plus an explicit UNCLASSIFIED sink. A bucket is assigned only from a structured code or receipt field, so an unresolved identifier is observable evidence while model intent is never claimed. Missing usage stays unknown, never estimated as billed.
-
-No mock execution is presented as a model benchmark. Contract tests exercise the transport/accounting separately. [Harness](../tests/llm-agent-benchmark.mjs) · [Raw status/results](llm-tcr-benchmark.json)
+Provider-reported tokens include replayed conversation/tool schemas; unknown usage is not estimated, and cached reads are reported by the provider as a subset of input tokens rather than subtracted. Cost uses explicitly supplied rates only and is not a provider invoice. All trials/errors are retained, with no hidden reruns, and the failures of each path are grouped by taxonomy bucket rather than by prose. An unresolved identifier is not proof of model intent, and a Navi refusal does not imply execution; success requires a correct committed order. No external purchases. These measurements are local task/model-specific, not universal agent reliability. [Raw results](llm-tcr-benchmark.json)

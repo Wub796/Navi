@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
 import { modelTurn, countUsage, resolveConfig, childEnvironment } from './llm-agent-benchmark.mjs';
+import { createMockLlmServer } from './fixtures/mock-llm-server.mjs';
 // The failure taxonomy has its own spec: tests/failure-classifier.spec.mjs.
 
 test('LLM HTTP contract sends model tools and preserves provider usage without exposing keys', async () => {
@@ -67,6 +68,53 @@ test('live model configuration is read from the environment only and a partial s
   expect(local.config.apiKey).toBeUndefined();
   expect(resolveConfig({ LLM_ENDPOINT: 'http://127.0.0.1:11434/v1', LLM_MODEL: 'm', LLM_ITERATIONS: '99' })).toHaveProperty('error');
   expect(resolveConfig({ LLM_ENDPOINT: 'not-a-url', LLM_MODEL: 'm' })).toHaveProperty('error');
+});
+
+test('an unconfigured run is distinguishable from a half-configured one', () => {
+  // 'unconfigured' is the only case the runner answers with the local fixture; a
+  // partial or invalid setup stays an error, so LLM_ENDPOINT without LLM_MODEL can
+  // never be mistaken for a deliberate fixture run.
+  expect(resolveConfig({})).toMatchObject({ reason: 'unconfigured' });
+  expect(resolveConfig({ LLM_ENDPOINT: 'http://127.0.0.1:11434/v1' })).toMatchObject({ reason: 'invalid' });
+  expect(resolveConfig({ LLM_MODEL: 'llama-tools' })).toMatchObject({ reason: 'invalid' });
+  // The knobs are validated in fixture mode too, so a bad iteration count cannot
+  // be accepted merely because no endpoint was named.
+  expect(resolveConfig({ LLM_ITERATIONS: '99' })).toMatchObject({ reason: 'invalid' });
+  expect(resolveConfig({ LLM_MAX_TURNS: '0' })).toMatchObject({ reason: 'invalid' });
+});
+
+test('the local fixture answers as an OpenAI-compatible tool-calling model and advances its plan', async () => {
+  const fixture = await createMockLlmServer();
+  const config = { baseUrl: fixture.baseUrl, model: fixture.model, iterations: 1, maxTurns: 1 };
+  const tools = [
+    { type: 'function', function: { name: 'observe_page', parameters: { type: 'object' } } },
+    { type: 'function', function: { name: 'browser_action', parameters: { type: 'object' } } },
+    { type: 'function', function: { name: 'finish_task', parameters: { type: 'object' } } }
+  ];
+  try {
+    const task = [{ role: 'user', content: 'Complete the sandbox checkout.' }];
+    const first = await modelTurn(config, task, tools);
+    expect(first.message.tool_calls[0].function.name).toBe('observe_page');
+    // The usage envelope is the shape the accounting path reads, with simulated
+    // figures derived from the request rather than a provider's report.
+    expect(Number.isInteger(first.usage?.prompt_tokens) && first.usage.prompt_tokens > 0).toBe(true);
+    expect(Number.isInteger(first.usage?.completion_tokens) && first.usage.completion_tokens > 0).toBe(true);
+    expect(Number.isInteger(first.usage?.prompt_tokens_details?.cached_tokens)).toBe(true);
+    expect(first.usage.prompt_tokens_details.cached_tokens).toBeLessThanOrEqual(first.usage.prompt_tokens);
+
+    // The same conversation is served again: the fixture replays its own emitted
+    // call and the tool result, and moves to the next step rather than repeating.
+    const second = await modelTurn(config, [
+      ...task,
+      { role: 'assistant', content: null, tool_calls: first.message.tool_calls },
+      { role: 'tool', tool_call_id: first.message.tool_calls[0].id, content: JSON.stringify({ url: 'http://127.0.0.1:1/checkout', snapshot: 'button "Search products"' }) }
+    ], tools);
+    expect(second.message.tool_calls[0].function.name).toBe('browser_action');
+    expect(JSON.parse(second.message.tool_calls[0].function.arguments)).toMatchObject({ role: 'textbox', action: 'type' });
+    expect(fixture.requests).toBe(2);
+  } finally {
+    await fixture.close();
+  }
 });
 
 test('the child MCP process never inherits provider credentials', () => {

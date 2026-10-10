@@ -7,9 +7,22 @@
 // session travelling to a registry inside a release because someone added a
 // directory to `files` or dropped a file next to the ones that ship.
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
-/** Everything a release is allowed to contain. */
-const ALLOWED = ['dist/', 'bin/', 'server/', 'flows/', 'README.md', 'docs/AGENT-INTEGRATION.md', 'package.json'];
+/**
+ * Files npm includes whether or not `files` names them, so they cannot be treated
+ * as escapes. `LICENSE` is listed here rather than in `files` on purpose: npm picks
+ * it up automatically, and the publish preflight is what insists there is one.
+ */
+const IMPLICIT = ['package.json', 'README.md', 'LICENSE', 'LICENSE.md', 'LICENCE', 'CHANGELOG.md'];
+/**
+ * Everything a release is allowed to contain, read from package.json at run time.
+ * The manifest is the allowlist: this check asserts the real tarball against it, so
+ * a directory added to `files` (or a file that does not belong beside the ones that
+ * ship) is caught here rather than in a registry.
+ */
+const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const ALLOWED = [...(Array.isArray(manifest.files) ? manifest.files : []), ...IMPLICIT];
 /** Patterns that must never appear in a published tarball, whatever the manifest says. */
 const FORBIDDEN = [
   /(^|\/)tests?\//,
@@ -64,8 +77,8 @@ const total = bytes.reduce((sum, entry) => sum + (typeof entry.size === 'number'
 console.log(`pack-check: ${files.length} files, ${total} bytes unpacked`);
 for (const path of [...files].sort()) console.log(`  ${path}`);
 
-if (outside.length) process.stderr.write(`\npack-check: ${outside.length} file(s) outside the publish allowlist: ${outside.join(', ')}\n`);
+if (outside.length) process.stderr.write(`\npack-check: ${outside.length} file(s) outside package.json's \`files\` allowlist (${ALLOWED.join(', ')}): ${outside.join(', ')}\n`);
 if (leaked.length) process.stderr.write(`\npack-check: ${leaked.length} file(s) matching a forbidden pattern: ${leaked.join(', ')}\n`);
 if (missing.length) process.stderr.write(`\npack-check: ${missing.length} required release artifact(s) absent: ${missing.join(', ')}\n`);
 if (outside.length || leaked.length || missing.length) process.exit(1);
-console.log('pack-check: every published path is an intended release artifact.');
+console.log(`pack-check: every published path is an intended release artifact (${ALLOWED.length} allowed entries, ${files.length} shipped).`);
