@@ -1,7 +1,19 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-10T22:59:58.442Z",
+  "recordedAt": "2026-10-10T23:56:28.456Z",
+  "evidence": {
+    "revision": "910fd1cf30e4bf2adfb9af3a858605d6ed3f0dda",
+    "branch": "main",
+    "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
+    "bundleBytes": 14929,
+    "loaderBytes": 689,
+    "floor": 88,
+    "tests": [
+      88,
+      0
+    ]
+  },
   "checks": [
     {
       "id": "node-runtime",
@@ -16,7 +28,7 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 0 generated path(s)"
+      "detail": "clean apart from 2 generated path(s)"
     },
     {
       "id": "version-tag",
@@ -36,7 +48,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "81 passed, 0 failed (floor 81)"
+      "detail": "88 passed, 0 failed (floor 88)"
     },
     {
       "id": "ci-gates",
