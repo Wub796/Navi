@@ -42,7 +42,7 @@ stated in the same place as the passing results.
 | Container runtime, arm64 | `npm run test:containers` (native) | **9/9 checks** — [container-verification.json](container-verification.json) |
 | Container runtime, amd64 | `docker build --platform linux/amd64` + in-container `scripts/check-sandbox.mjs` | **build passes; sandbox gate refuses** — see limitations |
 | Harness fail-closed | `env -u LLM_ENDPOINT -u LLM_MODEL node tests/llm-agent-benchmark.mjs` | **exit 2**, no model call, blocked status recorded |
-| Release gate | `node scripts/verify-release.mjs` | 9 of 10 checks pass; only **`git-clean` fails**, because this phase's edits are not committed yet — see below |
+| Release gate | `npm run verify:release` at the committed revision | **10 of 10 checks pass** — [release-verification.json](release-verification.json) |
 
 The release gate reports `test-suite: 77 passed, 0 failed (floor 77)`, `artifact-budget: 14929 B < 15000`, a matching SRI,
 `rebuild-stable: rebuilt to identical bytes`, `ci-gates` and `pack-check` green, and `version-tag: v0.5.0 does not exist yet`,
@@ -109,7 +109,7 @@ same cursor, truncated reads (which are never cached), and negative, fractional,
 
 ## Artifacts
 
-[container-verification.json](container-verification.json) · [differential-tokens.json](differential-tokens.json) ·
+[release-verification.json](release-verification.json) · [container-verification.json](container-verification.json) · [differential-tokens.json](differential-tokens.json) ·
 [differential-mutations.json](differential-mutations.json) · [llm-tcr-benchmark.json](llm-tcr-benchmark.json) ·
 [LLM-TCR-BENCHMARK.md](LLM-TCR-BENCHMARK.md) · [build.json](build.json) ·
 [verify-containers.mjs](../scripts/verify-containers.mjs) · [check-sandbox.mjs](../scripts/check-sandbox.mjs) ·
