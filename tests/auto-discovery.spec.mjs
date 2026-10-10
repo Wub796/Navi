@@ -247,6 +247,22 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
     expect(unusable.sdk.injected).toBe(true);
     expect(unusable.actions).toBeGreaterThan(0);
     expect(unusable.protocolVersion).toBe(NAVI_PROTOCOL_VERSION);
+
+    // 4. A page running a different protocol version is refused rather than served a
+    //    map the agent might misread. This is what has to hold across the 0.2 -> 0.3
+    //    bump, and it is the reason the manifest advertises a version at all.
+    state.html = `<!doctype html>
+<html lang="en"><head><title>Stale protocol</title></head>
+<body><button data-agent-target="probe">Probe</button>
+<script>window.Navi = { version: '0.2.0', ready: async () => {}, actions: async () => ({ version: '0.2.0', state_version: 1, reset: true, truncated: false, actions: [] }) };</script>
+</body></html>`;
+    const stale = await client.callTool({ name: 'navi_navigate', arguments: { url: `${state.pageBase}/` } });
+    expect(stale.isError).toBe(true);
+    const staleBody = envelope(stale);
+    expect(staleBody.ok).toBe(false);
+    expect(staleBody.error?.code).toBe('NAVIGATION_FAILED');
+    expect(staleBody.error?.message).toContain('0.2.0');
+    expect(staleBody.error?.message).toContain(NAVI_PROTOCOL_VERSION);
   } finally {
     await client.close();
   }

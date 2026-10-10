@@ -234,7 +234,7 @@ Verified by this repository's tests:
 - The manifest's exact schema, its caching headers, and the `304` path (`tests/auto-discovery.spec.mjs`), plus the `Link: … rel="agent-bridge"` header on host responses.
 - The loader's meta marker and its strict byte budget.
 - stdio registration as an MCP client uses it: a real `@modelcontextprotocol/sdk` client spawns `examples/claude-desktop-config.json`'s own entry — command and args, with only the placeholder path substituted — and lists the five tools (`navi_navigate`, `navi_get_actions`, `navi_execute_action`, `navi_assert_state`, `navi_set_session`).
-- Auto-negotiation itself: an instrumented page is bound to its own runtime, and an uninstrumented page warns and still works.
+- Auto-negotiation itself: an instrumented page is bound to its own runtime, an uninstrumented page warns and still works, and a page reporting a different protocol version is refused rather than driven.
 
 Not verified here:
 

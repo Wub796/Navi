@@ -73,6 +73,8 @@ acceptance document and CI table now state.
 | No marker at all | `bundled` | `UNINSTRUMENTED_HOST` | injects the packaged runtime and says so |
 | Marker present, no live runtime | `bundled` | `DISCOVERY_UNUSABLE` | injects the packaged runtime; the message names the broken loader |
 
+A **fourth** case is asserted in the same browser session: a page whose `window.Navi` reports `0.2.0` is refused with `NAVIGATION_FAILED` naming both versions, rather than being handed a map built against a protocol the page is not running. That is the fail-closed behaviour the version bump depends on.
+
 The envelope also carries `discovery: { instrumented, source, declared_version, manifest }`
 and keeps `sdk.strategy` in its existing `already-present | tag | evaluate` vocabulary, so
 existing clients gain fields instead of having meanings redefined underneath them. The
