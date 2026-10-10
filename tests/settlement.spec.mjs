@@ -4,6 +4,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NaviPlaywrightAdapter } from '../src/adapter.js';
+import { completeSettle } from '../src/settle.js';
 
 /**
  * Deterministic post-action settlement.
@@ -23,6 +24,23 @@ const binPath = join(root, 'bin', 'navi-mcp.js');
 
 /** @param {any} result @returns {any} */
 const envelope = result => JSON.parse(result.content[0].text);
+
+test('navigation does not report a destroyed execution context as a committed destination', async () => {
+  let committed = false;
+  let reads = 0;
+  const page = {
+    url: () => committed ? 'https://shop.example/complete' : 'https://shop.example/review',
+    evaluate: async () => {
+      if (++reads === 1) throw new Error('Execution context was destroyed, most likely because of a navigation');
+      committed = true;
+      return undefined;
+    }
+  };
+  const outcome = await completeSettle(page, { waitFor: 'navigation', timeoutMs: 1000, quietMs: 100 }, 'place', { token: 'old-document', beforeUrl: page.url(), armed: true });
+  expect(outcome.settled).toBe(true);
+  expect(reads).toBe(2);
+  expect(page.url()).toBe('https://shop.example/complete');
+});
 
 test.describe('settlement receipts from the adapter', () => {
   test('mutation_settle waits for the DOM insert an action makes', async ({ page, baseURL }) => {

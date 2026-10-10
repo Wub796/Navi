@@ -166,7 +166,10 @@ export async function completeSettle(page, plan, targetId, prepared) {
           if (token !== prepared.token) return { settled: true, elapsedMs: Date.now() - started };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (/execution context was destroyed|navigat/i.test(message)) return { settled: true, elapsedMs: Date.now() - started };
+          // A destroyed context can precede commit: page.url() may still be the
+          // old URL. Keep polling until an observed URL/document change proves
+          // navigation, rather than returning a premature final_url receipt.
+          if (/execution context was destroyed|navigat/i.test(message)) continue;
           return { settled: false, elapsedMs: Date.now() - started, reason: 'settle_failed' };
         }
       }

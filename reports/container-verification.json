@@ -1,0 +1,46 @@
+{
+  "recordedAt": "2026-10-10T20:36:28.698Z",
+  "ok": true,
+  "checks": [
+    {
+      "check": "image",
+      "ok": true,
+      "detail": "sha256:d775806fb0c7982d1e49298ec59bf0a19ebf5de17b6561097589596b72f225fe; linux/arm64; user node:node"
+    },
+    {
+      "check": "compose-health",
+      "ok": true,
+      "detail": "both services healthy under read-only rootfs, dropped capabilities, no-new-privileges"
+    },
+    {
+      "check": "runtime-posture",
+      "ok": true,
+      "detail": "{\"uid\":1000,\"node\":\"v20.20.2\",\"playwright\":\"1.64.0\",\"proc\":[\"CapEff:\\t0000000000000000\",\"NoNewPrivs:\\t1\"]}"
+    },
+    {
+      "check": "distribution",
+      "ok": true,
+      "detail": "SDK and loader byte-identical; missing tenant key rejected"
+    },
+    {
+      "check": "telemetry-persistence",
+      "ok": true,
+      "detail": "accepted aggregate survives service restart in isolated named volume"
+    },
+    {
+      "check": "bearer-rejection",
+      "ok": true,
+      "detail": "missing/wrong credentials rejected on both SSE and message endpoints"
+    },
+    {
+      "check": "authenticated-browser",
+      "ok": true,
+      "detail": "official SSE client launched locked Chromium, discovered host and fixture pages, executed a DOM mutation and verified navigation receipts"
+    },
+    {
+      "check": "fail-closed-startup",
+      "ok": true,
+      "detail": "MCP mode refuses missing token before listening"
+    }
+  ]
+}

@@ -137,7 +137,7 @@ async function completeSettle(page, plan, targetId, prepared) {
           if (token !== prepared.token) return { settled: true, elapsedMs: Date.now() - started };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (/execution context was destroyed|navigat/i.test(message)) return { settled: true, elapsedMs: Date.now() - started };
+          if (/execution context was destroyed|navigat/i.test(message)) continue;
           return { settled: false, elapsedMs: Date.now() - started, reason: "settle_failed" };
         }
       }

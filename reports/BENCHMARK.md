@@ -1,30 +1,30 @@
 # Navi v0.2 vs Playwright accessibility · measured comparison
 
-Recorded 2026-10-09T20:40:42.091Z. 20 iterations per method/fixture, Chromium 156.0.8078.4, Apple M5 Pro, darwin 27.0.0 arm64, Node v24.21.0.
+Recorded 2026-10-10T20:37:49.878Z. 20 iterations per method/fixture, Chromium 156.0.8078.4, Apple M5 Pro, darwin 27.0.0 arm64, Node v24.21.0.
 
 **API compatibility:** current Playwright 1.64.0 removed page.accessibility. The benchmark uses pinned playwright-core 1.48.2 via a dev-only alias and the current installed Chromium executable for both methods. It calls the actual legacy snapshot API; this is not a claim to reproduce current Playwright MCP's locator.ariaSnapshot format.
 
 | Fixture | Method | Payload KB | Est. tokens | p50 ms | p95 ms | Nested open / closed success |
 |---|---|---:|---:|---:|---:|---|
-| Local demo | AX full snapshot | 30.30 | 7575 | 4.02 | 4.36 | open 100% / closed 0%* |
-| Local demo | AX default filtered | 5.80 | 1450 | 3.04 | 3.28 | open 100% / closed 0%* |
-| Local demo | Navi viewport map | 2.10 | 524 | 0.67 | 1.18 | open 100% / closed 100%* |
-| Local demo | Navi full map | 2.10 | 524 | 0.62 | 0.84 | open 100% / closed 100%* |
-| 2,000 elements | AX full snapshot | 657.62 | 164405 | 78.88 | 88.00 | open 100% / closed 0%* |
-| 2,000 elements | AX default filtered | 172.36 | 43091 | 58.70 | 61.52 | open 100% / closed 0%* |
-| 2,000 elements | Navi viewport map | 7.22 | 1805 | 2.53 | 5.23 | open 100% / closed 100%* |
-| 2,000 elements | Navi full map | 48.87 | 12217 | 8.24 | 9.76 | open 100% / closed 100%* |
-| 10,000 elements | AX full snapshot | 3296.02 | 824005 | 439.09 | 470.00 | open 100% / closed 0%* |
-| 10,000 elements | AX default filtered | 865.96 | 216491 | 355.52 | 385.70 | open 100% / closed 0%* |
-| 10,000 elements | Navi viewport map | 7.22 | 1805 | 213.46 | 518.66 | open 100% / closed 100%* |
-| 10,000 elements | Navi full map | 243.96 | 60989 | 725.55 | 1340.98 | open 100% / closed 100%* |
+| Local demo | AX full snapshot | 30.24 | 7559 | 4.89 | 6.06 | open 100% / closed 0%* |
+| Local demo | AX default filtered | 5.77 | 1442 | 3.63 | 3.95 | open 100% / closed 0%* |
+| Local demo | Navi viewport map | 2.10 | 524 | 0.93 | 1.24 | open 100% / closed 100%* |
+| Local demo | Navi full map | 2.10 | 524 | 0.73 | 1.10 | open 100% / closed 100%* |
+| 2,000 elements | AX full snapshot | 657.62 | 164405 | 86.22 | 107.89 | open 100% / closed 0%* |
+| 2,000 elements | AX default filtered | 172.36 | 43091 | 65.32 | 67.16 | open 100% / closed 0%* |
+| 2,000 elements | Navi viewport map | 7.22 | 1805 | 2.96 | 3.88 | open 100% / closed 100%* |
+| 2,000 elements | Navi full map | 48.87 | 12217 | 9.86 | 11.03 | open 100% / closed 100%* |
+| 10,000 elements | AX full snapshot | 3296.02 | 824005 | 461.14 | 470.06 | open 100% / closed 0%* |
+| 10,000 elements | AX default filtered | 865.96 | 216491 | 370.40 | 378.84 | open 100% / closed 0%* |
+| 10,000 elements | Navi viewport map | 7.22 | 1805 | 210.20 | 264.34 | open 100% / closed 100%* |
+| 10,000 elements | Navi full map | 243.96 | 60989 | 454.80 | 917.09 | open 100% / closed 100%* |
 
 *Separate nested-shadow fixture trials, not measured independently for every latency row.
 
 ## Token footprint results
 
-- **Local demo / Navi viewport map**: token reduction vs full AX **93.08%**; vs filtered AX **63.86%**. Negative means Navi costs more.
-- **Local demo / Navi full map**: token reduction vs full AX **93.08%**; vs filtered AX **63.86%**. Negative means Navi costs more.
+- **Local demo / Navi viewport map**: token reduction vs full AX **93.07%**; vs filtered AX **63.66%**. Negative means Navi costs more.
+- **Local demo / Navi full map**: token reduction vs full AX **93.07%**; vs filtered AX **63.66%**. Negative means Navi costs more.
 - **2,000 elements / Navi viewport map**: token reduction vs full AX **98.90%**; vs filtered AX **95.81%**. Negative means Navi costs more.
 - **2,000 elements / Navi full map**: token reduction vs full AX **92.57%**; vs filtered AX **71.65%**. Negative means Navi costs more.
 - **10,000 elements / Navi viewport map**: token reduction vs full AX **99.78%**; vs filtered AX **99.17%**. Negative means Navi costs more.
@@ -32,8 +32,8 @@ Recorded 2026-10-09T20:40:42.091Z. 20 iterations per method/fixture, Chromium 15
 
 ## Cold completion (indexing + full dictionary)
 
-- 2,000 elements: p50 **96.15ms**, p95 **98.03ms** (20 fresh fixtures, injection + indexing + full map; main fixture only, no added shadow controls).
-- 10,000 elements: p50 **825.45ms**, p95 **998.52ms** (20 fresh fixtures, injection + indexing + full map; main fixture only, no added shadow controls).
+- 2,000 elements: p50 **94.60ms**, p95 **95.68ms** (20 fresh fixtures, injection + indexing + full map; main fixture only, no added shadow controls).
+- 10,000 elements: p50 **658.70ms**, p95 **766.63ms** (20 fresh fixtures, injection + indexing + full map; main fixture only, no added shadow controls).
 
 ## Traversal long-task probe
 
@@ -41,9 +41,9 @@ Long Tasks measured inside the page while Navi re-scans the settled fixture and 
 
 | Fixture | Traversal ms | Controls mapped | Long tasks >50ms | Idle-window long tasks |
 |---|---:|---:|---:|---:|
-| Local demo | 51.40 | 8 | 0 | 0 |
-| 2,000 elements | 65.50 | 202 | 0 | 0 |
-| 10,000 elements | 2060.50 | 1002 | 0 | 0 |
+| Local demo | 51.50 | 8 | 0 | 0 |
+| 2,000 elements | 59.80 | 202 | 0 | 0 |
+| 10,000 elements | 1588.30 | 1002 | 0 | 0 |
 
 ## Nested shadow discovery + execution
 

@@ -245,6 +245,21 @@ Navi runs unmodified under a strict policy such as `default-src 'self'; script-s
 
 Two honest limits: a host that replaces `attachShadow` *after* Navi hooks it takes closed-root capture with it, and a page policy that blocks inline scripts rejects `addScriptTag` injection — serve `navi.min.js` from the page origin as above, or let the harness install it through driver evaluation (`installNavi(page, { strategy: 'evaluate' })`), which is not subject to the document's CSP.
 
+## Containers and task completion benchmark
+
+Phase 2 adds a digest-pinned, multi-stage [Dockerfile](Dockerfile) and loopback-published [Compose services](docker-compose.yml) for the host on port 3000 and authenticated MCP SSE on 3001. Both run non-root with a read-only filesystem, dropped capabilities, resource limits and health checks. See [container operations and security limits](docs/CONTAINERS.md): the requested Node 20 runtime is EOL, and container hardening does not enable Chromium's browser sandbox.
+
+```sh
+docker build -t navi:local .
+# Supply NAVI_TENANTS and NAVI_MCP_TOKEN from your secret store, then:
+docker compose up -d --no-build --wait
+# Separate, isolated runtime smoke test (ports 3000/3001 must be free):
+npm run test:containers
+npm run benchmark:tcr
+```
+
+The [task benchmark report](reports/TCR-BENCHMARK.md) compares ten paired, independently verified checkouts via Playwright role locators versus actual MCP discovery/execution with settlement receipts. It records exact tokenized DOM-context payloads and end-to-end timings, not billed model usage or general LLM planning performance. [Raw trials](reports/tcr-benchmark.json) include every outcome; there are no retries or discarded failures. The application is a local sandbox with real HTTP requests, not a public store or real payment flow.
+
 ## Continuous integration
 
 [ci.yml](.github/workflows/ci.yml) runs on every pull request and push to `main` with Node 20.x. Its gates read machine-readable reports rather than re-deriving numbers, and a missing report fails the gate instead of skipping it:
@@ -263,11 +278,11 @@ npm run test:gates   # self-test the gates themselves (19 expectations, no brows
 npm run gates        # run all three gates against the current reports
 npm run pack:check   # assert what `npm publish` would actually upload
 npm run test:smoke   # non-destructive check against a live public SPA
-node scripts/verify-release.mjs          # the release gate: git, SRI, tests, gates, pack
+npm run verify:release                 # the release gate: git, SRI, tests, gates, pack
 node scripts/verify-release.mjs --tag    # ...and create the annotated v<version> tag
 ```
 
-[verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 61 passing tests, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. [release.yml](.github/workflows/release.yml) runs the same gate on a tag push and can create and push the tag on demand; it deliberately stops there, because publishing to a registry is a decision with a name, a license and provenance attached, not a side effect.
+[verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 63 passing tests, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. [release.yml](.github/workflows/release.yml) runs the same gate on a tag push and can create and push the tag on demand; it deliberately stops there, because publishing to a registry is a decision with a name, a license and provenance attached, not a side effect.
 
 ### Required status checks
 

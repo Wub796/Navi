@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { createTcrApp } from '../tests/fixtures/tcr-app.mjs';
 
 if (process.argv.includes('--help')) {
   console.log('Usage: npm run dev -- [--host 127.0.0.1] [--port 4173]');
@@ -33,8 +34,19 @@ const routes = new Map([
   ['/csp-none.html', ['demo/csp-none.html', 'text/html; charset=utf-8', csp]],
   ['/csp-no-script.html', ['demo/csp-none.html', 'text/html; charset=utf-8', csp]]
 ]);
+/** Start the disposable checkout backend only when its review URL is opened. @type {ReturnType<typeof createTcrApp> | undefined} */
+let checkout;
 const server = createServer(async (req, res) => {
-  const route = routes.get(new URL(req.url || '/', 'http://localhost').pathname);
+  const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+  if (pathname === '/tcr-checkout.html') {
+    try {
+      checkout ??= createTcrApp();
+      res.writeHead(302, { Location: `${(await checkout).origin}/checkout?seed=1` });
+      res.end();
+    } catch { res.writeHead(500); res.end('Checkout fixture unavailable'); }
+    return;
+  }
+  const route = routes.get(pathname);
   if (!route) { res.writeHead(404); res.end('Not found'); return; }
   if (!route[0]) { res.writeHead(204); res.end(); return; }
   try {
@@ -49,4 +61,7 @@ const server = createServer(async (req, res) => {
   }
 });
 server.listen(port, host, () => console.log(`Navi demo: http://${host}:${port} (PID ${process.pid})`));
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => server.close());
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => {
+  server.close();
+  if (checkout) await (await checkout).close();
+});

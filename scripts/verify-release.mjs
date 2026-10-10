@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** Published floor for the suite: the release must not shrink its own coverage. */
-export const MIN_PASSING_TESTS = 61;
+export const MIN_PASSING_TESTS = 63;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
 export const LOADER_BUDGET_BYTES = 500;

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Navi · Trail Store checkout benchmark</title>
+<style>
+  body { font: 16px system-ui; max-width: 720px; margin: 40px auto; padding: 0 20px; background: #f5f7fa; color: #183044; }
+  main { padding: 28px; border-radius: 18px; background: white; box-shadow: 0 10px 35px #18304412; }
+  label { display: block; margin: 16px 0 6px; } input, select, button { font: inherit; padding: 10px; border-radius: 7px; border: 1px solid #aab8c5; }
+  button { margin-top: 18px; background: #154c3c; color: white; cursor: pointer; } button:disabled { opacity: .5; }
+  p { line-height: 1.5; } .note { color: #536879; font-size: 14px; }
+</style>
+<script src="/navi.min.js"></script>
+</head>
+<body><p class="note">LOCAL SANDBOX · No payments or external orders</p><main id="app"></main>
+<script>
+const app = document.querySelector('#app');
+const params = new URL(location.href).searchParams;
+const seed = Number(params.get('seed') || 1);
+const cart = params.get('cart');
+let pulse;
+function busy() {
+  const status = document.querySelector('[role="status"]');
+  let ticks = 0;
+  status.textContent = 'Processing';
+  // Deliberate visible progress mutations throughout the request. Quiet DOM
+  // settlement alone cannot detect arbitrary network completion without these.
+  clearInterval(pulse);
+  pulse = setInterval(() => { status.textContent = 'Processing' + '.'.repeat(++ticks % 4); }, 35);
+}
+function done() { clearInterval(pulse); document.querySelector('[role="status"]').textContent = 'Ready'; }
+async function post(path, body) {
+  busy();
+  try {
+    const response = await fetch(path + (cart ? '?cart=' + cart : ''), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    return result;
+  } finally { done(); }
+}
+if (params.get('step') === 'complete') {
+  app.innerHTML = '<h1>Order confirmed</h1><p>Your Trail backpack order has been committed.</p><p class="note">Confirmation: ' + params.get('order') + '</p>';
+} else if (params.get('step') === 'review') {
+  const quantity = Number(params.get('quantity') || 2);
+  app.innerHTML = '<h1>Delivery and payment</h1><p>Trail backpack × ' + quantity + ' · $' + (quantity * 49).toFixed(2) + '</p><label for="email">Email address</label><input id="email" type="email" data-agent-target="email"><label for="shipping">Shipping method</label><select id="shipping" data-agent-target="shipping"><option value="">Choose shipping</option><option value="standard">Standard</option><option value="express">Express</option></select><p id="quote">Select a shipping method to calculate your total.</p><p role="status">Ready</p><button id="place" data-agent-target="place" disabled>Place sandbox order</button>';
+  let shippingReady = false;
+  const valid = () => { document.querySelector('#place').disabled = !shippingReady || document.querySelector('#email').value !== 'agent@example.test'; };
+  document.querySelector('#email').addEventListener('input', valid);
+  document.querySelector('#shipping').addEventListener('change', async event => {
+    shippingReady = false; valid();
+    const result = await post('/api/shipping', { shipping: event.target.value });
+    document.querySelector('#quote').textContent = 'Order total: $' + (result.totalCents / 100).toFixed(2);
+    shippingReady = true; valid();
+  });
+  document.querySelector('#place').addEventListener('click', async () => {
+    document.querySelector('#place').disabled = true;
+    const result = await post('/api/order', { email: document.querySelector('#email').value });
+    location.assign('/checkout?step=complete&cart=' + cart + '&order=' + result.order);
+  });
+} else {
+  app.innerHTML = '<h1>Trail Store</h1><p>Find a backpack, add two, then choose Express delivery and place a sandbox order.</p><label for="search">Search products</label><input id="search" data-agent-target="search" placeholder="Search the catalog"><p role="status">Ready</p><section id="products"></section><section id="cart"></section>';
+  let filter;
+  document.querySelector('#search').addEventListener('input', event => {
+    clearTimeout(filter); busy();
+    filter = setTimeout(() => {
+      done();
+      document.querySelector('#products').innerHTML = /backpack/i.test(event.target.value) ? '<h2>Trail backpack</h2><p>Weather-resistant day pack, $49.00 each.</p><label for="quantity">Quantity</label><select id="quantity" data-agent-target="quantity"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select><br><button id="add" data-agent-target="add">Add Trail backpack</button>' : '<p>No matching products.</p>';
+      document.querySelector('#add')?.addEventListener('click', async () => {
+        document.querySelector('#add').disabled = true;
+        const result = await post('/api/cart', { seed, product: 'Trail backpack', quantity: Number(document.querySelector('#quantity').value) });
+        document.querySelector('#cart').innerHTML = '<h2>Cart</h2><p>Trail backpack × ' + result.quantity + '</p><button id="review" data-agent-target="review">Review checkout</button>';
+        document.querySelector('#review').addEventListener('click', () => location.assign('/checkout?step=review&quantity=' + result.quantity + '&cart=' + result.cart));
+      });
+    }, 60 + seed * 17);
+  });
+}
+</script></body></html>

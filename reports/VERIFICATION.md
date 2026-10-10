@@ -1,5 +1,7 @@
 # Navi Protocol v0.2 · package v0.4.0 final verification
 
+> Historical release record for the immutable v0.4.0 tag. The current Phase 2 candidate is package 0.5.0; see [Phase 2 verification](PHASE2-VERIFICATION.md), [task benchmark](TCR-BENCHMARK.md) and [container checks](container-verification.json). Generated JSON reports may contain newer measurements; the figures below describe the original v0.4.0 run.
+
 Recorded 2026-10-09. Supersedes the earlier v0.1 synchronous classification report and the v0.3.0 report. The protocol stays 0.2.0; package 0.4.0 adds deterministic settlement, the tenant embed loader, authenticated and bounded MCP transports, session hydration, the host service and the release gate.
 
 Every figure below comes from an artifact in this directory or from a command replayed on this workstation. The one thing that did **not** happen is a GitHub-hosted run: the repository has no remote configured, so the pipelines were replayed locally in workflow order ([SMOKE.md](SMOKE.md) records that replay), and the release tag is local.

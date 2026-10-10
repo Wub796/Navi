@@ -1,6 +1,6 @@
 {
   "name": "navi-interaction-bridge",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Navi protocol: deterministic action maps and guarded execution tools for browser agents.",
   "type": "module",
   "engines": {
@@ -55,6 +55,8 @@
     "typecheck": "tsc -p jsconfig.json",
     "test": "npm run build && node node_modules/@playwright/test/cli.js test",
     "benchmark": "npm run build && node tests/benchmark-comparison.js",
+    "benchmark:tcr": "npm run build && node node_modules/@playwright/test/cli.js test tests/benchmark-agent-tcr.spec.mjs",
+    "test:containers": "node scripts/verify-containers.mjs",
     "dev": "node scripts/dev.mjs",
     "navi": "node bin/navi-agent.js",
     "mcp": "node bin/navi-mcp.js",
@@ -64,13 +66,15 @@
     "pack:check": "node scripts/pack-check.mjs",
     "test:smoke": "node node_modules/@playwright/test/cli.js test --config=playwright.smoke.config.mjs",
     "gates": "node scripts/ci-gates.mjs --all",
-    "verify": "npm run typecheck && npm test"
+    "verify": "npm run typecheck && npm test",
+    "verify:release": "node scripts/verify-release.mjs"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@playwright/test": "^1.56.0",
     "@types/node": "^24.19.1",
     "esbuild": "^0.25.0",
+    "js-tiktoken": "1.0.21",
     "playwright-ax": "npm:playwright-core@1.48.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

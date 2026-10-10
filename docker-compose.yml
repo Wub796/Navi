@@ -1,0 +1,48 @@
+name: navi
+x-runtime: &runtime
+  image: navi:local
+  build: .
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+  pids_limit: 256
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '3'
+
+services:
+  navi-host:
+    <<: *runtime
+    environment:
+      NAVI_MODE: host
+      NAVI_HOST: 0.0.0.0
+      NAVI_PORT: '3000'
+      NAVI_TENANTS: ${NAVI_TENANTS:?Set NAVI_TENANTS to key:tenantId pairs}
+      NAVI_STORE: /data/telemetry.db
+    ports: ['127.0.0.1:3000:3000']
+    volumes: [telemetry:/data]
+    mem_limit: 256m
+    cpus: 1
+
+  navi-mcp:
+    <<: *runtime
+    environment:
+      NAVI_MODE: mcp
+      NAVI_HOST: 0.0.0.0
+      NAVI_PORT: '3001'
+      NAVI_MCP_TOKEN: ${NAVI_MCP_TOKEN:?Set a strong NAVI_MCP_TOKEN}
+      NAVI_MCP_MAX_SESSIONS: ${NAVI_MCP_MAX_SESSIONS:-2}
+      NAVI_MCP_IDLE_TIMEOUT: ${NAVI_MCP_IDLE_TIMEOUT:-300}
+    ports: ['127.0.0.1:3001:3001']
+    shm_size: 512m
+    mem_limit: 2g
+    cpus: 2
+
+volumes:
+  telemetry:
