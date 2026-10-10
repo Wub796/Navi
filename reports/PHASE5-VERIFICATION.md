@@ -1,6 +1,6 @@
 # Phase 5 verification — host-manifest negotiation, a zero-cost inference benchmark, and the publish pipeline
 
-Revision `910fd1c` on `main`, plus the receipt commit that carries this report and
+Revision `818b07d` on `main`, plus the receipt commit that carries this report and
 `reports/release-verification.json`. Every number below was produced by a command in this
 working tree, not estimated.
 
@@ -117,7 +117,9 @@ tag push v*  →  verify (Node 22.x): clean worktree · SRI hashes to the shippe
 ```
 
 The preflight is a repository script rather than shell inside the workflow, so it can be run and
-tested locally. Run against the verified revision it still refuses, by design, with exit 1 — one
+tested locally, and every job step runs the documented command (`npm run verify:release -- --tag`,
+`npm run publish:preflight`, `npm run release:notes`) rather than a private copy of what it
+expands to — a script that stopped working in a maintainer's checkout would stop working here too. Run against the verified revision it still refuses, by design, with exit 1 — one
 unmet requirement per decision left to the owner, and nothing else:
 
 ```
@@ -128,7 +130,7 @@ publish preflight for navi-interaction-bridge@0.5.0 (v0.5.0)
   ok   public-access: publishConfig.access is "public"; this repository publishes a public package, and --access public must agree with it
   ok   provenance: publishConfig.provenance is true, so the workflow passes --provenance (which also requires a public source repository and id-token: write)
   ok   tag-matches-version: v0.5.0 matches package.json version 0.5.0
-  ok   verification-receipt: reports/release-verification.json records 10/10 checks for 910fd1cf30e4, ok: true
+  ok   verification-receipt: reports/release-verification.json records 10/10 checks for 818b07d9c3b3, ok: true
   ok   receipt-matches-artifacts: the receipt describes exactly these bytes (sha384-TmtbTx4Um3FaZ…, 14929 B bundle, 689 B loader)
 
 Not publishing: 2 requirement(s) unmet (license-file, license-field).
@@ -188,7 +190,7 @@ npm run verify:release               10/10 checks, 0 failing → reports/release
   pack-check                         every published path is an intended release artifact
   rebuild-stable                     rebuilt to identical bytes (14929 B bundle, 689 B loader)
 npm run publish:preflight            exit 1 — 2 requirements unmet, by design (the license decision)
-node scripts/release-notes.mjs       wrote 3109 bytes for v0.5.0 — SRI, budgets, 10/10 verdicts
+npm run release:notes                wrote 3109 bytes for v0.5.0 — SRI, budgets, 10/10 verdicts
 ```
 
 The notes above were written from the receipt of the run in the same block, and reading them back

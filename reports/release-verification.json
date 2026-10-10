@@ -1,9 +1,9 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-10T23:56:28.456Z",
+  "recordedAt": "2026-10-10T23:59:35.074Z",
   "evidence": {
-    "revision": "910fd1cf30e4bf2adfb9af3a858605d6ed3f0dda",
+    "revision": "818b07d9c3b3b148509048697fa5a088d0139dc8",
     "branch": "main",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
@@ -28,7 +28,7 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 2 generated path(s)"
+      "detail": "clean apart from 0 generated path(s)"
     },
     {
       "id": "version-tag",
