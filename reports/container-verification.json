@@ -1,11 +1,11 @@
 {
-  "recordedAt": "2026-10-10T20:36:28.698Z",
+  "recordedAt": "2026-10-10T22:10:57.997Z",
   "ok": true,
   "checks": [
     {
       "check": "image",
       "ok": true,
-      "detail": "sha256:d775806fb0c7982d1e49298ec59bf0a19ebf5de17b6561097589596b72f225fe; linux/arm64; user node:node"
+      "detail": "sha256:60ce1a68b17e3a79b40bf1c82448180620dd0b58fc9a61bccecef36024004792; linux/arm64; user pwuser:pwuser"
     },
     {
       "check": "compose-health",
@@ -15,7 +15,12 @@
     {
       "check": "runtime-posture",
       "ok": true,
-      "detail": "{\"uid\":1000,\"node\":\"v20.20.2\",\"playwright\":\"1.64.0\",\"proc\":[\"CapEff:\\t0000000000000000\",\"NoNewPrivs:\\t1\"]}"
+      "detail": "{\"uid\":1000,\"node\":\"v22.23.3\",\"playwright\":\"1.64.0\",\"proc\":[\"CapEff:\\t0000000000000000\",\"NoNewPrivs:\\t1\"]}"
+    },
+    {
+      "check": "chromium-sandbox",
+      "ok": true,
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"121\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "distribution",

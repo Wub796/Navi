@@ -32,8 +32,14 @@ export interface NaviAction {
 
 export interface NaviActionMap {
   version: string;
+  state_version: number;
+  reset: boolean;
   truncated: boolean;
   actions: NaviAction[];
+}
+
+export interface NaviDifferentialMap extends Omit<NaviActionMap, 'actions'> {
+  actions: (NaviAction | { target_id: string; removed: true })[];
 }
 
 /**
@@ -54,6 +60,7 @@ export interface NaviAPI {
   stub?: boolean;
   ready(): Promise<void>;
   refresh(): Promise<void>;
+  actions(options: { limit?: number; viewportOnly?: boolean; coordinateSpace?: 'local' | 'top'; since_version: number }): Promise<NaviDifferentialMap>;
   actions(options?: { limit?: number; viewportOnly?: boolean; coordinateSpace?: 'local' | 'top' }): Promise<NaviActionMap>;
   execute(targetId: string, actionType: string, payload?: { text?: string; value?: string }): Promise<
     { target_id: string; action: string; dispatched: true } |
@@ -108,6 +115,7 @@ export declare class NaviPlaywrightAdapter {
   readonly fallback: boolean;
   readonly maxFallbackAgeMs: number;
   checkOrigin(): void;
+  discover(options: { viewportOnly?: boolean; limit?: number; since_version: number }): Promise<NaviDifferentialMap>;
   discover(options?: { viewportOnly?: boolean; limit?: number }): Promise<NaviActionMap>;
   execute(targetId: string, actionType: 'click' | 'type' | 'select' | string, payload?: { text?: string; value?: string }): Promise<AdapterResult>;
 }

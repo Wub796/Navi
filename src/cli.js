@@ -152,7 +152,7 @@ export async function main(argv, io = {}) {
 
   const startedAt = new Date().toISOString();
   const began = Date.now();
-  const browser = await chromium.launch({ headless: !options.headed });
+  const browser = await chromium.launch({ headless: !options.headed, chromiumSandbox: true });
   /** @type {any} */
   let page;
   try {

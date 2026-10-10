@@ -57,7 +57,9 @@ async function standardTrial(origin, seed) {
   /** @type {import('playwright').Browser | undefined} */
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
+    // The comparison must run under the same browser posture as Navi's own
+    // paths: Playwright appends --no-sandbox unless the sandbox is requested.
+    browser = await chromium.launch({ headless: true, chromiumSandbox: true });
     const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
     await page.goto(`${origin}/checkout?seed=${seed}`, { waitUntil: 'load' });
     for (const step of steps) {

@@ -9,7 +9,10 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   reporter: 'list',
-  use: { baseURL: 'http://127.0.0.1:4174', browserName: 'chromium', headless: true },
+  // The runner's own browser keeps the sandbox the shipped launch paths use:
+  // Playwright appends --no-sandbox unless chromiumSandbox is requested, and a
+  // test browser that is less locked down than production proves less.
+  use: { baseURL: 'http://127.0.0.1:4174', browserName: 'chromium', headless: true, launchOptions: { chromiumSandbox: true } },
   webServer: {
     command: 'node scripts/dev.mjs --host 127.0.0.1 --port 4174',
     url: 'http://127.0.0.1:4174',

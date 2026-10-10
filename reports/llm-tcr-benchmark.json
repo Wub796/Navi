@@ -1,0 +1,6 @@
+{
+  "status": "blocked",
+  "reason": "LLM_ENDPOINT/LLM_MODEL were not both set, so no live model was called. This file records a blocked harness, not a model result.",
+  "recordedAt": "2026-10-10T22:30:32.558Z",
+  "trials": []
+}

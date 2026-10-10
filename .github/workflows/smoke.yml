@@ -23,17 +23,17 @@ concurrency:
 
 jobs:
   external:
-    name: Live SPA smoke (Node 20.x)
+    name: Live SPA smoke (Node 22.x)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20.x
+      - name: Set up Node.js 22.x
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '22.x'
           cache: npm
 
       - name: Install dependencies from the lockfile

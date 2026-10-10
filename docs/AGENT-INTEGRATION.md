@@ -76,6 +76,21 @@ Coordinates are bounding-box left/top and dimensions in CSS pixels in the **cont
 
 Limits: default 500, maximum 5,000. Reject a truncated map rather than pretending it is complete; this version does not paginate. Names are a bounded accessible-name approximation, not the complete W3C algorithm. Text names/targets may contain personal information even though no field values are read: avoid sensitive labels and do not log/upload maps by default.
 
+### Differential action maps
+
+A multi-step flow that re-reads the whole map after every step re-sends every unchanged control. `window.Navi.actions()` and the MCP tool `navi_get_actions` therefore accept an optional `since_version` cursor, taken from the `state_version` of the previous reply:
+
+```js
+const first = await window.Navi.actions();                                // reset: true — a full map
+const next  = await window.Navi.actions({ since_version: first.state_version });
+```
+
+A reply carries `version`, `state_version`, `reset`, `truncated` and `actions`. Given a usable cursor, `actions` holds only what changed since that version: targets that were newly mounted or re-rendered, targets whose actionability state (`is_enabled`, `is_visible`, `is_in_viewport`, `is_occluded`) or geometry changed, and `{ "target_id": "…", "removed": true }` tombstones for targets that left the map. Unchanged controls are deliberately absent, so the caller keeps its own cache and applies the delta.
+
+`reset: true` means the returned `actions` is a complete map and the caller must replace its cache with it. It is returned for a first read; for a cursor whose snapshot has been dropped, since at most eight snapshots are retained; for a cursor minted under different filter arguments (viewport-only versus all, or a different `limit`); after a truncated read, because a partial snapshot is never cached and so can never become the base of a delta; and for any unusable cursor value — negative, fractional, out of range or non-numeric. An unusable cursor is never an error and never a silent partial answer: the caller recovers in one call using the new `state_version`. Repeating the same cursor with no mutation in between returns an empty `actions` array.
+
+Cursors are document-scoped, so a navigation installs a fresh SDK and the first read in the new document is a full one. Measured on a 24-control fixture with 100 sequential single-target mutations, deltas cost 9,699 tokens against 311,066 for full polling — a 96.9% reduction (`cl100k_base`, Node v22.23.3, [reports/differential-mutations.json](../reports/differential-mutations.json)). Send a cursor only when the reply must be small; a first read or a recovery read is the same full map either way.
+
 ## Playwright adapter with trusted-input fallback
 
 The tested implementation is [src/adapter.js](../src/adapter.js), published as `NaviPlaywrightAdapter` from the package entry (`dist/index.mjs` / `dist/index.cjs`). It resolves synthetic execution first, then uses real Playwright mouse/keyboard input only for a cooperating **no-dispatch** response. Import it from the trusted Node executor:
@@ -233,7 +248,7 @@ It is the same adapter the CLI drives, exposed as five tools over stdio JSON-RPC
 | Tool | Arguments | Returns |
 |---|---|---|
 | `navi_navigate` | `url`, optional `width`/`height` | Navigation result, protocol version, action count, and the SDK install strategy (`already-present`, `tag` or `evaluate`). |
-| `navi_get_actions` | optional `limit`, `all` | The action map. Viewport-filtered by default; `all: true` returns the whole document. |
+| `navi_get_actions` | optional `limit`, `all`, `since_version` | The action map. Viewport-filtered by default; `all: true` returns the whole document. With `since_version`, only changed targets and removal tombstones; `reset: true` means the reply is a full map that replaces the caller's cache. |
 | `navi_execute_action` | `target_id`, `action_type`, optional `payload`, optional `settle` (`wait_for`, `timeout_ms`) | The adapter's execute result, including `executed`, `mode`, whether the trusted native fallback was used, and — when `settle` was requested — the receipt `settled`, `elapsed_ms`, `final_url`. |
 | `navi_assert_state` | `target_id`, optional `visible`/`enabled`/`in_viewport`/`name_contains` | A pass/fail check list against live state. |
 

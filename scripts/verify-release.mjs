@@ -15,6 +15,11 @@
  *   pack     scripts/pack-check.mjs proves what a publish would upload;
  *   --tag    create the annotated v<version> tag once everything above passed.
  *
+ * Every run also writes its receipt to reports/release-verification.json: the
+ * check ids, their detail lines and the verdict. The receipt is a generated
+ * report, so GENERATED_PATHS tolerates it exactly as it tolerates dist/ and
+ * reports/build.json — a fresh run rewrites it, and that is expected.
+ *
  * Usage:
  *   node scripts/verify-release.mjs             # verify a candidate release
  *   node scripts/verify-release.mjs --tag       # verify, then tag HEAD
@@ -24,12 +29,13 @@
  * Exit codes: 0 verified, 1 a check failed, 2 usage error.
  */
 import { execFileSync } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** Published floor for the suite: the release must not shrink its own coverage. */
-export const MIN_PASSING_TESTS = 63;
+export const MIN_PASSING_TESTS = 77;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
 export const LOADER_BUDGET_BYTES = 500;
@@ -91,6 +97,10 @@ export async function verifyRelease(options) {
   const version = /** @type {string} */ (packageJson.version);
   const tagName = `v${version}`;
   const root = fileURLToPath(new URL('..', import.meta.url));
+  checks.push(await evaluate('node-runtime', async () => ({
+    ok: Number(process.versions.node.split('.')[0]) === 22 && packageJson.engines.node === '>=22.0.0',
+    detail: `${process.version}; release verification requires Node 22.x and engines >=22.0.0`
+  })));
 
   checks.push(await evaluate('git-repository', async () => {
     const inside = run('git', ['rev-parse', '--is-inside-work-tree']).trim();
@@ -227,6 +237,11 @@ export async function main(argv) {
 
   const checks = await verifyRelease({ skipTests: wants('--skip-tests'), tag: wants('--tag') });
   const ok = checks.every(check => check.ok);
+  // The receipt is written on failure too: a release gate that only records its
+  // successes cannot be audited when it blocks a release.
+  const receiptPath = fileURLToPath(new URL('../reports/release-verification.json', import.meta.url));
+  await mkdir(dirname(receiptPath), { recursive: true });
+  await writeFile(receiptPath, `${JSON.stringify({ ok, node: process.version, recordedAt: new Date().toISOString(), checks }, null, 2)}\n`);
   if (wants('--json')) {
     process.stdout.write(`${JSON.stringify({ ok, checks, recordedAt: new Date().toISOString() }, null, 2)}\n`);
   } else {

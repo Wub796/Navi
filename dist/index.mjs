@@ -235,7 +235,9 @@ var init_adapter = __esm({
           throw new Error("Adapter origin changed; reauthorize before continuing");
         }
       }
-      /** @param {{viewportOnly?: boolean, limit?: number}} [options] @returns {Promise<NaviActionMap>} */
+      /** @overload @param {{viewportOnly?: boolean, limit?: number, since_version: number}} options @returns {Promise<NaviDifferentialMap>} */
+      /** @overload @param {{viewportOnly?: boolean, limit?: number}} [options] @returns {Promise<NaviActionMap>} */
+      /** @param {{viewportOnly?: boolean, limit?: number, since_version?: number}} [options] @returns {Promise<NaviActionMap | NaviDifferentialMap>} */
       async discover(options = {}) {
         this.checkOrigin();
         const expected = this.protocolVersion;
@@ -246,8 +248,8 @@ var init_adapter = __esm({
           );
           if (!navi) throw new Error("Navi is not installed on this page");
           if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
-          return navi.actions({ limit: arg.limit ?? 5e3, coordinateSpace: "top", viewportOnly: arg.viewportOnly });
-        }, { expected, viewportOnly: options.viewportOnly, limit: options.limit });
+          return navi.actions({ limit: arg.limit ?? 5e3, coordinateSpace: "top", viewportOnly: arg.viewportOnly, since_version: arg.since_version });
+        }, { expected, viewportOnly: options.viewportOnly, limit: options.limit, since_version: options.since_version });
         if (!snapshot || typeof snapshot !== "object") throw new Error("Navi returned no action map");
         if (snapshot.truncated) throw new Error("Incomplete action map; raise the limit or narrow the page");
         return (

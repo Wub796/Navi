@@ -222,7 +222,9 @@ var init_adapter = __esm({
           throw new Error("Adapter origin changed; reauthorize before continuing");
         }
       }
-      /** @param {{viewportOnly?: boolean, limit?: number}} [options] @returns {Promise<NaviActionMap>} */
+      /** @overload @param {{viewportOnly?: boolean, limit?: number, since_version: number}} options @returns {Promise<NaviDifferentialMap>} */
+      /** @overload @param {{viewportOnly?: boolean, limit?: number}} [options] @returns {Promise<NaviActionMap>} */
+      /** @param {{viewportOnly?: boolean, limit?: number, since_version?: number}} [options] @returns {Promise<NaviActionMap | NaviDifferentialMap>} */
       async discover(options = {}) {
         this.checkOrigin();
         const expected = this.protocolVersion;
@@ -233,8 +235,8 @@ var init_adapter = __esm({
           );
           if (!navi) throw new Error("Navi is not installed on this page");
           if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
-          return navi.actions({ limit: arg.limit ?? 5e3, coordinateSpace: "top", viewportOnly: arg.viewportOnly });
-        }, { expected, viewportOnly: options.viewportOnly, limit: options.limit });
+          return navi.actions({ limit: arg.limit ?? 5e3, coordinateSpace: "top", viewportOnly: arg.viewportOnly, since_version: arg.since_version });
+        }, { expected, viewportOnly: options.viewportOnly, limit: options.limit, since_version: options.since_version });
         if (!snapshot || typeof snapshot !== "object") throw new Error("Navi returned no action map");
         if (snapshot.truncated) throw new Error("Incomplete action map; raise the limit or narrow the page");
         return (
@@ -842,6 +844,7 @@ var TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        since_version: { type: "integer", minimum: 0, description: "Document-scoped cursor from the previous map. Returns changed targets/removal tombstones; reset:true means replace the cache with this full snapshot. Expired, differently filtered, negative or malformed cursors reset instead of failing." },
         all: { type: "boolean", description: "Return every indexed control instead of only those in the viewport. Default false." },
         limit: { type: "number", description: `Maximum controls to return, 1-${MAX_ACTIONS}. Default 500.` }
       },
@@ -1007,7 +1010,7 @@ var NaviSession = class {
   async #ensurePage() {
     if (this.page) return this.page;
     const chromium = await resolveChromium();
-    this.browser = await chromium.launch({ headless: this.headless });
+    this.browser = await chromium.launch({ headless: this.headless, chromiumSandbox: true });
     const context = await this.browser.newContext(this.storageState ? { viewport: this.viewport, storageState: this.storageState } : { viewport: this.viewport });
     this.page = await context.newPage();
     this.log(`browser launched (${this.viewport.width}x${this.viewport.height}, headless=${this.headless})`);
@@ -1111,7 +1114,9 @@ var NaviSession = class {
     if (!adapter) return toolError("NO_PAGE", "No page is open.");
     const limit = Number.isFinite(args.limit) ? Math.max(1, Math.min(MAX_ACTIONS, Math.floor(Number(args.limit)))) : 500;
     try {
-      const map = await adapter.discover({ viewportOnly: args.all !== true, limit });
+      const cursor = Number.isSafeInteger(args.since_version) && Number(args.since_version) >= 0 ? Number(args.since_version) : void 0;
+      const options = { viewportOnly: args.all !== true, limit };
+      const map = cursor === void 0 ? await adapter.discover(options) : await adapter.discover({ ...options, since_version: cursor });
       return toolResult({ ...map, viewportOnly: args.all !== true, url: adapter.page.url() });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

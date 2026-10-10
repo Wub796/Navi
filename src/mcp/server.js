@@ -133,6 +133,7 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
+        since_version: { type: 'integer', minimum: 0, description: 'Document-scoped cursor from the previous map. Returns changed targets/removal tombstones; reset:true means replace the cache with this full snapshot. Expired, differently filtered, negative or malformed cursors reset instead of failing.' },
         all: { type: 'boolean', description: 'Return every indexed control instead of only those in the viewport. Default false.' },
         limit: { type: 'number', description: `Maximum controls to return, 1-${MAX_ACTIONS}. Default 500.` }
       },
@@ -309,7 +310,7 @@ export class NaviSession {
   async #ensurePage() {
     if (this.page) return this.page;
     const chromium = await resolveChromium();
-    this.browser = await chromium.launch({ headless: this.headless });
+    this.browser = await chromium.launch({ headless: this.headless, chromiumSandbox: true });
     const context = await this.browser.newContext(this.storageState ? { viewport: this.viewport, storageState: this.storageState } : { viewport: this.viewport });
     this.page = await context.newPage();
     this.log(`browser launched (${this.viewport.width}x${this.viewport.height}, headless=${this.headless})`);
@@ -416,7 +417,12 @@ export class NaviSession {
     if (!adapter) return toolError('NO_PAGE', 'No page is open.');
     const limit = Number.isFinite(args.limit) ? Math.max(1, Math.min(MAX_ACTIONS, Math.floor(Number(args.limit)))) : 500;
     try {
-      const map = await adapter.discover({ viewportOnly: args.all !== true, limit });
+      // An unusable cursor is not a tool error: the SDK answers with reset:true
+      // and a full snapshot, so a caller that lost or corrupted its cursor
+      // recovers in one call rather than being unable to proceed.
+      const cursor = Number.isSafeInteger(args.since_version) && Number(args.since_version) >= 0 ? Number(args.since_version) : undefined;
+      const options = { viewportOnly: args.all !== true, limit };
+      const map = cursor === undefined ? await adapter.discover(options) : await adapter.discover({ ...options, since_version: cursor });
       return toolResult({ ...map, viewportOnly: args.all !== true, url: adapter.page.url() });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

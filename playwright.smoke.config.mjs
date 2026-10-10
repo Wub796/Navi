@@ -15,5 +15,5 @@ export default defineConfig({
   // real regression from a blip, and a retried pass is still reported as flaky.
   retries: 1,
   reporter: 'list',
-  use: { browserName: 'chromium', headless: true, trace: 'retain-on-failure' }
+  use: { browserName: 'chromium', headless: true, trace: 'retain-on-failure', launchOptions: { chromiumSandbox: true } }
 });

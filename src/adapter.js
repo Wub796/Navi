@@ -13,7 +13,8 @@ import { completeSettle, normalizeSettle, prepareSettle } from './settle.js';
  * @property {NaviBox} coordinates
  * @property {string} suggested_action
  */
-/** @typedef {{version:string,truncated:boolean,actions:NaviAction[]}} NaviActionMap */
+/** @typedef {{version:string,state_version:number,reset:boolean,truncated:boolean,actions:NaviAction[]}} NaviActionMap */
+/** @typedef {{version:string,state_version:number,reset:boolean,truncated:boolean,actions:(NaviAction|{target_id:string,removed:true})[]}} NaviDifferentialMap */
 /** @typedef {'synthetic'|'native-driver'} AdapterMode */
 /** @typedef {{code:string,message:string}} AdapterError */
 /**
@@ -75,16 +76,18 @@ export class NaviPlaywrightAdapter {
     }
   }
 
-  /** @param {{viewportOnly?: boolean, limit?: number}} [options] @returns {Promise<NaviActionMap>} */
+  /** @overload @param {{viewportOnly?: boolean, limit?: number, since_version: number}} options @returns {Promise<NaviDifferentialMap>} */
+  /** @overload @param {{viewportOnly?: boolean, limit?: number}} [options] @returns {Promise<NaviActionMap>} */
+  /** @param {{viewportOnly?: boolean, limit?: number, since_version?: number}} [options] @returns {Promise<NaviActionMap | NaviDifferentialMap>} */
   async discover(options = {}) {
     this.checkOrigin();
     const expected = this.protocolVersion;
-    const snapshot = await this.page.evaluate(async (/** @type {{expected:string,viewportOnly?:boolean,limit?:number}} */ arg) => {
+    const snapshot = await this.page.evaluate(async (/** @type {{expected:string,viewportOnly?:boolean,limit?:number,since_version?:number}} */ arg) => {
       const navi = /** @type {any} */ (globalThis).Navi;
       if (!navi) throw new Error('Navi is not installed on this page');
       if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
-      return navi.actions({ limit: arg.limit ?? 5000, coordinateSpace: 'top', viewportOnly: arg.viewportOnly });
-    }, { expected, viewportOnly: options.viewportOnly, limit: options.limit });
+      return navi.actions({ limit: arg.limit ?? 5000, coordinateSpace: 'top', viewportOnly: arg.viewportOnly, since_version: arg.since_version });
+    }, { expected, viewportOnly: options.viewportOnly, limit: options.limit, since_version: options.since_version });
     if (!snapshot || typeof snapshot !== 'object') throw new Error('Navi returned no action map');
     if (snapshot.truncated) throw new Error('Incomplete action map; raise the limit or narrow the page');
     return /** @type {NaviActionMap} */ (snapshot);

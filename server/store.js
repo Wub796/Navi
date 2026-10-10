@@ -7,7 +7,7 @@
 //   * `node:sqlite` when the runtime provides it (Node 22.5+), which is the
 //     preferred store and the one `server/telemetry.db` refers to;
 //   * otherwise an append-only JSONL log at the same path, so the documented
-//     `engines.node: ">=20"` range keeps working.
+//     `engines.node: ">=22.0.0"` range keeps working.
 //
 // Both modes answer with the identical summary shape, so callers never branch on
 // which one is active.
@@ -26,12 +26,16 @@ import { dirname, resolve } from 'node:path';
  */
 
 /**
- * Resolve `node:sqlite` without a static import. It exists from Node 22.5 but
- * not on Node 20, and a static import would break the supported engines range at
- * module load rather than degrading to the append-only log.
+ * Resolve `node:sqlite` without a static import. It only exists from Node 22.5,
+ * so it is absent across part of the supported engines range, and a static import
+ * would break that range at module load rather than degrading to the log.
  * @returns {Promise<any>}
  */
 async function loadSqlite() {
+  // node:sqlite emits an ExperimentalWarning throughout Node 22. Select the
+  // existing durable log backend on this supported runtime, without suppressing
+  // warnings; newer runtimes may use SQLite once the module is stable.
+  if (Number(process.versions.node.split('.')[0]) === 22) return null;
   try {
     // Variable specifier on purpose: the module is optional at runtime.
     const specifier = 'node:sqlite';

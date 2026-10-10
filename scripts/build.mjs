@@ -25,7 +25,7 @@ const CSP_FORBIDDEN = [
 await mkdir('dist', { recursive: true });
 
 // 1. Browser bundle: self-executing, safe for a plain <script> tag or CDN.
-await build({ ...shared, entryPoints: ['src/navi.js'], outfile: 'dist/navi.min.js', format: 'iife', minify: true, target: ['es2020'] });
+await build({ ...shared, entryPoints: ['src/navi.js'], outfile: 'dist/navi.min.js', format: 'iife', minify: true, target: ['es2021'] });
 const sdk = await readFile('dist/navi.min.js');
 if (sdk.length >= SDK_BUDGET) throw new Error(`navi.min.js is ${sdk.length} bytes: exceeds the strict <${SDK_BUDGET} budget`);
 const violations = CSP_FORBIDDEN.filter(([pattern]) => pattern.test(sdk.toString('utf8'))).map(([, reason]) => reason);
@@ -46,18 +46,18 @@ const loader = await readFile('dist/loader.min.js');
 if (loader.length >= LOADER_BUDGET) throw new Error(`loader.min.js is ${loader.length} bytes: exceeds the strict <${LOADER_BUDGET} budget`);
 
 // 2. Library entry points for ESM and CommonJS consumers (Playwright adapter + flow runner).
-await build({ ...shared, entryPoints: ['src/index.js'], outfile: 'dist/index.mjs', format: 'esm', platform: 'node', target: ['node20'] });
+await build({ ...shared, entryPoints: ['src/index.js'], outfile: 'dist/index.mjs', format: 'esm', platform: 'node', target: ['node22'] });
 // The CJS bundle has no import.meta, so point the SDK path resolution at the emitted file.
-await build({ ...shared, entryPoints: ['src/index.js'], outfile: 'dist/index.cjs', format: 'cjs', platform: 'node', target: ['node20'],
+await build({ ...shared, entryPoints: ['src/index.js'], outfile: 'dist/index.cjs', format: 'cjs', platform: 'node', target: ['node22'],
   define: { 'import.meta.url': '__naviModuleUrl' },
   banner: { js: "var __naviModuleUrl = require('node:url').pathToFileURL(__filename).href;" } });
 
 // 3. Agent harness CLI.
-await build({ ...shared, entryPoints: ['src/cli.js'], outfile: 'dist/cli.mjs', format: 'esm', platform: 'node', target: ['node20'],
+await build({ ...shared, entryPoints: ['src/cli.js'], outfile: 'dist/cli.mjs', format: 'esm', platform: 'node', target: ['node22'],
   banner: { js: '#!/usr/bin/env node' } });
 
 // 4. MCP server: same browser bootstrap as the CLI, spoken over stdio JSON-RPC.
-await build({ ...shared, entryPoints: ['src/mcp/server.js'], outfile: 'dist/mcp.mjs', format: 'esm', platform: 'node', target: ['node20'],
+await build({ ...shared, entryPoints: ['src/mcp/server.js'], outfile: 'dist/mcp.mjs', format: 'esm', platform: 'node', target: ['node22'],
   banner: { js: '#!/usr/bin/env node' } });
 
 // 5. Published types.

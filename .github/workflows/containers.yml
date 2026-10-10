@@ -1,0 +1,38 @@
+name: Native container sandbox gates
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sandbox:
+    name: Sandboxed Chromium (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build locked image natively
+        run: docker build --platform '${{ matrix.platform }}' --progress=plain -t navi:sandbox .
+      - name: Verify native non-root sandbox under least privilege
+        run: |
+          docker run --rm --platform '${{ matrix.platform }}' --init \
+            --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --security-opt seccomp=./security/chromium-seccomp.json \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777 --shm-size 512m \
+            navi:sandbox node scripts/check-sandbox.mjs > sandbox.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sandbox-${{ strategy.job-index }}
+          path: sandbox.json
+          if-no-files-found: warn

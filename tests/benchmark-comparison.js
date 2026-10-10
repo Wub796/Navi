@@ -26,7 +26,9 @@ function mean(values) { return values.reduce((sum,value)=>sum+value,0)/values.le
 /** @param {unknown} condition @param {string} message */
 function assert(condition, message) { if (!condition) throw new Error(message); }
 
-const browser = await legacy.launch({ executablePath: chromium.executablePath(), headless: true });
+// Same browser posture as Navi's own launch paths: without chromiumSandbox the
+// Playwright default appends --no-sandbox, which would compare a weaker browser.
+const browser = await legacy.launch({ executablePath: chromium.executablePath(), headless: true, chromiumSandbox: true });
 /** @type {any[]} */
 const fixtures = [];
 /** @type {any[]} */

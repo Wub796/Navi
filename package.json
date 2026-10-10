@@ -4,7 +4,7 @@
   "description": "Navi protocol: deterministic action maps and guarded execution tools for browser agents.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.0.0"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -55,6 +55,7 @@
     "typecheck": "tsc -p jsconfig.json",
     "test": "npm run build && node node_modules/@playwright/test/cli.js test",
     "benchmark": "npm run build && node tests/benchmark-comparison.js",
+    "benchmark:llm": "npm run build && node tests/llm-agent-benchmark.mjs",
     "benchmark:tcr": "npm run build && node node_modules/@playwright/test/cli.js test tests/benchmark-agent-tcr.spec.mjs",
     "test:containers": "node scripts/verify-containers.mjs",
     "dev": "node scripts/dev.mjs",

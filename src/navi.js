@@ -7,7 +7,7 @@
   const version = '0.2.0', attr = 'data-agent-target';
   const native = new Set(['button', 'form', 'select', 'textarea', 'summary']);
   const roles = new Set(['button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'combobox', 'textbox']);
-  const watched = ['role', 'href', 'type', 'onclick', 'data-navi-action', 'data-navi-key', 'aria-label', 'aria-labelledby', 'name', 'id'];
+  const watched = ['role', 'href', 'type', 'onclick', 'data-navi-action', 'data-navi-key', 'aria-label', 'aria-labelledby', 'name', 'id', 'disabled', 'hidden', 'style', 'class', 'inert', 'aria-disabled'];
   // Pin the DOM primitives this SDK depends on, once, in this closure. A host page
   // that later replaces, wraps or freezes these cannot then bend or break target
   // discovery, occlusion checks or execution. Brand-checked natives stay callable
@@ -59,6 +59,11 @@
   const counters = { tagged: 0, scanned: 0, ticks: 0, maxTickMs: 0, overBudgetTicks: 0, initialMs: 0 };
   /** @type {number[]} */
   const samples = [];
+  // Versions are document-scoped. Retain at most eight complete snapshots;
+  // unknown/expired/filter-mismatched cursors explicitly reset to a full map.
+  let generation = 0;
+  /** @type {Map<number, {scope: string, rows: Map<string, {json: string, ref: WeakRef<Element>}>}>} */
+  const history = new Map();
   let stopped = false, busy = false, scheduled = false, handle = 0, frameFallback = false;
   const startTime = performance.now();
   /** @type {IntersectionObserver | null} */
@@ -77,7 +82,7 @@
 
   /** @param {string} code @param {string} message */
   function error(code, message) { return Object.assign(new Error(message), { code }); }
-  function guard() { if (stopped) throw error('STOPPED', 'Navi has stopped'); }
+  function guard() { if (stopped) throw error('STOPPED', 'Stopped'); }
   /** @param {Job} job @param {boolean} [priority] */
   function enqueue(job, priority = false) {
     if (stopped) { job.cancel?.(); return; }
@@ -126,7 +131,7 @@
     guard();
     // Let pending MutationObserver deliveries enqueue work before testing quiescence.
     return Promise.resolve().then(() => new Promise(/** @param {(value?: void) => void} resolve */ (resolve, reject) => {
-      if (stopped) reject(error('STOPPED', 'Navi has stopped'));
+      if (stopped) reject(error('STOPPED', 'Stopped'));
       else if (urgent.size || background.size || scheduled) waiters.add({ resolve, reject });
       else resolve();
     }));
@@ -310,6 +315,7 @@
     if (stopped || roots.has(root)) return;
     if (root.nodeType === 9) hook(/** @type {Document} */ (root));
     const observer = new P.mutation(records => {
+      generation++;
       let i = 0;
       enqueue({ step: () => {
         const record = records[i++];
@@ -454,16 +460,38 @@
       suggested_action: el.localName === 'select' ? 'select' : role(el) === 'textbox' ? 'type' : 'click'
     };
   }
-  /** @param {{limit?: number, viewportOnly?: boolean, coordinateSpace?: 'local' | 'top'}} [options] */
+  /**
+   * @overload
+   * @param {{limit?: number, viewportOnly?: boolean, coordinateSpace?: 'local' | 'top', since_version: number}} options
+   * @returns {Promise<import('../types/navi.js').NaviDifferentialMap>}
+   */
+  /**
+   * @overload
+   * @param {{limit?: number, viewportOnly?: boolean, coordinateSpace?: 'local' | 'top'}} [options]
+   * @returns {Promise<import('../types/navi.js').NaviActionMap>}
+   */
+  /** @param {{limit?: number, viewportOnly?: boolean, coordinateSpace?: 'local' | 'top', since_version?: number}} [options] */
   async function actions(options = {}) {
     await ready();
+    // A cursor is a hint, never a promise: absent, purged, differently filtered,
+    // negative, fractional or non-numeric values all answer with reset:true and a
+    // full snapshot, so a caller whose cache is lost or corrupted recovers in one
+    // call instead of failing and has no way to keep acting on a stale map.
+    const requested = options.since_version;
+    const cursor = typeof requested === 'number' && Number.isSafeInteger(requested) && requested >= 0 ? requested : -1;
+    const scope = `${options.limit}:${!!options.viewportOnly}:${options.coordinateSpace === 'top'}`;
+    const prior = history.get(cursor);
+    const base = prior?.scope === scope ? prior.rows : null;
+    const rows = new Map();
+    /** @type {{target_id: string, removed: true}[]} */
+    const removed = [];
     const limit = Number.isFinite(options.limit) ? Math.max(1, Math.min(5000, Math.floor(options.limit ?? 500))) : 500;
     /** @type {ReturnType<typeof describe>[]} */
     const result = [];
     const iterator = index.values();
-    let truncated = false;
+    let truncated = false, duplicate = false;
     await new Promise((resolve, reject) => enqueue({
-      cancel: () => reject(error('STOPPED', 'Navi has stopped')),
+      cancel: () => reject(error('STOPPED', 'Stopped')),
       step: () => {
         const entry = iterator.next();
         if (entry.done) { resolve(undefined); return true; }
@@ -476,12 +504,26 @@
           const action = describe(el, options.coordinateSpace === 'top');
           if (options.viewportOnly && !action.state.is_in_viewport) return false;
           if (result.length >= limit) { truncated = true; resolve(undefined); return true; }
+          const json = JSON.stringify(action);
+          if (rows.has(action.target_id)) duplicate = true;
+          rows.set(action.target_id, { json, ref: entry.value });
           result.push(action);
         }
         return false;
       }
     }));
-    return { version, truncated, actions: result };
+    const changed = result.filter(action => {
+      const row = rows.get(action.target_id), old = base?.get(action.target_id);
+      return !old || old.json !== row.json || old.ref.deref() !== row.ref.deref();
+    });
+    if (base) for (const target_id of base.keys()) if (!rows.has(target_id)) removed.push({ target_id, removed: true });
+    generation++;
+    if (!truncated && !duplicate) {
+      history.set(generation, { scope, rows });
+      if (history.size > 8) history.delete(history.keys().next().value ?? -1);
+    }
+    return { version, state_version: generation, reset: !base || duplicate || truncated, truncated, actions: base && !truncated && !duplicate ? [...changed, ...removed] : result };
+
   }
   /** @param {string} target */
   async function resolveTarget(target) {
@@ -490,7 +532,7 @@
     /** @type {Element | undefined} */
     let found;
     await new Promise((resolve, reject) => enqueue({
-      cancel: () => reject(error('STOPPED', 'Navi has stopped')),
+      cancel: () => reject(error('STOPPED', 'Stopped')),
       step: () => {
         const entry = iterator.next();
         if (entry.done) { resolve(undefined); return true; }
@@ -512,7 +554,7 @@
   /** @param {string} target @param {string} action @param {{text?: string, value?: string}} [payload] */
   async function execute(target, action, payload = {}) {
     guard();
-    if (busy) throw error('BUSY', 'Another Navi execution is in flight');
+    if (busy) throw error('BUSY', 'Execution in flight');
     if (typeof target !== 'string' || !target || target.length > 512 || !['click', 'type', 'select'].includes(action)) throw error('INVALID_ACTION', 'Invalid target or action');
     if (!payload || typeof payload !== 'object' || Object.keys(payload).some(key => key !== (action === 'type' ? 'text' : action === 'select' ? 'value' : ''))) throw error('INVALID_PAYLOAD', 'Unsupported payload');
     busy = true;
@@ -567,8 +609,8 @@
     for (const [frame, listener] of frames) frame.removeEventListener('load', listener);
     for (const doc of hooks.keys()) unhook(doc);
     for (const job of [...urgent, ...background]) job.cancel?.();
-    for (const waiter of waiters) waiter.reject(error('STOPPED', 'Navi has stopped'));
-    roots.clear(); frames.clear(); index.clear(); urgent.clear(); background.clear(); waiters.clear();
+    for (const waiter of waiters) waiter.reject(error('STOPPED', 'Stopped'));
+    roots.clear(); frames.clear(); index.clear(); urgent.clear(); background.clear(); waiters.clear(); history.clear();
   }
   window.Navi = {
     version, ready, refresh, actions, execute, stop,

@@ -1,0 +1,90 @@
+{
+  "recordedAt": "2026-10-10T22:31:25.250Z",
+  "node": "v22.23.3",
+  "tokenizer": "cl100k_base",
+  "workload": "24-control list plus 4 surrounding controls, 100 sequential single-target mutations (alternating actionability toggle, label re-render and newly mounted control), one delta read and one full read per step",
+  "mutations": 100,
+  "fullPolling": {
+    "tokens": 311066,
+    "meanTokensPerStep": 3110.66,
+    "meanActionsPerStep": 43.5
+  },
+  "differential": {
+    "tokens": 9699,
+    "meanTokensPerStep": 96.99,
+    "actionsReturned": 100
+  },
+  "reduction": 0.9688201217748003,
+  "firstTenSteps": [
+    {
+      "step": 0,
+      "deltaTokens": 96,
+      "fullTokens": 1925,
+      "deltaActions": 1,
+      "fullActions": 27
+    },
+    {
+      "step": 1,
+      "deltaTokens": 98,
+      "fullTokens": 1927,
+      "deltaActions": 1,
+      "fullActions": 27
+    },
+    {
+      "step": 2,
+      "deltaTokens": 97,
+      "fullTokens": 1998,
+      "deltaActions": 1,
+      "fullActions": 28
+    },
+    {
+      "step": 3,
+      "deltaTokens": 96,
+      "fullTokens": 1998,
+      "deltaActions": 1,
+      "fullActions": 28
+    },
+    {
+      "step": 4,
+      "deltaTokens": 98,
+      "fullTokens": 2000,
+      "deltaActions": 1,
+      "fullActions": 28
+    },
+    {
+      "step": 5,
+      "deltaTokens": 97,
+      "fullTokens": 2071,
+      "deltaActions": 1,
+      "fullActions": 29
+    },
+    {
+      "step": 6,
+      "deltaTokens": 96,
+      "fullTokens": 2071,
+      "deltaActions": 1,
+      "fullActions": 29
+    },
+    {
+      "step": 7,
+      "deltaTokens": 98,
+      "fullTokens": 2073,
+      "deltaActions": 1,
+      "fullActions": 29
+    },
+    {
+      "step": 8,
+      "deltaTokens": 97,
+      "fullTokens": 2144,
+      "deltaActions": 1,
+      "fullActions": 30
+    },
+    {
+      "step": 9,
+      "deltaTokens": 96,
+      "fullTokens": 2144,
+      "deltaActions": 1,
+      "fullActions": 30
+    }
+  ]
+}

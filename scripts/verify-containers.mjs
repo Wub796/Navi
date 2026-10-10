@@ -29,7 +29,7 @@ try {
   docker(['info']);
   compose(['config', '--quiet']);
   const metadata = JSON.parse(docker(['image', 'inspect', 'navi:local']))[0];
-  assert(metadata.Config.User === 'node:node', 'image must run as node:node');
+  assert(metadata.Config.User === 'pwuser:pwuser', 'image must run as pwuser:pwuser');
   record('image', `${metadata.Id}; ${metadata.Os}/${metadata.Architecture}; user ${metadata.Config.User}`);
   started = true;
   // Fail on occupied requested ports; do not stop or replace their owners.
@@ -37,10 +37,13 @@ try {
   record('compose-health', 'both services healthy under read-only rootfs, dropped capabilities, no-new-privileges');
   const runtime = compose(['exec', '-T', 'navi-mcp', 'node', '-e', 'const f=require("fs");console.log(JSON.stringify({uid:process.getuid(),node:process.version,playwright:require("playwright-core/package.json").version,proc:f.readFileSync("/proc/self/status","utf8").split(String.fromCharCode(10)).filter(s=>/^(CapEff|NoNewPrivs):/.test(s))}))']);
   const posture = JSON.parse(runtime);
-  assert(posture.uid === 1000 && posture.node === 'v20.20.2', 'unexpected runtime identity/version');
+  assert(posture.uid === 1000 && posture.node.startsWith('v22.'), 'unexpected runtime identity/version');
   assert(posture.proc.some((/** @type {string} */ line) => /CapEff:\s+0+$/.test(line)), 'capabilities not dropped');
   assert(posture.proc.some((/** @type {string} */ line) => /NoNewPrivs:\s+1$/.test(line)), 'no-new-privileges missing');
   record('runtime-posture', runtime.trim());
+  const sandbox = JSON.parse(compose(['exec', '-T', 'navi-mcp', 'node', 'scripts/check-sandbox.mjs']));
+  assert(sandbox.ok, 'Chromium sandbox verification failed');
+  record('chromium-sandbox', JSON.stringify(sandbox));
   const host = 'http://127.0.0.1:3000';
   const mcp = 'http://127.0.0.1:3001';
   const sdk = await request(`${host}/v1/navi.js?key=${tenantKey}`);

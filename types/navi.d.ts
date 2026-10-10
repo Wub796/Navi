@@ -14,6 +14,9 @@ export interface NaviAction {
   suggested_action: string;
 }
 
+export interface NaviActionMap { version: string; state_version: number; reset: boolean; truncated: boolean; actions: NaviAction[] }
+export interface NaviDifferentialMap extends Omit<NaviActionMap, 'actions'> { actions: (NaviAction | { target_id: string; removed: true })[] }
+
 export interface NaviAPI {
   version: string;
   /**
@@ -24,7 +27,9 @@ export interface NaviAPI {
   stub?: boolean;
   ready(): Promise<void>;
   refresh(): Promise<void>;
-  actions(options?: { limit?: number; viewportOnly?: boolean; coordinateSpace?: 'local' | 'top' }): Promise<{ version: string; truncated: boolean; actions: NaviAction[] }>;
+  /** Cursor is document-scoped; reset:true replaces the client's cache. */
+  actions(options: { limit?: number; viewportOnly?: boolean; coordinateSpace?: 'local' | 'top'; since_version: number }): Promise<NaviDifferentialMap>;
+  actions(options?: { limit?: number; viewportOnly?: boolean; coordinateSpace?: 'local' | 'top' }): Promise<NaviActionMap>;
   execute(targetId: string, actionType: string, payload?: { text?: string; value?: string }): Promise<
     { target_id: string; action: string; dispatched: true } |
     { success: false; reason: 'untrusted_gesture_required'; dispatched: false }

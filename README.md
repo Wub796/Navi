@@ -4,7 +4,7 @@ Dependency-free browser tools for predictable target discovery and guarded nativ
 
 ## Run
 
-Node ≥20, npm, and Playwright Chromium:
+Node ≥22 (`engines.node` is `>=22.0.0`; the pinned container runtime is 22.23.3), npm, and Playwright Chromium:
 
 ```sh
 npm ci --no-audit --no-fund
@@ -210,9 +210,9 @@ NAVI_TENANTS="live_key_abc:acme" node server/index.js --port 8790 --store server
 
 Both scripts are served with `Access-Control-Allow-Origin: *`, because the supported embed is a `crossorigin="anonymous"` script with an `integrity` hash: the browser then fetches in CORS mode and verifies the bytes before executing them.
 
-Aggregates are appended to `node:sqlite` where the runtime provides it (Node 22.5+), and to an append-only JSONL log at the same path otherwise, so the service still runs on Node 20. Rejected payloads — unknown keys, wrong types, negative or non-integer counters, a `url_origin` carrying a path, query, fragment, trailing slash or credentials, an unregistered tenant, or raw DOM/HTML text — never reach the store.
+Aggregates are appended to `node:sqlite` where the runtime provides it without an experimental warning, and to an append-only JSONL log at the same path otherwise — which is the backend the pinned Node 22 runtime selects, because `node:sqlite` is still experimental there. `store.mode` reports which is live, and both answer with an identical summary shape. Rejected payloads — unknown keys, wrong types, negative or non-integer counters, a `url_origin` carrying a path, query, fragment, trailing slash or credentials, an unregistered tenant, or raw DOM/HTML text — never reach the store.
 
-**The client SDK sends no telemetry.** Its no-network guarantee is enforced by a test at 14,265 bytes; the beacon is built and dispatched by the hosting page or tenant script, and `demo/` shows the shape. Treat this service as a reference implementation: it has tenant keys, not user auth; no rate limiting, quotas, deduplication or retention policy; and it does not terminate TLS.
+**The client SDK sends no telemetry.** Its no-network guarantee is enforced by a test at 14,929 bytes; the beacon is built and dispatched by the hosting page or tenant script, and `demo/` shows the shape. Treat this service as a reference implementation: it has tenant keys, not user auth; no rate limiting, quotas, deduplication or retention policy; and it does not terminate TLS.
 
 ### Tenant embed loader
 
@@ -247,7 +247,7 @@ Two honest limits: a host that replaces `attachShadow` *after* Navi hooks it tak
 
 ## Containers and task completion benchmark
 
-Phase 2 adds a digest-pinned, multi-stage [Dockerfile](Dockerfile) and loopback-published [Compose services](docker-compose.yml) for the host on port 3000 and authenticated MCP SSE on 3001. Both run non-root with a read-only filesystem, dropped capabilities, resource limits and health checks. See [container operations and security limits](docs/CONTAINERS.md): the requested Node 20 runtime is EOL, and container hardening does not enable Chromium's browser sandbox.
+Phase 2 adds a digest-pinned, multi-stage [Dockerfile](Dockerfile) and loopback-published [Compose services](docker-compose.yml) for the host on port 3000 and authenticated MCP SSE on 3001, now on a pinned `node:22.23.3-bookworm-slim` base. Both run as the unprivileged `pwuser` (UID 1000) with a read-only filesystem, dropped capabilities, resource limits and health checks, and **Chromium's own sandbox is enabled**: no launch passes `--no-sandbox`, the MCP service applies a vendored [seccomp profile](security/chromium-seccomp.json) so the renderer can build its namespaces as a non-root user, and [scripts/check-sandbox.mjs](scripts/check-sandbox.mjs) requires each live renderer to be in a distinct user namespace, a nested PID namespace and to carry an extra seccomp filter. See [container operations, the sandbox gate and its per-architecture status](docs/CONTAINERS.md): linux/arm64 is verified natively, while linux/amd64 is built and run here only under QEMU, where Chromium skips its extra renderer filter and the gate refuses the run — that architecture is verified natively by [containers.yml](.github/workflows/containers.yml).
 
 ```sh
 docker build -t navi:local .
@@ -262,7 +262,7 @@ The [task benchmark report](reports/TCR-BENCHMARK.md) compares ten paired, indep
 
 ## Continuous integration
 
-[ci.yml](.github/workflows/ci.yml) runs on every pull request and push to `main` with Node 20.x. Its gates read machine-readable reports rather than re-deriving numbers, and a missing report fails the gate instead of skipping it:
+[ci.yml](.github/workflows/ci.yml) runs on every pull request and push to `main` with Node 22.x. Its gates read machine-readable reports rather than re-deriving numbers, and a missing report fails the gate instead of skipping it:
 
 | Gate | Source | Fails when |
 |---|---|---|
@@ -282,11 +282,11 @@ npm run verify:release                 # the release gate: git, SRI, tests, gate
 node scripts/verify-release.mjs --tag    # ...and create the annotated v<version> tag
 ```
 
-[verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 63 passing tests, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. [release.yml](.github/workflows/release.yml) runs the same gate on a tag push and can create and push the tag on demand; it deliberately stops there, because publishing to a registry is a decision with a name, a license and provenance attached, not a side effect.
+[verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 77 passing tests, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. [release.yml](.github/workflows/release.yml) runs the same gate on a tag push and can create and push the tag on demand; it deliberately stops there, because publishing to a registry is a decision with a name, a license and provenance attached, not a side effect.
 
 ### Required status checks
 
-The two CI jobs — `Quality gates (Node 20.x)` and `Benchmark gate (Node 20.x)` — are the checks `main` should require. Branch protection, including "no force-push" and "no deletion", is a repository **setting** rather than a file, so it cannot be enforced from inside this tree; this paragraph is the contract to configure under Settings → Branches. [CODEOWNERS](.github/CODEOWNERS) is the in-repo half of the same intent: it requests review on the paths that define what a release *is*. The nightly `External smoke` job stays advisory, because it depends on a live third-party origin.
+The CI checks `main` should require are `Quality gates (Node 22.x)`, `Benchmark gate (Node 22.x)`, and the two native sandbox jobs from [containers.yml](.github/workflows/containers.yml) — `Sandboxed Chromium (linux/amd64)` on `ubuntu-24.04` and `Sandboxed Chromium (linux/arm64)` on `ubuntu-24.04-arm`, so each architecture is verified on its own kernel rather than through emulation. Branch protection, including "no force-push" and "no deletion", is a repository **setting** rather than a file, so it cannot be enforced from inside this tree; this paragraph is the contract to configure under Settings → Branches. [CODEOWNERS](.github/CODEOWNERS) is the in-repo half of the same intent: it requests review on the paths that define what a release *is*. The nightly `External smoke` job stays advisory, because it depends on a live third-party origin.
 
 `npm run pack:check` resolves the real tarball file list and fails if anything outside `dist/`, `bin/`, `server/`, `flows/`, `README.md`, `docs/AGENT-INTEGRATION.md` and `package.json` would ship — a test, a report, a probe or a captured session must never ride along with a release.
 
