@@ -9,12 +9,20 @@
 //   POST /v1/telemetry                  ingest one navigator.sendBeacon payload
 //   GET  /v1/telemetry?key=<tenant_key> read that tenant's aggregate
 //   GET  /healthz                       liveness, store mode and tenant count
+//   GET  /.well-known/navi.json         public agent discovery document
+//
+// Every response carries `Link: </.well-known/navi.json>; rel="agent-bridge"`, so
+// an agent that can reach any route of this host can find the document without
+// knowing its path, which is the whole of the discovery contract. Nothing here
+// depends on the client runtime: the document is a few literals plus the two
+// configured endpoints.
 //
 // Ingestion stores aggregates only. A payload is exactly the five documented
 // fields, is capped at 2 KB, and its `url_origin` must be a canonical origin, so
 // page URLs, query strings, credentials and raw DOM text cannot be recorded.
 
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -38,6 +46,31 @@ export const MAX_COUNTER = 1_000_000;
 export const DEFAULT_PORT = 8790;
 export const DEFAULT_HOST = '127.0.0.1';
 export const DEFAULT_STORE_FILE = 'server/telemetry.db';
+/** Cache policy for the discovery document: public, and cheap enough to re-read. */
+export const DISCOVERY_CACHE_CONTROL = 'public, max-age=300, stale-while-revalidate=3600';
+/** The relation every response advertises, so the document is reachable without a hard-coded path. */
+export const AGENT_BRIDGE_LINK = '</.well-known/navi.json>; rel="agent-bridge"';
+/** Public path this host distributes the browser bundle on, as advertised to agents. */
+export const SCRIPT_ENDPOINT_PATH = '/v1/navi.js';
+/** Everything the browser bundle can be asked to do, advertised verbatim. */
+export const AGENT_CAPABILITIES = ['viewport_indexing', 'differential_actions', 'settlement_receipts'];
+/**
+ * MCP protocol revision the paired MCP server speaks. Deliberately a literal and
+ * not an import: this service is dependency-free by design, and a host must not
+ * have to load the agent runtime to answer a discovery request.
+ * `tests/auto-discovery.spec.mjs` asserts it equals `PROTOCOL_VERSION` in
+ * `src/mcp/server.js`.
+ */
+export const MCP_PROTOCOL_REVISION = '2025-11-25';
+/**
+ * Navi protocol version this document advertises. The number is a literal in three
+ * places, because the SDK cannot import anything: `src/navi.js` (the browser
+ * bundle), `src/adapter.js`, and here. `tests/auto-discovery.spec.mjs` asserts all
+ * three agree, so a bump that misses one fails the suite rather than shipping.
+ */
+export const NAVI_PROTOCOL_VERSION = '0.3.0';
+/** Default advertised MCP SSE endpoint: loopback, on the port the paired server binds. */
+export const DEFAULT_MCP_SSE_URL = 'http://127.0.0.1:3001/sse';
 /** The complete, exact set of accepted telemetry keys. */
 export const TELEMETRY_FIELDS = ['tenant_id', 'url_origin', 'actions_indexed', 'actions_executed', 'execution_failures'];
 
@@ -52,10 +85,14 @@ Endpoints
   POST /v1/telemetry
   GET  /v1/telemetry?key=<tenant_key>
   GET  /healthz
+  GET  /.well-known/navi.json
 
 Environment
-  NAVI_TENANTS   Comma-separated key:tenantId pairs. Defaults to the local
-                 development key, which must not be used in production.
+  NAVI_TENANTS     Comma-separated key:tenantId pairs. Defaults to the local
+                   development key, which must not be used in production.
+  NAVI_MCP_SSE_URL MCP SSE endpoint published in the discovery document. Defaults
+                   to http://127.0.0.1:3001/sse. Point this at your own bridge
+                   only if you intend to publish it.
 `;
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -93,8 +130,12 @@ function sendJson(res, status, body, extraHeaders = {}) {
     'Content-Length': Buffer.byteLength(payload),
     'X-Content-Type-Options': 'nosniff',
     // Every JSON response here is either tenant-scoped or an error, so nothing
-    // on this service is safe for a shared cache to keep.
+    // on this service is safe for a shared cache to keep. The one exception is the
+    // discovery document, which passes its own public policy in extraHeaders.
     'Cache-Control': 'no-store',
+    // Agents find the discovery document through this relation on any response,
+    // including errors: a 404 that says how to discover the host is still useful.
+    Link: AGENT_BRIDGE_LINK,
     ...extraHeaders
   });
   res.end(payload);
@@ -216,7 +257,7 @@ function validateTelemetry(payload, allowedTenantIds) {
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
  * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
- * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, log?: (line: string) => void}} HostOptions
+ * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, log?: (line: string) => void}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: Map<string, string>, close(): Promise<void>}} NaviHost
  */
 
@@ -233,8 +274,32 @@ export async function createNaviHostServer(options = {}) {
   const sdkPath = options.sdkPath ?? defaultSdkPath();
   const loaderPath = options.loaderPath ?? defaultLoaderPath();
   const integrity = options.integrity === undefined ? await defaultIntegrity() : options.integrity;
+  const mcpSseUrl = options.mcpSseUrl ?? process.env.NAVI_MCP_SSE_URL ?? DEFAULT_MCP_SSE_URL;
   const log = options.log ?? (() => {});
   const allowedTenantIds = tenantIds(tenants);
+
+  /**
+   * The discovery document an agent reads to find this host's runtime. It is a
+   * pure function of the configured endpoints plus whether the distributables are
+   * actually on disk, so `status` is a verdict and not a decoration: a host that
+   * cannot serve the bundle reports `degraded` instead of promising `ready`.
+   * @returns {Promise<Record<string, unknown>>}
+   */
+  async function discoveryDocument() {
+    let status = 'ready';
+    try {
+      await Promise.all([stat(sdkPath), stat(loaderPath)]);
+    } catch {
+      status = 'degraded';
+    }
+    return {
+      version: NAVI_PROTOCOL_VERSION,
+      protocol: MCP_PROTOCOL_REVISION,
+      status,
+      capabilities: [...AGENT_CAPABILITIES],
+      endpoints: { mcp_sse: mcpSseUrl, script: SCRIPT_ENDPOINT_PATH }
+    };
+  }
 
   /** Cached file bytes, keyed on the file's identity so a rebuild is picked up. */
   const cachedFile = (/** @type {string} */ file) => {
@@ -256,6 +321,7 @@ export async function createNaviHostServer(options = {}) {
     'Cache-Control': SCRIPT_CACHE_CONTROL,
     'X-Content-Type-Options': 'nosniff',
     'Access-Control-Allow-Origin': SCRIPT_CORS,
+    Link: AGENT_BRIDGE_LINK,
     Vary: 'Accept-Encoding'
   });
 
@@ -275,6 +341,22 @@ export async function createNaviHostServer(options = {}) {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
     const method = req.method ?? 'GET';
+
+    // Public by design and deliberately unauthenticated: it names the script path
+    // every tenant already fetches and the SSE endpoint an operator chose to
+    // advertise. A host that overrides NAVI_MCP_SSE_URL is publishing that URL on
+    // purpose, and the default is loopback.
+    if (path === '/.well-known/navi.json') {
+      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /.well-known/navi.json.');
+      const document = await discoveryDocument();
+      const etag = `"${createHash('sha256').update(JSON.stringify(document)).digest('base64url')}"`;
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag, 'Cache-Control': DISCOVERY_CACHE_CONTROL, Link: AGENT_BRIDGE_LINK });
+        res.end();
+        return;
+      }
+      return sendJson(res, 200, document, { 'Cache-Control': DISCOVERY_CACHE_CONTROL, ETag: etag });
+    }
 
     if (path === '/healthz') {
       if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /healthz.');

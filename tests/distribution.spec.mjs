@@ -56,7 +56,7 @@ test('esm and commonjs entry points both expose the adapter and helpers', async 
   for (const name of ['NaviPlaywrightAdapter', 'naviAdapter', 'validateFlow', 'runFlow', 'installNavi', 'connectNavi', 'naviSdkPath', 'NAVI_PROTOCOL_VERSION', 'NAVI_SDK_FILE']) {
     expect(typeof esm[name], `esm export ${name}`).toBeTruthy();
   }
-  expect(esm.NAVI_PROTOCOL_VERSION).toBe('0.2.0');
+  expect(esm.NAVI_PROTOCOL_VERSION).toBe('0.3.0');
   expect(esm.naviSdkPath().endsWith('navi.min.js')).toBe(true);
   expect((await stat(esm.naviSdkPath())).size).toBeGreaterThan(0);
 
@@ -80,7 +80,7 @@ test('connectNavi injects the SDK into a page that does not already have it', as
   expect(await page.evaluate(() => Boolean(window.Navi))).toBe(true);
 
   const map = await adapter.discover();
-  expect(map.version).toBe('0.2.0');
+  expect(map.version).toBe('0.3.0');
   expect(map.truncated).toBe(false);
   const targets = /** @type {Array<{target_id: string}>} */ (map.actions);
   expect(targets.some(action => action.target_id === 'payment-demo')).toBe(true);
@@ -128,7 +128,7 @@ test('cli runs the shipped example flow through the adapter', async () => {
   expect(payload.tool).toBe('navi');
   expect(payload.mode).toBe('run');
   expect(payload.ok).toBe(true);
-  expect(payload.protocolVersion).toBe('0.2.0');
+  expect(payload.protocolVersion).toBe('0.3.0');
   expect(payload.flow).toBe('example-checkout');
   expect(payload.steps.length).toBeGreaterThanOrEqual(9);
   expect(payload.steps.every((/** @type {any} */ step) => step.ok)).toBe(true);

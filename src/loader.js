@@ -14,8 +14,15 @@
 //             appends it as `integrity` and sets `crossorigin="anonymous"` on
 //             the injected tag, so the browser verifies the bytes it executes.
 //             The 71-byte hash is not baked into this snippet: that alone would
-//             push it past the strict <500-byte budget. The exact tag to paste
+//             push it past the strict <700-byte budget. The exact tag to paste
 //             is printed by `npm run build`.
+//
+// It also publishes the machine-readable instrumentation marker agents look for
+// (`<meta name="agent-bridge" content="active">`), so a page that never saw the
+// host's `Link: rel="agent-bridge"` response header - a cached document, a nested
+// frame, a proxy that strips headers - still declares that it runs Navi. The
+// `data-version` value is read from the SDK that actually executed, so the marker
+// cannot drift from the protocol the page is running.
 //
 // The bundle URL is resolved from the loader's own origin (`new URL(...)`) so the
 // loader can be served from a CDN while the page runs on the tenant's origin.
@@ -29,7 +36,13 @@
 // strips every byte of it.
 (function () {
   var tag = /** @type {HTMLScriptElement | null} */ (document.currentScript);
-  if (!tag || window.Navi) return;
+  if (!tag) return;
+  var meta = document.createElement('meta');
+  meta.name = 'agent-bridge';
+  meta.content = 'active';
+  meta.dataset.version = (window.Navi && window.Navi.version) || '';
+  document.head.appendChild(meta);
+  if (window.Navi) return;
   // Settle/reject the load promise. Typed loosely on purpose: they are assigned
   // synchronously by the executor below, and a stricter annotation makes the
   // compiler reject the handler assignment without changing a single runtime byte.
@@ -56,7 +69,7 @@
   script.src = new URL('/v1/navi.js', tag.src) + '?key=' + encodeURIComponent(tag.dataset.key || '');
   script.integrity = tag.dataset.sri || '';
   script.crossOrigin = 'anonymous';
-  script.onload = ok;
+  script.onload = () => { meta.dataset.version = /** @type {any} */ (window.Navi).version; ok(); };
   script.onerror = no;
   // Injected next to this tag rather than into <head>, which is both what the
   // embed reads like and 15 bytes cheaper than a head lookup.

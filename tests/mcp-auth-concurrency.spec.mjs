@@ -347,7 +347,7 @@ test('the official MCP client drives a hardened server once it presents the toke
 
     const nav = await client.callTool({ name: 'navi_navigate', arguments: { url: `${baseURL}/`, width: 1360, height: 900 } });
     expect(nav.isError).toBeFalsy();
-    expect(envelope(nav).protocolVersion).toBe('0.2.0');
+    expect(envelope(nav).protocolVersion).toBe('0.3.0');
 
     const executed = envelope(await client.callTool({ name: 'navi_execute_action', arguments: { target_id: 'checkout-email', action_type: 'type', payload: { text: 'hardened@navi.test' } } }));
     expect(executed.dispatched).toBe(true);

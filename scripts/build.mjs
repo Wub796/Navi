@@ -4,7 +4,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 
 const SDK_BUDGET = 15000;
-const LOADER_BUDGET = 500;
+const LOADER_BUDGET = 700;
 /** @type {import('esbuild').BuildOptions} */
 const shared = { bundle: true, sourcemap: false, legalComments: 'none', logLevel: 'warning' };
 
@@ -35,12 +35,14 @@ if (violations.length) throw new Error(`navi.min.js violates the CSP contract: $
 const integrity = `sha384-${createHash('sha384').update(sdk).digest('base64')}`;
 await writeFile('dist/sri.txt', `${integrity}\n`);
 
-// 1b. Tenant embed loader, a self-executing snippet held to a strict <500-byte
-// budget. The published SHA-384 is *not* baked in: the hash alone is 71 bytes,
-// and carrying it here would push the snippet over budget. It travels in the
-// embed tag's data-sri attribute instead, exactly as a standard SRI embed does,
-// while the loader still appends `integrity` and `crossorigin` to the script it
-// injects. The exact tag to paste is printed at the end of this build.
+// 1b. Tenant embed loader, a self-executing snippet held to a strict <700-byte
+// budget (it was <500 before the loader began publishing the agent-bridge
+// discovery marker; the marker costs ~225 bytes and is what lets an agent bind to
+// the host's own runtime). The published SHA-384 is still *not* baked in: the
+// hash alone is 71 bytes and would push the snippet over budget. It travels in
+// the embed tag's data-sri attribute instead, exactly as a standard SRI embed
+// does, while the loader still appends `integrity` and `crossorigin` to the
+// script it injects. The exact tag to paste is printed at the end of this build.
 await build({ ...shared, entryPoints: ['src/loader.js'], outfile: 'dist/loader.min.js', format: 'iife', minify: true, target: ['es2018'] });
 const loader = await readFile('dist/loader.min.js');
 if (loader.length >= LOADER_BUDGET) throw new Error(`loader.min.js is ${loader.length} bytes: exceeds the strict <${LOADER_BUDGET} budget`);

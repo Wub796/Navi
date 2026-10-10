@@ -64,7 +64,9 @@ const GUIDANCE = {
   NO_BROWSER: 'Playwright is not installed. Install it with "npm i -D playwright" and run "npx playwright install chromium".',
   NO_SDK: 'The built browser bundle was not found. Run "npm run build" first.',
   NO_PAGE: 'No page is open. Call navi_navigate with a URL first.',
-  PAGE_ORIGIN_CHANGED: 'The page navigated to a different origin, so the previous action map is void. Call navi_navigate again.'
+  PAGE_ORIGIN_CHANGED: 'The page navigated to a different origin, so the previous action map is void. Call navi_navigate again.',
+  UNINSTRUMENTED_HOST: 'The page publishes no agent-bridge discovery marker, so this session cannot know which Navi build the host runs. Serve the tenant loader, or declare <meta name="agent-bridge" content="active">, to make the host discoverable.',
+  DISCOVERY_UNUSABLE: 'The page advertises an agent-bridge marker but no Navi runtime is live on it, so the packaged runtime was injected as a fallback. The host loader was most likely blocked, refused (a bad tenant key) or stripped by an integrity mismatch; the action map below came from the packaged build, not the host\'s.'
 };
 
 /** @param {string} code @param {string} message */
@@ -93,6 +95,78 @@ function errorCode(error) {
 }
 
 /**
+ * A successful call can still need to tell the caller that it fell back to
+ * something less authoritative than the host's own runtime. The text comes from
+ * GUIDANCE so the code and the sentence cannot disagree.
+ * @param {string} code
+ * @returns {{code: string, message: string}}
+ */
+function warningFor(code) {
+  return { code, message: GUIDANCE[code] ?? code };
+}
+
+/**
+ * First target of a `Link` response header whose parameters name
+ * `rel="agent-bridge"`. RFC 8288 allows several comma-separated entries, so the
+ * header is split on the commas that precede a new `<...>` target.
+ * @param {Record<string, string>} [headers]
+ * @returns {string | null}
+ */
+function agentBridgeLink(headers) {
+  const raw = headers?.link;
+  if (typeof raw !== 'string') return null;
+  for (const entry of raw.split(/,(?=\s*<)/)) {
+    const match = /^\s*<([^>]*)>\s*;\s*(.+)$/.exec(entry);
+    if (match && /rel\s*=\s*"?agent-bridge"?/i.test(match[2])) return match[1];
+  }
+  return null;
+}
+
+/**
+ * @typedef {{instrumented: boolean, source: 'meta-tag' | 'link-header' | 'none', declared_version: string | null, manifest: string | null}} Discovery
+ */
+
+/**
+ * Detect whether a page declares itself Navi-instrumented.
+ *
+ * Two independent signals, both read from the navigation that just happened and
+ * neither requiring a fetch of anything the page controls: the
+ * `Link: rel="agent-bridge"` response header the host sets on every response, and
+ * the `<meta name="agent-bridge">` marker the tenant loader injects. The meta tag
+ * wins when both are present, because it is declared by the document itself. The
+ * manifest URL is reported for the caller to follow deliberately - this probe
+ * never fetches a page-supplied URL, which would turn a page into an SSRF
+ * primitive against the agent's network.
+ * @param {any} page
+ * @param {any} response
+ * @returns {Promise<Discovery>}
+ */
+async function probeAgentBridge(page, response) {
+  const meta = await page.evaluate(() => {
+    const element = document.querySelector('meta[name="agent-bridge"]');
+    if (!element) return null;
+    return { version: element.getAttribute('data-version') };
+  }).catch(() => null);
+  const link = agentBridgeLink(response?.headers ? response.headers() : undefined);
+  /** @type {string | null} */
+  let manifest = null;
+  if (link) {
+    try {
+      const url = new URL(link, page.url());
+      if (url.protocol === 'http:' || url.protocol === 'https:') manifest = redactUrl(url.href);
+    } catch { /* an unparsable Link target is reported as absent, never guessed at */ }
+  }
+  // '0.0.0' is the tenant loader's own deferred stub, not a protocol version.
+  const declared = meta?.version && meta.version !== '0.0.0' ? meta.version : null;
+  return {
+    instrumented: Boolean(meta) || Boolean(link),
+    source: meta ? 'meta-tag' : link ? 'link-header' : 'none',
+    declared_version: declared,
+    manifest
+  };
+}
+
+/**
  * Structured MCP error envelope. `isError` marks a failed tool call; the text
  * payload is always JSON so a model can parse the code and the guidance.
  * @param {string} code @param {string} message @param {Record<string, unknown>} [extra]
@@ -113,7 +187,7 @@ export const TOOLS = [
   {
     name: 'navi_navigate',
     title: 'Navigate and initialize Navi',
-    description: `Open an http(s) URL in the controlled browser, install or detect the Navi browser SDK (protocol ${NAVI_PROTOCOL_VERSION}), wait for indexing, and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
+    description: `Open an http(s) URL in the controlled browser, detect the host's agent-bridge discovery marker (a Link response header or <meta name="agent-bridge">), bind to the Navi instance the host is already running instead of injecting a second copy, fall back to the packaged runtime (protocol ${NAVI_PROTOCOL_VERSION}) when the host publishes nothing or its loader never ran, wait for indexing, and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -330,10 +404,25 @@ export class NaviSession {
       await page.setViewportSize({ width, height });
       const response = await page.goto(safe, { waitUntil: 'load', timeout });
       const status = response ? response.status() : null;
+      const discovery = await probeAgentBridge(page, response);
       const installed = await page.evaluate(() => Boolean(/** @type {any} */ (globalThis).Navi));
       const sdkPath = resolveSdkPath();
-      let strategy = installed ? 'already-present' : 'tag';
-      if (!installed) {
+      /** @type {string} */
+      let strategy;
+      /** @type {{code: string, message: string} | null} */
+      let warning = null;
+      if (installed) {
+        // The host is already running its own Navi: bind to that instance rather
+        // than injecting a second copy over it, which is what the marker is for.
+        strategy = 'already-present';
+        if (!discovery.instrumented) warning = warningFor('UNINSTRUMENTED_HOST');
+      } else {
+        // Two ways to arrive here. A page that advertises a runtime which never ran
+        // has a broken loader (blocked, refused key, integrity mismatch); a page
+        // with no marker at all is simply not instrumented. Both are served by the
+        // same fallback, and the envelope says which one happened.
+        warning = warningFor(discovery.instrumented ? 'DISCOVERY_UNUSABLE' : 'UNINSTRUMENTED_HOST');
+        strategy = 'tag';
         try {
           await installNavi(page, { scriptPath: sdkPath, strategy: 'tag' });
         } catch {
@@ -347,13 +436,15 @@ export class NaviSession {
       this.adapter = new NaviPlaywrightAdapter(page, { fallback: this.fallback });
       const map = await this.adapter.discover({ limit: MAX_ACTIONS });
       this.sdkStrategy = strategy;
-      this.log(`navigated to ${page.url()} (HTTP ${status}, SDK ${strategy}, ${map.actions.length} controls)`);
+      this.log(`navigated to ${page.url()} (HTTP ${status}, SDK ${strategy} from ${installed ? 'the page' : 'the packaged build'}, discovery ${discovery.source}, ${map.actions.length} controls)`);
       return toolResult({
         url: page.url(),
         title: await page.title(),
         status,
         protocolVersion: version,
-        sdk: { strategy, injected: !installed },
+        sdk: { strategy, injected: !installed, source: installed ? 'page' : 'bundled' },
+        discovery,
+        ...(warning ? { warning } : {}),
         viewport: { width, height },
         actions: map.actions.length,
         truncated: map.truncated

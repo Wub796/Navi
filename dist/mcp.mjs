@@ -201,7 +201,7 @@ var init_adapter = __esm({
   "src/adapter.js"() {
     "use strict";
     init_settle();
-    NAVI_PROTOCOL_VERSION = "0.2.0";
+    NAVI_PROTOCOL_VERSION = "0.3.0";
     ACTIONS = ["click", "type", "select"];
     MAX_TEXT = 1e4;
     NaviPlaywrightAdapter = class {
@@ -792,7 +792,9 @@ var GUIDANCE = {
   NO_BROWSER: 'Playwright is not installed. Install it with "npm i -D playwright" and run "npx playwright install chromium".',
   NO_SDK: 'The built browser bundle was not found. Run "npm run build" first.',
   NO_PAGE: "No page is open. Call navi_navigate with a URL first.",
-  PAGE_ORIGIN_CHANGED: "The page navigated to a different origin, so the previous action map is void. Call navi_navigate again."
+  PAGE_ORIGIN_CHANGED: "The page navigated to a different origin, so the previous action map is void. Call navi_navigate again.",
+  UNINSTRUMENTED_HOST: 'The page publishes no agent-bridge discovery marker, so this session cannot know which Navi build the host runs. Serve the tenant loader, or declare <meta name="agent-bridge" content="active">, to make the host discoverable.',
+  DISCOVERY_UNUSABLE: "The page advertises an agent-bridge marker but no Navi runtime is live on it, so the packaged runtime was injected as a fallback. The host loader was most likely blocked, refused (a bad tenant key) or stripped by an integrity mismatch; the action map below came from the packaged build, not the host's."
 };
 function guidance(code, message) {
   const hint = GUIDANCE[code];
@@ -810,6 +812,41 @@ function errorCode(error) {
   );
   return typeof code === "string" && code ? code : "EXECUTION_ERROR";
 }
+function warningFor(code) {
+  return { code, message: GUIDANCE[code] ?? code };
+}
+function agentBridgeLink(headers) {
+  const raw = headers?.link;
+  if (typeof raw !== "string") return null;
+  for (const entry of raw.split(/,(?=\s*<)/)) {
+    const match = /^\s*<([^>]*)>\s*;\s*(.+)$/.exec(entry);
+    if (match && /rel\s*=\s*"?agent-bridge"?/i.test(match[2])) return match[1];
+  }
+  return null;
+}
+async function probeAgentBridge(page, response) {
+  const meta = await page.evaluate(() => {
+    const element = document.querySelector('meta[name="agent-bridge"]');
+    if (!element) return null;
+    return { version: element.getAttribute("data-version") };
+  }).catch(() => null);
+  const link = agentBridgeLink(response?.headers ? response.headers() : void 0);
+  let manifest = null;
+  if (link) {
+    try {
+      const url = new URL(link, page.url());
+      if (url.protocol === "http:" || url.protocol === "https:") manifest = redactUrl(url.href);
+    } catch {
+    }
+  }
+  const declared = meta?.version && meta.version !== "0.0.0" ? meta.version : null;
+  return {
+    instrumented: Boolean(meta) || Boolean(link),
+    source: meta ? "meta-tag" : link ? "link-header" : "none",
+    declared_version: declared,
+    manifest
+  };
+}
 function toolError(code, message, extra = {}) {
   return {
     content: [{ type: "text", text: JSON.stringify({ ok: false, error: { code, message: guidance(code, message) }, ...extra }, null, 2) }],
@@ -824,7 +861,7 @@ var TOOLS = [
   {
     name: "navi_navigate",
     title: "Navigate and initialize Navi",
-    description: `Open an http(s) URL in the controlled browser, install or detect the Navi browser SDK (protocol ${NAVI_PROTOCOL_VERSION}), wait for indexing, and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
+    description: `Open an http(s) URL in the controlled browser, detect the host's agent-bridge discovery marker (a Link response header or <meta name="agent-bridge">), bind to the Navi instance the host is already running instead of injecting a second copy, fall back to the packaged runtime (protocol ${NAVI_PROTOCOL_VERSION}) when the host publishes nothing or its loader never ran, wait for indexing, and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -1029,13 +1066,20 @@ var NaviSession = class {
       await page.setViewportSize({ width, height });
       const response = await page.goto(safe, { waitUntil: "load", timeout });
       const status = response ? response.status() : null;
+      const discovery = await probeAgentBridge(page, response);
       const installed = await page.evaluate(() => Boolean(
         /** @type {any} */
         globalThis.Navi
       ));
       const sdkPath = resolveSdkPath();
-      let strategy = installed ? "already-present" : "tag";
-      if (!installed) {
+      let strategy;
+      let warning = null;
+      if (installed) {
+        strategy = "already-present";
+        if (!discovery.instrumented) warning = warningFor("UNINSTRUMENTED_HOST");
+      } else {
+        warning = warningFor(discovery.instrumented ? "DISCOVERY_UNUSABLE" : "UNINSTRUMENTED_HOST");
+        strategy = "tag";
         try {
           await installNavi(page, { scriptPath: sdkPath, strategy: "tag" });
         } catch {
@@ -1047,13 +1091,15 @@ var NaviSession = class {
       this.adapter = new NaviPlaywrightAdapter(page, { fallback: this.fallback });
       const map = await this.adapter.discover({ limit: MAX_ACTIONS });
       this.sdkStrategy = strategy;
-      this.log(`navigated to ${page.url()} (HTTP ${status}, SDK ${strategy}, ${map.actions.length} controls)`);
+      this.log(`navigated to ${page.url()} (HTTP ${status}, SDK ${strategy} from ${installed ? "the page" : "the packaged build"}, discovery ${discovery.source}, ${map.actions.length} controls)`);
       return toolResult({
         url: page.url(),
         title: await page.title(),
         status,
         protocolVersion: version,
-        sdk: { strategy, injected: !installed },
+        sdk: { strategy, injected: !installed, source: installed ? "page" : "bundled" },
+        discovery,
+        ...warning ? { warning } : {},
         viewport: { width, height },
         actions: map.actions.length,
         truncated: map.truncated

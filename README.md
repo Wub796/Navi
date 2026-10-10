@@ -1,4 +1,4 @@
-# Navi Protocol v0.2 · in-page execution infrastructure
+# Navi Protocol v0.3 · in-page execution infrastructure
 
 Dependency-free browser tools for predictable target discovery and guarded native execution, including captured closed shadow roots and same-origin iframe controls. This is a custom protocol, **not an official WebMCP registration**, authorization boundary, or trusted-input replacement.
 
@@ -207,6 +207,7 @@ NAVI_TENANTS="live_key_abc:acme" node server/index.js --port 8790 --store server
 | `POST /v1/telemetry` | Ingests the beacon payload `{ tenant_id, url_origin, actions_indexed, actions_executed, execution_failures }`, as `application/json` or beacon-shaped `text/plain`. Strict schema, ≤ 2 KB, canonical origins only. |
 | `GET /v1/telemetry?key=<tenant_key>` | The tenant's aggregate: totals, per-origin and per-tenant event counts. `no-store`. |
 | `GET /healthz` | `{ ok, mode, tenants }`, where `mode` is `sqlite` or `log`. |
+| `GET /.well-known/navi.json` | The agent discovery document — `{ version, protocol, status, capabilities, endpoints }` — served `public, max-age=300` with a strong `ETag` and `304` on `If-None-Match`. Every response on this service carries `Link: </.well-known/navi.json>; rel="agent-bridge"`, so an agent that can reach any route can find it. |
 
 Both scripts are served with `Access-Control-Allow-Origin: *`, because the supported embed is a `crossorigin="anonymous"` script with an `integrity` hash: the browser then fetches in CORS mode and verifies the bytes before executing them.
 
@@ -216,7 +217,7 @@ Aggregates are appended to `node:sqlite` where the runtime provides it without a
 
 ### Tenant embed loader
 
-A tenant does not hand-wire the script: `dist/loader.min.js` (480 bytes, held under a strict 500-byte gate) is the whole embed.
+A tenant does not hand-wire the script: `dist/loader.min.js` (689 bytes, held under a strict 700-byte gate) is the whole embed.
 
 ```html
 <script src="https://cdn.example.com/v1/loader.js"
@@ -228,6 +229,9 @@ A tenant does not hand-wire the script: `dist/loader.min.js` (480 bytes, held un
 * `data-sri` is the published `dist/sri.txt` hash. The loader appends it as `integrity` and sets `crossorigin="anonymous"` on the tag it injects, so the browser verifies the bytes it runs. `npm run build` prints the exact snippet with the current hash filled in.
 * The bundle URL resolves from the loader's own origin, so the loader can be served from a CDN while the page runs on the tenant's domain. The hash is deliberately *not* baked into the snippet: 71 bytes of it would push the snippet past its budget, so it travels in the embed tag the way standard SRI embeds do.
 * Until the bundle executes, `window.Navi` is a stub (`Navi.stub === true`, `Navi.version === '0.0.0'`) that defers every API call and resolves it with the real result, so `await Navi.actions()` written above the SDK behaves the same as after it loads. The SDK recognises the stub and installs over it; any other pre-existing `Navi` is left alone.
+* The loader also injects `<meta name="agent-bridge" content="active" data-version="…">`, the page-side half of agent auto-discovery: a client that never saw the host's `Link` response header — a cached document, a nested frame, a proxy that strips headers — still learns that this page runs Navi. `data-version` is read from the SDK that actually executed rather than hardcoded, and a refused key leaves the marker with no version, which is how a client tells "instrumented" from "instrumented and running".
+
+`navi_navigate` follows that marker: it binds to the Navi instance the host is already running, and only injects the packaged runtime when the host publishes nothing (warning `UNINSTRUMENTED_HOST`) or publishes a marker whose runtime never ran (warning `DISCOVERY_UNUSABLE`), reporting `discovery` and `sdk.source` so the agent knows which map it holds. [INTEGRATION-MATRIX.md](docs/INTEGRATION-MATRIX.md) is the turnkey version of all of this.
 
 Diagnostics go to stderr only, so stdout stays a clean JSON-RPC stream. Unlike the flow runner, MCP tool calls are **not** gated by `--allow-consequential`: an agent holding this server can dispatch a consequential control directly. Use the CLI for reviewed flows with that gate, or leave this server off for destinations where an irreversible click matters. For a stricter posture, `--no-fallback` keeps the session synthetic-only, so a `data-navi-trusted` control is refused with `FALLBACK_DISABLED` instead of being driven by real mouse and keyboard input.
 
@@ -267,7 +271,7 @@ The [task benchmark report](reports/TCR-BENCHMARK.md) compares ten paired, indep
 | Gate | Source | Fails when |
 |---|---|---|
 | Bundle budget + artifacts | `reports/build.json` | `dist/navi.min.js` is ≥ 15,000 bytes, or any of the eight release artifacts (`navi.min.js`, `loader.min.js`, `index.mjs`, `index.cjs`, `index.d.ts`, `navi.d.ts`, `cli.mjs`, `mcp.mjs`) is missing |
-| Loader budget | `reports/build.json` | `dist/loader.min.js` is ≥ 500 bytes |
+| Loader budget | `reports/build.json` | `dist/loader.min.js` is ≥ 700 bytes |
 | Traversal Long Tasks | `reports/verification.json` | the 10,000-element traversal records a Long Task over 50ms |
 | Benchmark | `reports/benchmark-comparison.json` | any measured traversal records a Long Task over 50ms, or 2,000-node viewport classification p95 exceeds 25ms |
 
@@ -282,7 +286,7 @@ npm run verify:release                 # the release gate: git, SRI, tests, gate
 node scripts/verify-release.mjs --tag    # ...and create the annotated v<version> tag
 ```
 
-[verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 77 passing tests, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. [release.yml](.github/workflows/release.yml) runs the same gate on a tag push and can create and push the tag on demand; it deliberately stops there, because publishing to a registry is a decision with a name, a license and provenance attached, not a side effect.
+[verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 81 passing tests, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. [release.yml](.github/workflows/release.yml) runs the same gate on a tag push and can create and push the tag on demand; it deliberately stops there, because publishing to a registry is a decision with a name, a license and provenance attached, not a side effect.
 
 ### Required status checks
 
@@ -308,6 +312,7 @@ The CI checks `main` should require are `Quality gates (Node 22.x)`, `Benchmark 
 - [Session hydration suite](tests/session-hydration.spec.mjs) · [session fixture](demo/auth.html)
 - [Settlement engine](src/settle.js) · [settlement + adapter suite](tests/settlement.spec.mjs) · [settlement fixture](demo/settlement.html)
 - [Tenant loader](src/loader.js) · [built snippet](dist/loader.min.js) · [loader suite](tests/loader.spec.mjs)
+- [Integration matrix](docs/INTEGRATION-MATRIX.md) · [Claude Desktop config](examples/claude-desktop-config.json) · [Cursor config](examples/cursor-mcp.json) · [auto-discovery suite](tests/auto-discovery.spec.mjs)
 - [Host service](server/index.js) · [aggregate store](server/store.js) · [tenant keys](server/tenants.js) · [ingestion suite](tests/backend-ingest.spec.mjs)
 - [CSP compliance suite](tests/csp-compliance.spec.mjs) · [hardening suite](tests/hardening.spec.mjs) · [shared browser helpers](src/browser.js)
 - [External smoke report](reports/SMOKE.md) · [raw smoke log](reports/smoke-external.json)

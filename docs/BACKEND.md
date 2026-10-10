@@ -19,7 +19,7 @@ This document is both a record of what was built and a plan for what was not. Ev
 
 Run the service with `npm run serve` (defaults to `127.0.0.1:8790`, store `server/telemetry.db`) or embed it with `createNaviHostServer(options)`, which listens and resolves `{ server, port, host, store, tenants, close }`.
 
-## Protocol v0.2 migration note
+## Async execution migration note
 
 The async execution SDK exposes time-sliced indexing/metadata. `stats().initialMs` is **elapsed time including idle waits**, not CPU classification duration; `maxTickMs`/`tickSamplesMs` describe bounded work ticks. Native `execute` is local tool dispatch, not proof of transaction success or authenticated billable usage.
 
@@ -60,7 +60,7 @@ Implemented today, in `server/index.js`:
 Still **planned**, and not provided by the service above:
 
 - HTTPS termination. The service speaks plain HTTP and assumes a TLS-terminating proxy in front of it; nothing here redirects, upgrades or pins certificates.
-- Long-lived immutable URLs such as `/v0.2.0/navi.min.js` with `Cache-Control: public, max-age=31536000, immutable`. That is the right shape for a public CDN distribution; the implemented route is a key-gated delivery path, not a replacement for it. Never change bytes under an immutable URL: release a new version for every change, and keep an explicit rollback version.
+- Long-lived immutable URLs such as `/v0.3.0/navi.min.js` with `Cache-Control: public, max-age=31536000, immutable`. That is the right shape for a public CDN distribution; the implemented route is a key-gated delivery path, not a replacement for it. Never change bytes under an immutable URL: release a new version for every change, and keep an explicit rollback version.
 - The build/CI half of the pipeline: gating raw size under 15,000 bytes, scanning dependencies, and publishing only the built script already exist in this repository's CI, but nothing publishes the artifact to a host, signs it beyond the recorded SHA-384, or manages a rollback.
 - Asset serving independence from database outages. The implemented distribution route does not touch the store, so an analytics failure cannot delay script delivery, but the two run in one process today; separating them is deployment work.
 

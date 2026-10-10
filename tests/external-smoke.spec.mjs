@@ -60,7 +60,7 @@ test('shipped adapter runs against a live dynamic SPA without errors or long tas
     const sdkPath = await installNavi(page);
     expect(sdkPath.endsWith('navi.min.js'), 'the shipped browser bundle must be what was injected').toBe(true);
     const version = await page.evaluate(() => window.Navi?.version);
-    expect(version).toBe('0.2.0');
+    expect(version).toBe('0.3.0');
     record('initialize', `injected ${sdkPath.split('/').pop()} protocol v${version}`, Date.now() - installStart);
 
     const connected = await connectNavi(page);

@@ -51,7 +51,7 @@ test('an MCP client drives a multi-step form and receives actionable refusals', 
     expect(nav.isError).toBeFalsy();
     const navBody = envelope(nav);
     expect(navBody.ok).toBe(true);
-    expect(navBody.protocolVersion).toBe('0.2.0');
+    expect(navBody.protocolVersion).toBe('0.3.0');
     // The demo page ships the bundle itself, so the server should detect it and
     // report the strategy it used rather than re-injecting.
     expect(['already-present', 'tag', 'evaluate']).toContain(navBody.sdk?.strategy);

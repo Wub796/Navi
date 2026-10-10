@@ -214,7 +214,7 @@ var init_adapter = __esm({
   "src/adapter.js"() {
     "use strict";
     init_settle();
-    NAVI_PROTOCOL_VERSION = "0.2.0";
+    NAVI_PROTOCOL_VERSION = "0.3.0";
     ACTIONS = ["click", "type", "select"];
     MAX_TEXT = 1e4;
     NaviPlaywrightAdapter = class {

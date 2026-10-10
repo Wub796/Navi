@@ -43,7 +43,7 @@ test('rich schema, names, native roles, fingerprints, opt-ins, bounded output an
     <button>Crème brûlée</button><input type="HIDDEN"><div id="opaque">Opaque handler</div>
     <div onclick="void 0">Inline action</div><a href="/">Home</a>`);
   const snapshot = await map(page);
-  expect(snapshot.version).toBe('0.2.0');
+  expect(snapshot.version).toBe('0.3.0');
   expect(snapshot.actions.map(a => a.name).sort()).toEqual(['Pay now', 'Email address', 'Pay', 'Confirm order', 'Crème brûlée', 'Inline action', 'Home'].sort());
   expect(snapshot.actions.every(a => /-[a-f0-9]{8}$/.test(a.target_id))).toBe(true);
   expect(new Set(snapshot.actions.map(a => a.target_id)).size).toBe(7);
@@ -431,7 +431,7 @@ test('10,000-element benchmark verifies complete indexing, metadata and cleanup 
   const ticks = runs.flatMap(run => run.tickSamplesMs).sort((a,b) => a-b);
   const size = JSON.parse(await readFile('reports/build.json', 'utf8'));
   const report = {
-    recordedAt: new Date().toISOString(), protocol: '0.2.0', browser: `Chromium ${browser.version()} headless`,
+    recordedAt: new Date().toISOString(), protocol: '0.3.0', browser: `Chromium ${browser.version()} headless`,
     hardware: { cpu: os.cpus()[0].model, logicalCpus: os.cpus().length, memoryBytes: os.totalmem(), os: `${os.platform()} ${os.release()} ${os.arch()}` },
     size,
     benchmark: { fixtureElements: 10000, fixtureControls: 1000, extraControls: 3, runs: runs.length,

@@ -47,7 +47,7 @@ import { completeSettle, normalizeSettle, prepareSettle } from './settle.js';
  * @property {number} [maxFallbackAgeMs] Freshness deadline for fallback discovery (default 2000).
  */
 
-export const NAVI_PROTOCOL_VERSION = '0.2.0';
+export const NAVI_PROTOCOL_VERSION = '0.3.0';
 const ACTIONS = ['click', 'type', 'select'];
 const MAX_TEXT = 10000;
 

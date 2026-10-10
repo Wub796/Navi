@@ -4,6 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Navi Protocol · execution lab</title>
+  <!-- Hand-written host page: it declares the agent-bridge marker itself, so the
+       data-version has to be kept in step with src/navi.js by hand. The tenant
+       loader writes the same marker for you and reads the version off the SDK,
+       which is why tenants do not hand-maintain this. tests/auto-discovery.spec.mjs
+       fails if these two drift apart. -->
+  <meta name="agent-bridge" content="active" data-version="0.3.0">
   <script src="/navi.min.js"></script>
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0c111b; color: #e5edf7; }

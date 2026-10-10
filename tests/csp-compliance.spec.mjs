@@ -55,7 +55,7 @@ test('the shipped SDK boots and executes a full flow under a strict CSP with zer
   expect(header).not.toContain('unsafe-eval');
 
   // The page loads the bundle from its own origin, which `script-src 'self'` allows.
-  expect(await page.evaluate(() => window.Navi?.version)).toBe('0.2.0');
+  expect(await page.evaluate(() => window.Navi?.version)).toBe('0.3.0');
   await page.evaluate(async () => { await window.Navi?.ready(); });
 
   const { NaviPlaywrightAdapter } = await loadDist();
@@ -129,7 +129,7 @@ test('a strict CSP genuinely blocks script-tag injection, and the CSP-safe strat
   // Driver evaluation is not subject to the document's CSP, so protected pages
   // stay automatable without weakening the page's own policy.
   await expect(installNavi(page, { strategy: 'evaluate' })).resolves.toContain('navi.min.js');
-  expect(await page.evaluate(() => window.Navi?.version)).toBe('0.2.0');
+  expect(await page.evaluate(() => window.Navi?.version)).toBe('0.3.0');
 
   /** @type {import('../types/index.js').NaviPlaywrightAdapter} */
   const tools = new NaviPlaywrightAdapter(page);

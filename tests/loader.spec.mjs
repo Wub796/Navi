@@ -76,7 +76,7 @@ const fixture = dataKey => `<!doctype html>
 
 test('the loader injects the tenant bundle with integrity and replays early calls', async ({ page }) => {
   const size = (await stat(loaderPath)).size;
-  expect(size, 'the shipped snippet must stay under 500 bytes').toBeLessThan(500);
+  expect(size, 'the shipped snippet must stay under 700 bytes').toBeLessThan(700);
 
   /** @type {Error[]} */
   const pageErrors = [];
@@ -97,10 +97,19 @@ test('the loader injects the tenant bundle with integrity and replays early call
 
   // The stub advertised itself, then the real SDK replaced it after the browser
   // verified the bytes against the published hash.
-  await page.waitForFunction(() => /** @type {any} */ (window).Navi?.version === '0.2.0');
+  await page.waitForFunction(() => /** @type {any} */ (window).Navi?.version === '0.3.0');
   expect(await page.evaluate(() => /** @type {any} */ (window).__stubVersion)).toBe('0.0.0');
-  expect(await page.evaluate(() => /** @type {any} */ (window).__ready)).toBe('0.2.0');
+  expect(await page.evaluate(() => /** @type {any} */ (window).__ready)).toBe('0.3.0');
   expect(await page.evaluate(() => /** @type {any} */ (window).__calls)).toContain('probe');
+
+  // The loader also publishes the machine-readable marker agents auto-discover on.
+  // `data-version` is read from the SDK that actually executed, so it is the
+  // protocol the page is running and not a second literal that could drift.
+  const marker = await page.evaluate(() => {
+    const element = /** @type {HTMLMetaElement | null} */ (document.querySelector('meta[name="agent-bridge"]'));
+    return element ? { name: element.name, content: element.getAttribute('content'), version: element.getAttribute('data-version') } : null;
+  });
+  expect(marker).toEqual({ name: 'agent-bridge', content: 'active', version: '0.3.0' });
 
   // The same endpoint fetched the way the bundle was: cross-origin and CORS-mode.
   // The fetch can only resolve at all because the host answered with
@@ -132,8 +141,12 @@ test('a refused tenant key rejects the queued calls instead of leaving them pend
   // object is not what Playwright resolves, it serializes it as `{}`.
   expect(await page.evaluate(() => /** @type {any} */ (window).__calls)).toBe('rejected');
   expect(await page.evaluate(() => /** @type {any} */ (window).__ready)).toBe('rejected');
-  // The host answered 401, so the script never executed and the stub remains.
+  // The host answered 401, so the script never executed and the stub remains. The
+  // marker is still injected, with no version: it claims instrumentation the loader
+  // could not complete, which is exactly the case `navi_navigate` reports as
+  // DISCOVERY_UNUSABLE rather than trusting the page.
   expect(await page.evaluate(() => /** @type {any} */ (window).Navi.version)).toBe('0.0.0');
+  expect(await page.evaluate(() => document.querySelector('meta[name="agent-bridge"]')?.getAttribute('data-version'))).toBe('');
 });
 
 test('the loader leaves an already-installed SDK alone', async ({ page }) => {
@@ -147,7 +160,7 @@ test('the loader leaves an already-installed SDK alone', async ({ page }) => {
 <body><button data-agent-target="probe">Probe</button></body>
 </html>`;
   await serveFixture(page, html);
-  await page.waitForFunction(() => /** @type {any} */ (window).Navi?.version === '0.2.0');
+  await page.waitForFunction(() => /** @type {any} */ (window).Navi?.version === '0.3.0');
   const tags = await page.evaluate(() => document.querySelectorAll('script[src*="/v1/navi.js"]').length);
   expect(tags, 'a second bundle must not be injected over a live SDK').toBe(1);
 });

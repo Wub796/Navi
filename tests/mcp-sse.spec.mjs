@@ -97,7 +97,7 @@ test('an MCP client drives the same multi-step flow over the SSE transport', asy
     expect(nav.isError).toBeFalsy();
     const navBody = envelope(nav);
     expect(navBody.ok).toBe(true);
-    expect(navBody.protocolVersion).toBe('0.2.0');
+    expect(navBody.protocolVersion).toBe('0.3.0');
 
     // A real flow, not just a read: the interaction creates a control the
     // remote client must then discover through a re-render.

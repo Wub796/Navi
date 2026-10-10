@@ -4,7 +4,7 @@
   // an SDK, so this installs over it and the loader replays the calls that the
   // stub queued. Any other pre-existing Navi is left alone.
   if (window.Navi && !window.Navi.stub) return;
-  const version = '0.2.0', attr = 'data-agent-target';
+  const version = '0.3.0', attr = 'data-agent-target';
   const native = new Set(['button', 'form', 'select', 'textarea', 'summary']);
   const roles = new Set(['button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'combobox', 'textbox']);
   const watched = ['role', 'href', 'type', 'onclick', 'data-navi-action', 'data-navi-key', 'aria-label', 'aria-labelledby', 'name', 'id', 'disabled', 'hidden', 'style', 'class', 'inert', 'aria-disabled'];

@@ -192,7 +192,7 @@ async function completeSettle(page, plan, targetId, prepared) {
 }
 
 // src/adapter.js
-var NAVI_PROTOCOL_VERSION = "0.2.0";
+var NAVI_PROTOCOL_VERSION = "0.3.0";
 var ACTIONS = ["click", "type", "select"];
 var MAX_TEXT = 1e4;
 var NaviPlaywrightAdapter = class {

@@ -35,10 +35,10 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** Published floor for the suite: the release must not shrink its own coverage. */
-export const MIN_PASSING_TESTS = 77;
+export const MIN_PASSING_TESTS = 81;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
-export const LOADER_BUDGET_BYTES = 500;
+export const LOADER_BUDGET_BYTES = 700;
 /**
  * The only paths a release may leave modified or untracked. Everything else must
  * be committed: a release must be reproducible from the tag.
