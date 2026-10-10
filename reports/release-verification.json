@@ -1,0 +1,57 @@
+{
+  "ok": true,
+  "node": "v22.23.3",
+  "recordedAt": "2026-10-10T22:35:18.385Z",
+  "checks": [
+    {
+      "id": "node-runtime",
+      "ok": true,
+      "detail": "v22.23.3; release verification requires Node 22.x and engines >=22.0.0"
+    },
+    {
+      "id": "git-repository",
+      "ok": true,
+      "detail": "on main"
+    },
+    {
+      "id": "git-clean",
+      "ok": true,
+      "detail": "clean apart from 0 generated path(s)"
+    },
+    {
+      "id": "version-tag",
+      "ok": true,
+      "detail": "v0.5.0 does not exist yet (create it with --tag once this gate is green)"
+    },
+    {
+      "id": "artifact-budget",
+      "ok": true,
+      "detail": "navi.min.js 14929 B (<15000), loader.min.js 480 B (<500)"
+    },
+    {
+      "id": "subresource-integrity",
+      "ok": true,
+      "detail": "sha384-2Ed1SF5vRWW88ONxH… matches dist/sri.txt and reports/build.json"
+    },
+    {
+      "id": "test-suite",
+      "ok": true,
+      "detail": "77 passed, 0 failed (floor 77)"
+    },
+    {
+      "id": "ci-gates",
+      "ok": true,
+      "detail": "All selected gates passed."
+    },
+    {
+      "id": "pack-check",
+      "ok": true,
+      "detail": "every published path is an intended release artifact"
+    },
+    {
+      "id": "rebuild-stable",
+      "ok": true,
+      "detail": "rebuilt to identical bytes (14929 B bundle, 480 B loader)"
+    }
+  ]
+}
