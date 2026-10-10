@@ -4,6 +4,12 @@ Revision `42d633d` on `main`, plus the receipt commit that carries this report a
 `reports/release-verification.json`. Every number below was produced by a command in this
 working tree, not estimated.
 
+This report supersedes [VERIFICATION.md](VERIFICATION.md), [PHASE2-VERIFICATION.md](PHASE2-VERIFICATION.md)
+and [PHASE3-VERIFICATION.md](PHASE3-VERIFICATION.md) for the current protocol version
+(`0.3.0`), byte budgets (14,929 B bundle, 689 B loader under a 700-byte gate) and SRI hash.
+Those documents remain accurate as dated receipts of the revisions they name, including
+their `0.2.0` protocol strings and the 480-byte loader they shipped.
+
 ## What shipped
 
 | Deliverable | Path | Verified by |
