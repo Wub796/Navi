@@ -241,5 +241,13 @@ than a defect to work around.
   host's `/v1/navi.js` route returns the published hash as its `ETag` instead. The negotiation
   supports one; no host in this repository declares one. A host that mirrors the bundle to a CDN
   should declare it, and the matrix now says so.
+- **`sdk.source` changed its values, and that is a breaking change for a client that matched
+  them.** Phase 4 published `page` and `bundled`; the negotiated resolution needs three states, so
+  the field now reports `host_inline` (was `page`), `host_manifest` (new) and `bundled_fallback`
+  (was `bundled`). The action map an agent receives is unaffected, because only the *provenance*
+  of the runtime changed, but a client testing `sdk.source === 'page'` now sees a string it does
+  not recognise. `sdk.strategy` keeps its previous `already-present | tag | evaluate` vocabulary
+  for exactly this reason, and the new values are published in the README, the acceptance
+  criteria and the integration matrix rather than only in this file.
 - **Historic labels left alone.** `0.2.0` strings and the 480-byte loader in the earlier phase
   reports are dated evidence; renaming them would misdate it.
