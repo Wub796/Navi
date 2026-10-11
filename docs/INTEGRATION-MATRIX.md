@@ -10,7 +10,7 @@ Three signals, cheapest first. An agent that only has a URL can use all three wi
 
 | Signal | Where it comes from | What it means |
 |---|---|---|
-| `Link: </.well-known/navi.json>; rel="agent-bridge"` | every response of the host service | this origin publishes Navi discovery metadata |
+| `Link: </.well-known/navi.json>; rel="agent-bridge", <https://github.com/Wub796/Navi>; rel="source"` | every response of the host service | this origin publishes Navi discovery metadata, and offers the Corresponding Source of the version answering it (AGPL-3.0 section 13) |
 | `GET /.well-known/navi.json` | host service | the machine-readable manifest below |
 | `<meta name="agent-bridge" content="active" data-version="0.3.0">` | injected into the page by the tenant loader | this document is instrumented and the runtime that executed it is `data-version` |
 
@@ -25,7 +25,8 @@ The manifest is fixed-shape and cacheable:
   "endpoints": {
     "mcp_sse": "http://127.0.0.1:3001/sse",
     "script": "/v1/navi.js"
-  }
+  },
+  "source": "https://github.com/Wub796/Navi"
 }
 ```
 
@@ -37,6 +38,7 @@ The manifest is fixed-shape and cacheable:
 | `capabilities` | Capability names an agent may gate its own behaviour on. |
 | `endpoints.mcp_sse` | Absolute URL of the remote MCP transport. Defaults to the loopback SSE endpoint; set `NAVI_MCP_SSE_URL` when the transport is reachable elsewhere. |
 | `endpoints.script` | Path of the distributed bundle. Key-gated: the loader appends `?key=<tenant key>`. |
+| `source` | Absolute URL of the Corresponding Source for the running version, offered at `GET /v1/source` and advertised as `rel="source"` on every response. Defaults to `https://github.com/Wub796/Navi`; `NAVI_SOURCE_URL` overrides it, which is what a fork serving a modified version must set, because AGPL-3.0 section 13 attaches to the version actually answering requests. |
 
 Caching is the one thing worth reproducing exactly: the manifest answers with `Cache-Control: public, max-age=300, stale-while-revalidate=3600` and a strong `ETag`, and honours `If-None-Match` with `304`. It is not `no-store`, because a discovery document that cannot be cached is a discovery document an agent will not consult. A five-minute `max-age` keeps `status` and `mcp_sse` honest.
 
@@ -153,6 +155,7 @@ Both the loader and the bundle are served by the host service; `npm run serve` l
 | `GET /v1/loader.js` | The embed snippet. Carries no key of its own; reads `data-key` from its tag. |
 | `GET /v1/navi.js?key=<tenant_key>` | The bundle, tenant-gated, with `Access-Control-Allow-Origin: *` and the SRI hash as its `ETag`. |
 | `GET /.well-known/navi.json` | The discovery manifest. |
+| `GET /v1/source` | Redirects (`302`) to the Corresponding Source of the running version. Unauthenticated, and cached with the same public policy as the manifest. |
 | `GET /healthz` | Liveness, store mode, tenant count. |
 
 `data-sri` is the published `sha384-…` of `navi.min.js` (`dist/sri.txt`; `npm run build` prints the exact tag with the current hash). The loader appends it as `integrity` and sets `crossorigin="anonymous"` on the tag it injects, so the browser verifies the bytes before executing them — which also means the loader's own origin must send `Access-Control-Allow-Origin`, and a CDN that rewrites the bundle fails closed.
@@ -236,7 +239,7 @@ A tenant key in a page is not a secret: it travels in the bundle request as `?ke
 
 Verified by this repository's tests:
 
-- The manifest's exact schema, its caching headers, and the `304` path (`tests/auto-discovery.spec.mjs`), plus the `Link: … rel="agent-bridge"` header on host responses.
+- The manifest's exact schema, its caching headers, and the `304` path (`tests/auto-discovery.spec.mjs`), plus both `Link` relations on host responses — `rel="agent-bridge"` and the `rel="source"` offer, asserted on the scripts, on `/healthz`, on a `404`, on a `304` and on the `302` from `/v1/source`, with `NAVI_SOURCE_URL` checked to reach both the redirect target and the manifest's `source` field.
 - The loader's meta marker and its strict byte budget.
 - stdio registration as an MCP client uses it: a real `@modelcontextprotocol/sdk` client spawns `examples/claude-desktop-config.json`'s own entry — command and args, with only the placeholder path substituted — and lists the five tools (`navi_navigate`, `navi_get_actions`, `navi_execute_action`, `navi_assert_state`, `navi_set_session`).
 - Auto-negotiation itself: an instrumented page is bound to its own runtime, an uninstrumented page warns and still works, and a page reporting a different protocol version is refused rather than driven.

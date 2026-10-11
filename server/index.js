@@ -10,12 +10,16 @@
 //   GET  /v1/telemetry?key=<tenant_key> read that tenant's aggregate
 //   GET  /healthz                       liveness, store mode and tenant count
 //   GET  /.well-known/navi.json         public agent discovery document
+//   GET  /v1/source                     offer of the Corresponding Source (AGPL-3.0 §13)
 //
-// Every response carries `Link: </.well-known/navi.json>; rel="agent-bridge"`, so
-// an agent that can reach any route of this host can find the document without
-// knowing its path, which is the whole of the discovery contract. Nothing here
-// depends on the client runtime: the document is a few literals plus the two
-// configured endpoints.
+// Every response carries two `Link` relations: `rel="agent-bridge"` on
+// `/.well-known/navi.json`, so an agent that can reach any route of this host can
+// find the document without knowing its path, and `rel="source"` on this version's
+// Corresponding Source, which is what AGPL-3.0 section 13 obliges a service like
+// this one to offer the users who interact with it over a network. Both relations
+// are set once, on the response object, rather than route by route, so a route
+// added later cannot forget either of them. Nothing here depends on the client
+// runtime: the document is a few literals plus the configured endpoints.
 //
 // Ingestion stores aggregates only. A payload is exactly the five documented
 // fields, is capped at 2 KB, and its `url_origin` must be a canonical origin, so
@@ -50,6 +54,20 @@ export const DEFAULT_STORE_FILE = 'server/telemetry.db';
 export const DISCOVERY_CACHE_CONTROL = 'public, max-age=300, stale-while-revalidate=3600';
 /** The relation every response advertises, so the document is reachable without a hard-coded path. */
 export const AGENT_BRIDGE_LINK = '</.well-known/navi.json>; rel="agent-bridge"';
+/**
+ * Where the Corresponding Source for the running version lives, and the default
+ * target of `GET /v1/source`.
+ *
+ * Normative rather than decorative: AGPL-3.0 section 13 obliges a service like
+ * this one to offer its Corresponding Source to the users interacting with it over
+ * a network, so changing this to a vanity URL would make the service non-compliant.
+ * Override it with `NAVI_SOURCE_URL` when hosting a modified version, because the
+ * obligation attaches to the source of the version actually answering requests —
+ * upstream's repository does not discharge it for a fork.
+ */
+export const SOURCE_REPOSITORY_URL = 'https://github.com/Wub796/Navi';
+/** Path that offers the Corresponding Source by redirecting to it. */
+export const SOURCE_ENDPOINT_PATH = '/v1/source';
 /** Public path this host distributes the browser bundle on, as advertised to agents. */
 export const SCRIPT_ENDPOINT_PATH = '/v1/navi.js';
 /** Everything the browser bundle can be asked to do, advertised verbatim. */
@@ -86,6 +104,7 @@ Endpoints
   GET  /v1/telemetry?key=<tenant_key>
   GET  /healthz
   GET  /.well-known/navi.json
+  GET  /v1/source
 
 Environment
   NAVI_TENANTS     Comma-separated key:tenantId pairs. Defaults to the local
@@ -93,6 +112,11 @@ Environment
   NAVI_MCP_SSE_URL MCP SSE endpoint published in the discovery document. Defaults
                    to http://127.0.0.1:3001/sse. Point this at your own bridge
                    only if you intend to publish it.
+  NAVI_SOURCE_URL  Corresponding Source offered at /v1/source and advertised as
+                   rel="source" on every response. Defaults to
+                   https://github.com/Wub796/Navi. Set it to your own repository
+                   when serving a modified version: AGPL-3.0 section 13 requires
+                   the source of the version that is actually running.
 `;
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -118,6 +142,8 @@ async function defaultIntegrity() {
 }
 
 /**
+ * The `Link` relations are not set here: they are set on the response before
+ * routing, so every route carries them without restating them.
  * @param {import('node:http').ServerResponse} res
  * @param {number} status
  * @param {Record<string, unknown>} body
@@ -133,9 +159,6 @@ function sendJson(res, status, body, extraHeaders = {}) {
     // on this service is safe for a shared cache to keep. The one exception is the
     // discovery document, which passes its own public policy in extraHeaders.
     'Cache-Control': 'no-store',
-    // Agents find the discovery document through this relation on any response,
-    // including errors: a 404 that says how to discover the host is still useful.
-    Link: AGENT_BRIDGE_LINK,
     ...extraHeaders
   });
   res.end(payload);
@@ -257,7 +280,7 @@ function validateTelemetry(payload, allowedTenantIds) {
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
  * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
- * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, log?: (line: string) => void}} HostOptions
+ * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: Map<string, string>, close(): Promise<void>}} NaviHost
  */
 
@@ -277,6 +300,15 @@ export async function createNaviHostServer(options = {}) {
   const mcpSseUrl = options.mcpSseUrl ?? process.env.NAVI_MCP_SSE_URL ?? DEFAULT_MCP_SSE_URL;
   const log = options.log ?? (() => {});
   const allowedTenantIds = tenantIds(tenants);
+  const sourceUrl = options.sourceUrl ?? process.env.NAVI_SOURCE_URL ?? SOURCE_REPOSITORY_URL;
+  /**
+   * Both relations in one header value, on every response this service emits: the
+   * discovery document and the Corresponding Source. RFC 8288 allows several
+   * comma-separated entries, and `agentBridgeLink` in the MCP server already
+   * splits them, so the reader that follows `rel="agent-bridge"` is unaffected by
+   * the second relation.
+   */
+  const linkHeader = `${AGENT_BRIDGE_LINK}, <${sourceUrl}>; rel="source"`;
 
   /**
    * The discovery document an agent reads to find this host's runtime. It is a
@@ -297,7 +329,10 @@ export async function createNaviHostServer(options = {}) {
       protocol: MCP_PROTOCOL_REVISION,
       status,
       capabilities: [...AGENT_CAPABILITIES],
-      endpoints: { mcp_sse: mcpSseUrl, script: SCRIPT_ENDPOINT_PATH }
+      endpoints: { mcp_sse: mcpSseUrl, script: SCRIPT_ENDPOINT_PATH },
+      // Section 13 makes the source offer part of the published metadata and not
+      // only a response header, so an agent reading the document alone can find it.
+      source: sourceUrl
     };
   }
 
@@ -321,11 +356,15 @@ export async function createNaviHostServer(options = {}) {
     'Cache-Control': SCRIPT_CACHE_CONTROL,
     'X-Content-Type-Options': 'nosniff',
     'Access-Control-Allow-Origin': SCRIPT_CORS,
-    Link: AGENT_BRIDGE_LINK,
     Vary: 'Accept-Encoding'
   });
 
   const server = createServer((req, res) => {
+    // Every response, including errors, 304s and redirects, advertises both
+    // relations. Setting it here rather than inside each route is what makes
+    // "every response" true by construction instead of by review - including for
+    // a route a fork adds later.
+    res.setHeader('Link', linkHeader);
     void handle(req, res).catch(error => {
       log(`request failed: ${error instanceof Error ? error.message : String(error)}`);
       if (!res.headersSent) sendError(res, 500, 'INTERNAL_ERROR', 'The host service failed to handle this request.');
@@ -351,11 +390,25 @@ export async function createNaviHostServer(options = {}) {
       const document = await discoveryDocument();
       const etag = `"${createHash('sha256').update(JSON.stringify(document)).digest('base64url')}"`;
       if (req.headers['if-none-match'] === etag) {
-        res.writeHead(304, { ETag: etag, 'Cache-Control': DISCOVERY_CACHE_CONTROL, Link: AGENT_BRIDGE_LINK });
+        res.writeHead(304, { ETag: etag, 'Cache-Control': DISCOVERY_CACHE_CONTROL });
         res.end();
         return;
       }
       return sendJson(res, 200, document, { 'Cache-Control': DISCOVERY_CACHE_CONTROL, ETag: etag });
+    }
+
+    // AGPL-3.0 section 13: a user who interacts with this service over a network
+    // must be offered the Corresponding Source of the version answering them, at
+    // no charge, through a customary means. A redirect to the repository is that
+    // offer, and it is public metadata like the discovery document, so it is
+    // cached the same way. It is unauthenticated on purpose: an offer a reader has
+    // to identify themselves to receive is not an offer to the users of the
+    // service.
+    if (path === SOURCE_ENDPOINT_PATH) {
+      if (method !== 'GET' && method !== 'HEAD') return sendError(res, 405, 'METHOD_NOT_ALLOWED', `Use GET ${SOURCE_ENDPOINT_PATH}.`);
+      res.writeHead(302, { Location: sourceUrl, 'Cache-Control': DISCOVERY_CACHE_CONTROL });
+      res.end();
+      return;
     }
 
     if (path === '/healthz') {

@@ -14,6 +14,8 @@ import {
   MCP_PROTOCOL_REVISION,
   NAVI_PROTOCOL_VERSION as HOST_PROTOCOL_VERSION,
   SCRIPT_ENDPOINT_PATH,
+  SOURCE_ENDPOINT_PATH,
+  SOURCE_REPOSITORY_URL,
   createNaviHostServer
 } from '../server/index.js';
 import { DEV_TENANT_KEY } from '../server/tenants.js';
@@ -24,13 +26,18 @@ import { DEFAULT_SSE_PORT } from '../src/mcp/sse.js';
 /**
  * Auto-discovery checks.
  *
- * The open-web contract has two halves and this file verifies both against the
- * real artifacts rather than against the code that claims to implement them:
+ * The open-web contract has three parts and this file verifies all three against
+ * the real artifacts rather than against the code that claims to implement them:
  *
  *   1. a host publishes `/.well-known/navi.json` and advertises it from every
  *      response with `Link: rel="agent-bridge"`, so an agent that can reach any
  *      route can find the document without a hard-coded path (driven over HTTP);
- *   2. `navi_navigate` reads the marker the tenant loader injects, binds to the
+ *   2. the same responses offer the host's Corresponding Source - `rel="source"`,
+ *      `GET /v1/source`, and a `source` field in the document - which is what
+ *      AGPL-3.0 section 13 obliges a network service to do for the users who
+ *      interact with it, including the ones who only ever see an error (driven
+ *      over HTTP, and asserted for a fork serving its own source);
+ *   3. `navi_navigate` reads the marker the tenant loader injects, binds to the
  *      Navi the host is already running, and - when the host publishes nothing, or
  *      publishes a marker whose runtime never ran - falls back to the packaged
  *      runtime while saying so in the envelope (driven through the real MCP
@@ -70,6 +77,22 @@ test.afterAll(async () => {
 
 const manifestUrl = () => `${state.base}/.well-known/navi.json`;
 
+/**
+ * Both `Link` relations on one header: the discovery document an agent follows and
+ * the Corresponding Source AGPL-3.0 section 13 requires this service to offer.
+ *
+ * Asserted as containment rather than as one exact string, because the contract is
+ * that both relations are advertised on every response - not that they are
+ * serialized in a particular order. The single-relation form is still covered: the
+ * fixture page below publishes `rel="agent-bridge"` alone and the MCP server has to
+ * keep reading it.
+ * @param {string | null} link
+ */
+const expectBothRelations = link => {
+  expect(link, 'every response must advertise the discovery document').toContain(AGENT_BRIDGE_LINK);
+  expect(link, 'and offer the Corresponding Source section 13 requires').toContain(`<${SOURCE_REPOSITORY_URL}>; rel="source"`);
+};
+
 /** One document, with the marker the loader injects and the real bundle. @param {boolean} marker @param {boolean} bundle */
 const page = (marker, bundle) => `<!doctype html>
 <html lang="en">
@@ -94,7 +117,8 @@ test('a host publishes one discovery document, advertised by every response', as
     protocol: '2025-11-25',
     status: 'ready',
     capabilities: ['viewport_indexing', 'differential_actions', 'settlement_receipts'],
-    endpoints: { mcp_sse: 'http://127.0.0.1:3001/sse', script: '/v1/navi.js' }
+    endpoints: { mcp_sse: 'http://127.0.0.1:3001/sse', script: '/v1/navi.js' },
+    source: 'https://github.com/Wub796/Navi'
   });
 
   // The document cannot drift from the software it describes.
@@ -106,6 +130,9 @@ test('a host publishes one discovery document, advertised by every response', as
   expect(document.capabilities).toEqual(AGENT_CAPABILITIES);
   expect(document.endpoints.mcp_sse).toBe(DEFAULT_MCP_SSE_URL);
   expect(document.endpoints.script).toBe(SCRIPT_ENDPOINT_PATH);
+  // The source offer is part of the published metadata, so a fork that changed it
+  // in one place and not the other would be caught here.
+  expect(document.source).toBe(SOURCE_REPOSITORY_URL);
   expect(new URL(document.endpoints.mcp_sse).port).toBe(String(DEFAULT_SSE_PORT));
 
   // Caching: public, revalidated by ETag, and a conditional request costs no body.
@@ -119,7 +146,7 @@ test('a host publishes one discovery document, advertised by every response', as
   // An agent that can reach any route finds the document by relation alone: this
   // is the whole discovery flow, followed the way a client would follow it.
   const health = await fetch(`${state.base}/healthz`);
-  expect(health.headers.get('link')).toBe(AGENT_BRIDGE_LINK);
+  expectBothRelations(health.headers.get('link'));
   const relation = /<([^>]+)>/.exec(AGENT_BRIDGE_LINK);
   const followed = await fetch(new URL(/** @type {string} */ (relation?.[1]), `${state.base}/healthz`));
   expect(followed.status).toBe(200);
@@ -129,16 +156,69 @@ test('a host publishes one discovery document, advertised by every response', as
   // client that only ever sees a 404 is still told where to look.
   const bundle = await fetch(`${state.base}${document.endpoints.script}?key=${DEV_TENANT_KEY}`);
   expect(bundle.status).toBe(200);
-  expect(bundle.headers.get('link')).toBe(AGENT_BRIDGE_LINK);
+  expectBothRelations(bundle.headers.get('link'));
   expect(Buffer.from(await bundle.arrayBuffer())).toEqual(await readFile(join(root, 'dist/navi.min.js')));
   const loader = await fetch(`${state.base}/v1/loader.js`);
-  expect(loader.headers.get('link')).toBe(AGENT_BRIDGE_LINK);
+  expectBothRelations(loader.headers.get('link'));
   const missing = await fetch(`${state.base}/no-such-route`);
   expect(missing.status).toBe(404);
-  expect(missing.headers.get('link')).toBe(AGENT_BRIDGE_LINK);
+  expectBothRelations(missing.headers.get('link'));
 
   const wrongMethod = await fetch(manifestUrl(), { method: 'POST' });
   expect(wrongMethod.status).toBe(405);
+});
+
+test('a host offers its Corresponding Source to the users who reach it, on every response', async () => {
+  // AGPL-3.0 section 13 is not discharged by a LICENSE file: it requires the running
+  // service to offer the source of the version answering requests, to the users it
+  // answers. So the offer is asserted where a user actually meets it, including on
+  // the responses they never asked for - which is where an offer that lived only in
+  // documentation would be missing.
+  const offer = await fetch(`${state.base}${SOURCE_ENDPOINT_PATH}`, { redirect: 'manual' });
+  expect(offer.status).toBe(302);
+  const target = new URL(/** @type {string} */ (offer.headers.get('location')));
+  expect(target.href).toBe(SOURCE_REPOSITORY_URL);
+  expect(target.protocol, 'the offer must not hand a reader an insecure transport').toBe('https:');
+  expectBothRelations(offer.headers.get('link'));
+
+  // An offer you have to POST to receive is not an offer to a reader, so this is a
+  // read route and says so.
+  const wrongMethod = await fetch(`${state.base}${SOURCE_ENDPOINT_PATH}`, { method: 'POST' });
+  expect(wrongMethod.status).toBe(405);
+
+  // The document an agent reads first names the same source, so the offer is
+  // discoverable without having to notice a response header.
+  const document = await (await fetch(manifestUrl())).json();
+  expect(document.source).toBe(SOURCE_REPOSITORY_URL);
+
+  // Every route a reader might land on: the script a customer's page loads, the
+  // loader, health, and a path that does not exist.
+  for (const path of [`${SCRIPT_ENDPOINT_PATH}?key=${DEV_TENANT_KEY}`, '/v1/loader.js', '/healthz', '/no-such-route']) {
+    expectBothRelations((await fetch(`${state.base}${path}`)).headers.get('link'));
+  }
+
+  // A 304 is still a response, and a cache revalidation must not be the one path
+  // that loses the offer.
+  const etag = (await fetch(manifestUrl())).headers.get('etag');
+  const revalidated = await fetch(manifestUrl(), { headers: { 'If-None-Match': /** @type {string} */ (etag) } });
+  expect(revalidated.status).toBe(304);
+  expectBothRelations(revalidated.headers.get('link'));
+
+  // A fork points the offer at its own source, because the obligation attaches to
+  // the version that is actually running and not to upstream. Redirect and manifest
+  // are asserted together so they cannot disagree about which source is being offered.
+  process.env.NAVI_SOURCE_URL = 'https://git.example.com/tenant/navi-fork';
+  const fork = await createNaviHostServer({ port: 0, storeFile: join(tmpdir(), `navi-source-${process.pid}-${Date.now()}.db`) });
+  try {
+    const forkBase = `http://127.0.0.1:${fork.port}`;
+    const redirected = await fetch(`${forkBase}${SOURCE_ENDPOINT_PATH}`, { redirect: 'manual' });
+    expect(redirected.headers.get('location')).toBe('https://git.example.com/tenant/navi-fork');
+    expect((await (await fetch(`${forkBase}/.well-known/navi.json`)).json()).source).toBe('https://git.example.com/tenant/navi-fork');
+    expect(String((await fetch(`${forkBase}/healthz`)).headers.get('link'))).toContain('<https://git.example.com/tenant/navi-fork>; rel="source"');
+  } finally {
+    await fork.close();
+    delete process.env.NAVI_SOURCE_URL;
+  }
 });
 
 test('a host that cannot serve its assets reports degraded, and its endpoints are configuration', async () => {
