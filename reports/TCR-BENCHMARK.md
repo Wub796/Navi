@@ -1,11 +1,11 @@
 # Dynamic checkout task completion benchmark
 
-Recorded 2026-10-11T02:23:15.896Z. darwin arm64, Apple M5 Pro, Node v22.23.3, Playwright 1.64.0.
+Recorded 2026-10-11T02:36:24.783Z. darwin arm64, Apple M5 Pro, Node v22.23.3, Playwright 1.64.0.
 
 | Execution path | Completed | TCR | DOM-context tokens total (10 trials) | Tokens/task mean | Wall time/task mean | Wall time/task p95 |
 |---|---:|---:|---:|---:|---:|---:|
-| Playwright role locators + explicit waits | 10/10 | 100% | 10,262 | 1026.2 | 1.990s | 2.049s |
-| Navi MCP + settlement receipts | 10/10 | 100% | 28,944 | 2894.4 | 1.758s | 1.947s |
+| Playwright role locators + explicit waits | 10/10 | 100% | 10,260 | 1026.0 | 1.990s | 2.064s |
+| Navi MCP + settlement receipts | 10/10 | 100% | 28,884 | 2888.4 | 1.756s | 1.886s |
 
 ## Methodology and boundaries
 
