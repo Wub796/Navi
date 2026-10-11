@@ -299,6 +299,8 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
     // A page already running its own Navi is running the host's build, so the script
     // origin is the host even though no manifest was read to find it.
     expect(instrumented.runtime_resolution).toEqual({ strategy: 'host_inline', manifest_url: null, script_origin: 'host' });
+    // The decision `page` -> `host_inline`, published on both fields of the receipt.
+    expect(instrumented.runtime_resolution.strategy).toBe(instrumented.sdk.source);
     expect(instrumented.actions).toBeGreaterThan(0);
 
     // 2. A page that publishes nothing: usable, but the envelope says the map did
@@ -312,6 +314,7 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
     expect(uninstrumented.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(uninstrumented.warning?.message).toContain('agent-bridge');
     expect(uninstrumented.sdk.source).toBe('bundled_fallback');
+    expect(uninstrumented.runtime_resolution.strategy).toBe(uninstrumented.sdk.source);
     expect(['tag', 'evaluate']).toContain(uninstrumented.sdk.strategy);
     expect(uninstrumented.sdk.injected).toBe(true);
     expect(uninstrumented.actions).toBeGreaterThan(0);
@@ -336,6 +339,7 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
     expect(unusable.warning?.code).toBe('MANIFEST_UNREACHABLE');
     expect(unusable.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(unusable.sdk.source).toBe('bundled_fallback');
+    expect(unusable.runtime_resolution.strategy).toBe(unusable.sdk.source);
     expect(unusable.sdk.injected).toBe(true);
     expect(unusable.actions).toBeGreaterThan(0);
     expect(unusable.protocolVersion).toBe(NAVI_PROTOCOL_VERSION);

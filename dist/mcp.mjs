@@ -775,6 +775,30 @@ var MAX_ACTIONS = 5e3;
 var MANIFEST_TIMEOUT_MS = 500;
 var HOST_ASSET_TIMEOUT_MS = 4e3;
 var MAX_MANIFEST_BYTES = 16 * 1024;
+var RESOLUTION_STRATEGY_MAP = Object.freeze({
+  page: "host_inline",
+  host_manifest: "host_manifest",
+  bundled: "bundled_fallback"
+});
+function assertResolutionParity(sdkSource, strategy) {
+  const expected = (
+    /** @type {Record<string, string>} */
+    RESOLUTION_STRATEGY_MAP[strategy]
+  );
+  if (expected === void 0) {
+    throw Object.assign(
+      new Error(`NAVI_RESOLUTION_UNMAPPED: the runtime decision ${JSON.stringify(strategy)} is not in RESOLUTION_STRATEGY_MAP, so no sdk.source can be derived from it`),
+      { code: "NAVI_RESOLUTION_UNMAPPED" }
+    );
+  }
+  if (expected !== sdkSource) {
+    throw Object.assign(
+      new Error(`NAVI_RESOLUTION_DIVERGED: the runtime decision ${JSON.stringify(strategy)} publishes sdk.source ${JSON.stringify(expected)}, but this navigation set ${JSON.stringify(sdkSource)}`),
+      { code: "NAVI_RESOLUTION_DIVERGED" }
+    );
+  }
+  return sdkSource;
+}
 var GUIDANCE = {
   NOT_FOUND: "The target_id is not in the action map. Call navi_get_actions and use a target_id from that response; ids change when the page re-renders.",
   AMBIGUOUS: "The target_id matched more than one element. Re-read the action map; the page has duplicate or unstable identities.",
@@ -1183,6 +1207,7 @@ var NaviSession = class {
       ));
       const sdkPath = resolveSdkPath();
       let strategy;
+      let resolution;
       let source;
       let warning = null;
       let negotiatedManifest = null;
@@ -1197,25 +1222,30 @@ var NaviSession = class {
       };
       if (installed) {
         strategy = "already-present";
+        resolution = "page";
         source = "host_inline";
         if (!discovery.instrumented) warning = warningFor("UNINSTRUMENTED_HOST");
       } else if (discovery.instrumented) {
-        const resolution = await negotiateHostRuntime(page, discovery);
-        negotiatedManifest = resolution.manifest;
-        discovery = { ...discovery, manifest: resolution.manifest ?? discovery.manifest, script: resolution.script, integrity: resolution.integrity };
-        if (resolution.source === "host_manifest") {
+        const negotiated = await negotiateHostRuntime(page, discovery);
+        negotiatedManifest = negotiated.manifest;
+        discovery = { ...discovery, manifest: negotiated.manifest ?? discovery.manifest, script: negotiated.script, integrity: negotiated.integrity };
+        if (negotiated.source === "host_manifest") {
           strategy = "tag";
+          resolution = "host_manifest";
           source = "host_manifest";
         } else {
-          warning = warningFor(resolution.warning ?? "MANIFEST_UNREACHABLE", resolution.detail ?? void 0);
+          warning = warningFor(negotiated.warning ?? "MANIFEST_UNREACHABLE", negotiated.detail ?? void 0);
           strategy = await installBundled();
+          resolution = "bundled";
           source = "bundled_fallback";
         }
       } else {
         warning = warningFor("UNINSTRUMENTED_HOST");
         strategy = await installBundled();
+        resolution = "bundled";
         source = "bundled_fallback";
       }
+      assertResolutionParity(source, resolution);
       const { version } = await ensureNavi(page, sdkPath);
       this.adapter = new NaviPlaywrightAdapter(page, { fallback: this.fallback });
       const map = await this.adapter.discover({ limit: MAX_ACTIONS });
@@ -1228,13 +1258,15 @@ var NaviSession = class {
         protocolVersion: version,
         sdk: { strategy, injected: !installed, source },
         // Which runtime this page is now running, and where it came from. `strategy` is
-        // the same value `sdk.source` carries and is computed from the same variable in
-        // the same place, so the two cannot disagree; it is named again here because
-        // `source` is ambiguous in a receipt that also carries the manifest's `source`
-        // (the Corresponding Source URL of the host) and `discovery.source` (how
-        // instrumentation was detected - a link header, a meta tag, or nothing).
+        // the source the decision above publishes, looked up through
+        // RESOLUTION_STRATEGY_MAP, and assertResolutionParity has already compared that
+        // lookup against the value the branch set for `sdk.source` - so the two cannot
+        // disagree. The source is named again here because `source` is ambiguous in a
+        // receipt that also carries the manifest's `source` (the Corresponding Source
+        // URL of the host) and `discovery.source` (how instrumentation was detected - a
+        // link header, a meta tag, or nothing).
         runtime_resolution: {
-          strategy: source,
+          strategy: RESOLUTION_STRATEGY_MAP[resolution],
           manifest_url: negotiatedManifest,
           // A page that was already running its own Navi is running the host's build,
           // not ours, so only the packaged fallback reports a bundled script.
@@ -1637,10 +1669,12 @@ Environment
 export {
   NaviSession,
   PROTOCOL_VERSION,
+  RESOLUTION_STRATEGY_MAP,
   SERVER_NAME,
   SERVER_VERSION,
   SUPPORTED_PROTOCOLS,
   TOOLS,
+  assertResolutionParity,
   handleMessage,
   main,
   normalizeStorageState,

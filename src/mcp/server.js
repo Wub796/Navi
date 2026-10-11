@@ -50,6 +50,60 @@ const HOST_ASSET_TIMEOUT_MS = 4000;
 const MAX_MANIFEST_BYTES = 16 * 1024;
 
 /**
+ * The invariant tying the runtime decision a navigation makes to the source its
+ * receipt publishes.
+ *
+ * One navigation makes one decision, and reports it on two fields: `sdk.source`,
+ * which the resolving branch sets, and `runtime_resolution.strategy`, which is
+ * looked up here from that decision. Because the two are derived independently, a
+ * branch edited to set one without the other would publish a receipt that
+ * contradicts itself and still look like a believable receipt. Assert the pair
+ * before returning and that refactor becomes a failed tool call with an explicit
+ * code instead of a plausible-looking wrong answer.
+ *
+ * The keys are the internal decisions — `page` (the page is already running its
+ * own Navi, so there is nothing to inject), `host_manifest` (the host's own
+ * discovery document designated the runtime), `bundled` (the packaged build was
+ * injected) — and the values are exactly the strings `sdk.source` carries.
+ * @type {Readonly<Record<'page' | 'host_manifest' | 'bundled', 'host_inline' | 'host_manifest' | 'bundled_fallback'>>}
+ */
+export const RESOLUTION_STRATEGY_MAP = Object.freeze({
+  page: 'host_inline',
+  host_manifest: 'host_manifest',
+  bundled: 'bundled_fallback'
+});
+
+/**
+ * Fail closed when a navigation's runtime decision and the source its receipt
+ * publishes disagree.
+ *
+ * Thrown errors carry a `code`, so the navigation envelope reports the specific
+ * defect: `NAVI_RESOLUTION_DIVERGED` for a decision whose mapped source is not the
+ * one the branch set, `NAVI_RESOLUTION_UNMAPPED` for a decision that is not in the
+ * table at all — a branch added without extending it, which would otherwise
+ * publish `undefined` as a runtime source.
+ * @param {string} sdkSource the value `sdk.source` would carry
+ * @param {string} strategy the internal runtime decision
+ * @returns {string} `sdkSource`, so the assertion composes into an expression
+ */
+export function assertResolutionParity(sdkSource, strategy) {
+  const expected = /** @type {Record<string, string>} */ (RESOLUTION_STRATEGY_MAP)[strategy];
+  if (expected === undefined) {
+    throw Object.assign(
+      new Error(`NAVI_RESOLUTION_UNMAPPED: the runtime decision ${JSON.stringify(strategy)} is not in RESOLUTION_STRATEGY_MAP, so no sdk.source can be derived from it`),
+      { code: 'NAVI_RESOLUTION_UNMAPPED' }
+    );
+  }
+  if (expected !== sdkSource) {
+    throw Object.assign(
+      new Error(`NAVI_RESOLUTION_DIVERGED: the runtime decision ${JSON.stringify(strategy)} publishes sdk.source ${JSON.stringify(expected)}, but this navigation set ${JSON.stringify(sdkSource)}`),
+      { code: 'NAVI_RESOLUTION_DIVERGED' }
+    );
+  }
+  return sdkSource;
+}
+
+/**
  * Actionable guidance for every failure mode the adapter and SDK can report.
  * An agent that only sees "false" cannot recover; an agent that sees which of
  * occluded / disabled / missing happened can.
@@ -566,6 +620,15 @@ export class NaviSession {
       const sdkPath = resolveSdkPath();
       /** @type {string} */
       let strategy;
+      /**
+       * Which runtime this navigation decided to run, as a key of
+       * RESOLUTION_STRATEGY_MAP. `sdk.source` is set alongside it by the branch that
+       * resolved the runtime, and the receipt's `runtime_resolution.strategy` is
+       * looked up from it, so the two are derived independently and compared before
+       * anything is returned.
+       * @type {'page' | 'host_manifest' | 'bundled'}
+       */
+      let resolution;
       /** @type {'host_inline' | 'host_manifest' | 'bundled_fallback'} */
       let source;
       /** @type {{code: string, message: string} | null} */
@@ -595,27 +658,35 @@ export class NaviSession {
         // The page is already running its own Navi: bind to that instance rather
         // than injecting a second copy over it, which is what the marker is for.
         strategy = 'already-present';
+        resolution = 'page';
         source = 'host_inline';
         if (!discovery.instrumented) warning = warningFor('UNINSTRUMENTED_HOST');
       } else if (discovery.instrumented) {
         // The page declares instrumentation, so the host is asked for its runtime
         // before the packaged build is used at all.
-        const resolution = await negotiateHostRuntime(page, discovery);
-        negotiatedManifest = resolution.manifest;
-        discovery = { ...discovery, manifest: resolution.manifest ?? discovery.manifest, script: resolution.script, integrity: resolution.integrity };
-        if (resolution.source === 'host_manifest') {
+        const negotiated = await negotiateHostRuntime(page, discovery);
+        negotiatedManifest = negotiated.manifest;
+        discovery = { ...discovery, manifest: negotiated.manifest ?? discovery.manifest, script: negotiated.script, integrity: negotiated.integrity };
+        if (negotiated.source === 'host_manifest') {
           strategy = 'tag';
+          resolution = 'host_manifest';
           source = 'host_manifest';
         } else {
-          warning = warningFor(resolution.warning ?? 'MANIFEST_UNREACHABLE', resolution.detail ?? undefined);
+          warning = warningFor(negotiated.warning ?? 'MANIFEST_UNREACHABLE', negotiated.detail ?? undefined);
           strategy = await installBundled();
+          resolution = 'bundled';
           source = 'bundled_fallback';
         }
       } else {
         warning = warningFor('UNINSTRUMENTED_HOST');
         strategy = await installBundled();
+        resolution = 'bundled';
         source = 'bundled_fallback';
       }
+      // Fail closed before the receipt exists: the decision above and the source it
+      // publishes are two independent derivations, and a receipt that contradicts
+      // itself is worse than a failed navigation.
+      assertResolutionParity(source, resolution);
       const { version } = await ensureNavi(page, sdkPath);
       this.adapter = new NaviPlaywrightAdapter(page, { fallback: this.fallback });
       const map = await this.adapter.discover({ limit: MAX_ACTIONS });
@@ -628,13 +699,15 @@ export class NaviSession {
         protocolVersion: version,
         sdk: { strategy, injected: !installed, source },
         // Which runtime this page is now running, and where it came from. `strategy` is
-        // the same value `sdk.source` carries and is computed from the same variable in
-        // the same place, so the two cannot disagree; it is named again here because
-        // `source` is ambiguous in a receipt that also carries the manifest's `source`
-        // (the Corresponding Source URL of the host) and `discovery.source` (how
-        // instrumentation was detected - a link header, a meta tag, or nothing).
+        // the source the decision above publishes, looked up through
+        // RESOLUTION_STRATEGY_MAP, and assertResolutionParity has already compared that
+        // lookup against the value the branch set for `sdk.source` - so the two cannot
+        // disagree. The source is named again here because `source` is ambiguous in a
+        // receipt that also carries the manifest's `source` (the Corresponding Source
+        // URL of the host) and `discovery.source` (how instrumentation was detected - a
+        // link header, a meta tag, or nothing).
         runtime_resolution: {
-          strategy: source,
+          strategy: RESOLUTION_STRATEGY_MAP[resolution],
           manifest_url: negotiatedManifest,
           // A page that was already running its own Navi is running the host's build,
           // not ours, so only the packaged fallback reports a bundled script.

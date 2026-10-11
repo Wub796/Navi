@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NAVI_PROTOCOL_VERSION } from '../src/adapter.js';
+import { RESOLUTION_STRATEGY_MAP, assertResolutionParity } from '../src/mcp/server.js';
 
 /**
  * Manifest negotiation checks.
@@ -134,6 +135,21 @@ const configure = (/** @type {{advertise?: Advertise, manifest?: ManifestMode, i
 const assetHits = () => state.hits.filter(hit => hit.url === '/host-runtime.js');
 const manifestHits = () => state.hits.filter(hit => hit.url === '/.well-known/navi.json');
 
+/**
+ * The receipt publishes the runtime source twice, and the two must agree. The table
+ * is the contract between them, so this reads the published source back through the
+ * table instead of asserting that the two fields merely equal each other: a source
+ * that no decision maps to is exactly the drift this guards against.
+ * @param {any} receipt
+ */
+const expectResolutionParity = receipt => {
+  const source = receipt.sdk.source;
+  expect(receipt.runtime_resolution.strategy, 'the receipt publishes its runtime source twice').toBe(source);
+  const decisions = Object.entries(RESOLUTION_STRATEGY_MAP).filter(([, mapped]) => mapped === source).map(([decision]) => decision);
+  expect(decisions, `${source} must be the published source of exactly one decision`).toHaveLength(1);
+  expect(assertResolutionParity(source, /** @type {string} */ (decisions[0]))).toBe(source);
+};
+
 test('a declared host runtime is negotiated, verified and injected instead of the packaged build', async () => {
   test.setTimeout(180000);
   const transport = new StdioClientTransport({ command: process.execPath, args: [join(root, 'bin/navi-mcp.js')], cwd: root, stderr: 'pipe' });
@@ -174,6 +190,7 @@ test('a declared host runtime is negotiated, verified and injected instead of th
       manifest_url: `${state.origin}/.well-known/navi.json`,
       script_origin: 'host'
     });
+    expectResolutionParity(verified);
     expect(verified.actions).toBeGreaterThan(0);
     expect(manifestHits().length, 'the manifest is read once per navigation').toBe(1);
     expect(manifestHits()[0].agent, 'a same-origin manifest is read by this process, not the page').not.toContain('Mozilla');
@@ -207,6 +224,7 @@ test('a declared host runtime is negotiated, verified and injected instead of th
       script_origin: 'bundled'
     });
     expect(mismatched.discovery.script).toBe(`${state.origin}/host-runtime.js`);
+    expectResolutionParity(mismatched);
     expect(mismatched.warning?.code).toBe('HOST_ASSET_MISMATCH');
     expect(mismatched.warning?.message).toContain('subresource integrity');
     expect(mismatched.protocolVersion).toBe(NAVI_PROTOCOL_VERSION);
@@ -225,6 +243,7 @@ test('a declared host runtime is negotiated, verified and injected instead of th
       manifest_url: `${state.origin}/.well-known/navi.json`,
       script_origin: 'bundled'
     });
+    expectResolutionParity(incompatible);
     expect(assetHits().length, 'a declined manifest is not followed').toBe(0);
     expect(incompatible.actions).toBeGreaterThan(0);
 
@@ -238,6 +257,7 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     // Nothing was read, so nothing is named: a manifest that never answered must not
     // appear in the receipt as though it had.
     expect(slow.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
+    expectResolutionParity(slow);
     expect(slow.warning?.message).toContain('500ms');
     expect(slow.elapsedMs, `the manifest budget must not hold up the navigation (took ${slow.elapsedMs}ms)`).toBeLessThan(4000);
     expect(slow.actions).toBeGreaterThan(0);
@@ -253,6 +273,7 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     // The advertised URL is reported by `discovery`, and the refused fetch leaves
     // `manifest_url` null: the two fields are not the same question.
     expect(crossOrigin.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
+    expectResolutionParity(crossOrigin);
     expect(crossOrigin.actions).toBeGreaterThan(0);
 
     // 7. A page that declares nothing is not probed at all: no manifest request is
@@ -264,6 +285,7 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     expect(uninstrumented.discovery.instrumented).toBe(false);
     expect(uninstrumented.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(uninstrumented.sdk.source).toBe('bundled_fallback');
+    expectResolutionParity(uninstrumented);
     expect(uninstrumented.actions).toBeGreaterThan(0);
 
     // 8. A 404 on the advertised path is the same answer as no document at all, and
@@ -275,8 +297,68 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     expect(manifestHits().length).toBe(1);
     expect(missing.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(missing.sdk.source).toBe('bundled_fallback');
+    expectResolutionParity(missing);
     expect(missing.actions).toBeGreaterThan(0);
   } finally {
     await client.close();
   }
+});
+
+test('every runtime decision maps to exactly one published source, and a divergent pair fails closed', async () => {
+  // The invariant `navi_navigate` enforces before it returns: one decision per
+  // navigation, one published source, and a frozen table that is the only thing
+  // allowed to say which source a decision publishes. The E2E test above proves the
+  // branches reach a consistent receipt; this pins the table itself, including the
+  // paths a browser cannot be driven into.
+  expect(Object.isFrozen(RESOLUTION_STRATEGY_MAP)).toBe(true);
+  expect(RESOLUTION_STRATEGY_MAP).toEqual({ page: 'host_inline', host_manifest: 'host_manifest', bundled: 'bundled_fallback' });
+
+  // Every valid decision resolves to its own source and returns it, and the mapping
+  // is injective: a published source names exactly one decision, so a receipt can be
+  // read back to the branch that produced it.
+  for (const [decision, expected] of Object.entries(RESOLUTION_STRATEGY_MAP)) {
+    expect(assertResolutionParity(expected, decision)).toBe(expected);
+  }
+  expect(new Set(Object.values(RESOLUTION_STRATEGY_MAP)).size).toBe(Object.keys(RESOLUTION_STRATEGY_MAP).length);
+
+  /** @param {() => unknown} call @returns {unknown} */
+  const codeOf = call => {
+    try {
+      call();
+      return null;
+    } catch (error) {
+      return /** @type {{code?: unknown}} */ (error).code;
+    }
+  };
+
+  // A decision that resolves to the wrong source is a receipt that contradicts
+  // itself, so it throws rather than being reported - with the code the navigation
+  // envelope carries, not an anonymous failure.
+  for (const [decision, expected] of Object.entries(RESOLUTION_STRATEGY_MAP)) {
+    const wrong = /** @type {string} */ (Object.values(RESOLUTION_STRATEGY_MAP).find(source => source !== expected));
+    expect(codeOf(() => assertResolutionParity(wrong, decision))).toBe('NAVI_RESOLUTION_DIVERGED');
+    expect(() => assertResolutionParity(wrong, decision)).toThrow(/NAVI_RESOLUTION_DIVERGED/);
+  }
+  // A source that is close to the right one is still divergent, and so is a missing
+  // one: a guard that accepted either would not be a guard.
+  expect(codeOf(() => assertResolutionParity('host_inline', 'host_manifest'))).toBe('NAVI_RESOLUTION_DIVERGED');
+  // An absent source is not a wildcard either. The cast is the point: the types say a
+  // string is always passed, and JavaScript callers are not bound by the types.
+  expect(codeOf(() => assertResolutionParity(/** @type {string} */ (/** @type {unknown} */ (undefined)), 'page'))).toBe('NAVI_RESOLUTION_DIVERGED');
+
+  // A decision added without extending the table would otherwise publish `undefined`
+  // as a runtime source, so it is its own explicit failure.
+  expect(codeOf(() => assertResolutionParity('host_inline', 'host-manifest'))).toBe('NAVI_RESOLUTION_UNMAPPED');
+  expect(() => assertResolutionParity('bundled_fallback', 'bundled')).not.toThrow();
+
+  // The guard is only worth anything if the navigation actually runs it, and the
+  // receipt's own `strategy` is derived from the same table. Asserting both here is a
+  // tripwire for rewiring the receipt, not a spelling check: moving or removing the
+  // call, or publishing `source` straight through it, must fail this test so the
+  // receipt cannot silently stop being validated.
+  const serverSource = await readFile(join(root, 'src/mcp/server.js'), 'utf8');
+  expect(serverSource, 'navi_navigate must validate the pair before returning a receipt')
+    .toMatch(/assertResolutionParity\(\s*source\s*,\s*resolution\s*\)/);
+  expect(serverSource, 'the receipt must publish the source the table derives, not the branch variable')
+    .toMatch(/strategy:\s*RESOLUTION_STRATEGY_MAP\[resolution\]/);
 });
