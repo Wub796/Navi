@@ -2,6 +2,7 @@
   "name": "navi-interaction-bridge",
   "version": "0.5.0",
   "description": "Navi protocol: deterministic action maps and guarded execution tools for browser agents.",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
