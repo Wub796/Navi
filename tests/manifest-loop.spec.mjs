@@ -167,6 +167,13 @@ test('a declared host runtime is negotiated, verified and injected instead of th
       integrity: 'verified'
     });
     expect(verified.warning).toBeUndefined();
+    // The receipt says which runtime is running and where it came from, separately
+    // from `discovery.source`, which only says how instrumentation was detected.
+    expect(verified.runtime_resolution).toEqual({
+      strategy: 'host_manifest',
+      manifest_url: `${state.origin}/.well-known/navi.json`,
+      script_origin: 'host'
+    });
     expect(verified.actions).toBeGreaterThan(0);
     expect(manifestHits().length, 'the manifest is read once per navigation').toBe(1);
     expect(manifestHits()[0].agent, 'a same-origin manifest is read by this process, not the page').not.toContain('Mozilla');
@@ -192,6 +199,13 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     expect(mismatched.title).toBe('manifest loop fixture');
     expect(mismatched.sdk).toEqual({ strategy: 'tag', injected: true, source: 'bundled_fallback' });
     expect(mismatched.discovery.integrity).toBe('failed');
+    // A document that was read but not adopted is still a document that was read, so
+    // the receipt names it while reporting that the running script is the packaged one.
+    expect(mismatched.runtime_resolution).toEqual({
+      strategy: 'bundled_fallback',
+      manifest_url: `${state.origin}/.well-known/navi.json`,
+      script_origin: 'bundled'
+    });
     expect(mismatched.discovery.script).toBe(`${state.origin}/host-runtime.js`);
     expect(mismatched.warning?.code).toBe('HOST_ASSET_MISMATCH');
     expect(mismatched.warning?.message).toContain('subresource integrity');
@@ -206,6 +220,11 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     expect(incompatible.warning?.code).toBe('MANIFEST_INCOMPATIBLE');
     expect(incompatible.warning?.message).toContain('0.2.0');
     expect(incompatible.discovery.script, 'nothing off a declined manifest is adopted').toBeNull();
+    expect(incompatible.runtime_resolution).toEqual({
+      strategy: 'bundled_fallback',
+      manifest_url: `${state.origin}/.well-known/navi.json`,
+      script_origin: 'bundled'
+    });
     expect(assetHits().length, 'a declined manifest is not followed').toBe(0);
     expect(incompatible.actions).toBeGreaterThan(0);
 
@@ -216,6 +235,9 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     const slow = await navigate(`${state.origin}/`);
     expect(slow.sdk.source).toBe('bundled_fallback');
     expect(slow.warning?.code).toBe('MANIFEST_UNREACHABLE');
+    // Nothing was read, so nothing is named: a manifest that never answered must not
+    // appear in the receipt as though it had.
+    expect(slow.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(slow.warning?.message).toContain('500ms');
     expect(slow.elapsedMs, `the manifest budget must not hold up the navigation (took ${slow.elapsedMs}ms)`).toBeLessThan(4000);
     expect(slow.actions).toBeGreaterThan(0);
@@ -228,6 +250,9 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     expect(crossOrigin.warning?.code).toBe('MANIFEST_CROSS_ORIGIN');
     expect(manifestHits().length, 'the off-origin document is never fetched').toBe(0);
     expect(crossOrigin.discovery.manifest).toBe('http://127.0.0.1:1/.well-known/navi.json');
+    // The advertised URL is reported by `discovery`, and the refused fetch leaves
+    // `manifest_url` null: the two fields are not the same question.
+    expect(crossOrigin.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(crossOrigin.actions).toBeGreaterThan(0);
 
     // 7. A page that declares nothing is not probed at all: no manifest request is
@@ -237,6 +262,7 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     expect(uninstrumented.warning?.code).toBe('UNINSTRUMENTED_HOST');
     expect(manifestHits().length, 'an uninstrumented host is not probed').toBe(0);
     expect(uninstrumented.discovery.instrumented).toBe(false);
+    expect(uninstrumented.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(uninstrumented.sdk.source).toBe('bundled_fallback');
     expect(uninstrumented.actions).toBeGreaterThan(0);
 
@@ -247,6 +273,7 @@ test('a declared host runtime is negotiated, verified and injected instead of th
     expect(missing.warning?.code).toBe('MANIFEST_UNREACHABLE');
     expect(missing.warning?.message).toContain('404');
     expect(manifestHits().length).toBe(1);
+    expect(missing.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(missing.sdk.source).toBe('bundled_fallback');
     expect(missing.actions).toBeGreaterThan(0);
   } finally {

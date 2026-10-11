@@ -971,7 +971,7 @@ var TOOLS = [
   {
     name: "navi_navigate",
     title: "Navigate and initialize Navi",
-    description: `Open an http(s) URL in the controlled browser, detect the host's agent-bridge discovery marker (a Link response header or <meta name="agent-bridge">), read the host's own discovery document from the page origin and inject the runtime it designates (verifying a declared subresource integrity hash before executing anything), bind to a Navi instance the page is already running, or fall back to the packaged runtime (protocol ${NAVI_PROTOCOL_VERSION}) when the host publishes nothing usable. Every outcome is reported as sdk.source: host_manifest, host_inline or bundled_fallback. Then wait for indexing and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
+    description: `Open an http(s) URL in the controlled browser, detect the host's agent-bridge discovery marker (a Link response header or <meta name="agent-bridge">), read the host's own discovery document from the page origin and inject the runtime it designates (verifying a declared subresource integrity hash before executing anything), bind to a Navi instance the page is already running, or fall back to the packaged runtime (protocol ${NAVI_PROTOCOL_VERSION}) when the host publishes nothing usable. Every outcome is reported as runtime_resolution.strategy: host_manifest, host_inline or bundled_fallback, with runtime_resolution.manifest_url naming the document that was actually read and runtime_resolution.script_origin saying whether the running script came from the host or from this package. Then wait for indexing and return the page title with the number of actionable controls. Only credential-free http(s) URLs are accepted.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -1185,6 +1185,7 @@ var NaviSession = class {
       let strategy;
       let source;
       let warning = null;
+      let negotiatedManifest = null;
       const installBundled = async () => {
         try {
           await installNavi(page, { scriptPath: sdkPath, strategy: "tag" });
@@ -1200,6 +1201,7 @@ var NaviSession = class {
         if (!discovery.instrumented) warning = warningFor("UNINSTRUMENTED_HOST");
       } else if (discovery.instrumented) {
         const resolution = await negotiateHostRuntime(page, discovery);
+        negotiatedManifest = resolution.manifest;
         discovery = { ...discovery, manifest: resolution.manifest ?? discovery.manifest, script: resolution.script, integrity: resolution.integrity };
         if (resolution.source === "host_manifest") {
           strategy = "tag";
@@ -1225,6 +1227,19 @@ var NaviSession = class {
         status,
         protocolVersion: version,
         sdk: { strategy, injected: !installed, source },
+        // Which runtime this page is now running, and where it came from. `strategy` is
+        // the same value `sdk.source` carries and is computed from the same variable in
+        // the same place, so the two cannot disagree; it is named again here because
+        // `source` is ambiguous in a receipt that also carries the manifest's `source`
+        // (the Corresponding Source URL of the host) and `discovery.source` (how
+        // instrumentation was detected - a link header, a meta tag, or nothing).
+        runtime_resolution: {
+          strategy: source,
+          manifest_url: negotiatedManifest,
+          // A page that was already running its own Navi is running the host's build,
+          // not ours, so only the packaged fallback reports a bundled script.
+          script_origin: source === "bundled_fallback" ? "bundled" : "host"
+        },
         discovery,
         ...warning ? { warning } : {},
         viewport: { width, height },

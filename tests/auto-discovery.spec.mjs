@@ -296,6 +296,9 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
       integrity: 'not_declared'
     });
     expect(instrumented.warning).toBeUndefined();
+    // A page already running its own Navi is running the host's build, so the script
+    // origin is the host even though no manifest was read to find it.
+    expect(instrumented.runtime_resolution).toEqual({ strategy: 'host_inline', manifest_url: null, script_origin: 'host' });
     expect(instrumented.actions).toBeGreaterThan(0);
 
     // 2. A page that publishes nothing: usable, but the envelope says the map did
@@ -306,6 +309,7 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
     expect(uninstrumented.ok).toBe(true);
     expect(uninstrumented.discovery).toEqual({ instrumented: false, source: 'none', declared_version: null, manifest: null, script: null, integrity: 'not_declared' });
     expect(uninstrumented.warning?.code).toBe('UNINSTRUMENTED_HOST');
+    expect(uninstrumented.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(uninstrumented.warning?.message).toContain('agent-bridge');
     expect(uninstrumented.sdk.source).toBe('bundled_fallback');
     expect(['tag', 'evaluate']).toContain(uninstrumented.sdk.strategy);
@@ -330,6 +334,7 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
       integrity: 'not_declared'
     });
     expect(unusable.warning?.code).toBe('MANIFEST_UNREACHABLE');
+    expect(unusable.runtime_resolution).toEqual({ strategy: 'bundled_fallback', manifest_url: null, script_origin: 'bundled' });
     expect(unusable.sdk.source).toBe('bundled_fallback');
     expect(unusable.sdk.injected).toBe(true);
     expect(unusable.actions).toBeGreaterThan(0);
