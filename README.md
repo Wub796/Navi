@@ -316,7 +316,7 @@ The CI checks `main` should require are `Quality gates (Node 22.x)`, `Benchmark 
 - [Settlement engine](src/settle.js) · [settlement + adapter suite](tests/settlement.spec.mjs) · [settlement fixture](demo/settlement.html)
 - [Tenant loader](src/loader.js) · [built snippet](dist/loader.min.js) · [loader suite](tests/loader.spec.mjs)
 - [Integration matrix](docs/INTEGRATION-MATRIX.md) · [Claude Desktop config](examples/claude-desktop-config.json) · [Cursor config](examples/cursor-mcp.json) · [auto-discovery suite](tests/auto-discovery.spec.mjs) · [manifest negotiation suite](tests/manifest-loop.spec.mjs)
-- [Mock model fixture](tests/fixtures/mock-llm-server.mjs) · [LLM harness contract](tests/llm-harness.spec.mjs) · [LLM benchmark report](reports/LLM-TCR-BENCHMARK.md)
+- [Mock model fixture](tests/fixtures/mock-llm-server.mjs) · [LLM harness contract](tests/llm-harness.spec.mjs) · [LLM benchmark report](reports/LLM-TCR-BENCHMARK.md) · [raw metrics](reports/llm-benchmark.json)
 - [Publish preflight](scripts/publish-preflight.mjs) · [release notes generator](scripts/release-notes.mjs) · [release pipeline spec](tests/release-pipeline.spec.mjs)
 - [Host service](server/index.js) · [aggregate store](server/store.js) · [tenant keys](server/tenants.js) · [ingestion suite](tests/backend-ingest.spec.mjs)
 - [CSP compliance suite](tests/csp-compliance.spec.mjs) · [hardening suite](tests/hardening.spec.mjs) · [shared browser helpers](src/browser.js)
