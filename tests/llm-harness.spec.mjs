@@ -81,6 +81,17 @@ test('an unconfigured run is distinguishable from a half-configured one', () => 
   // be accepted merely because no endpoint was named.
   expect(resolveConfig({ LLM_ITERATIONS: '99' })).toMatchObject({ reason: 'invalid' });
   expect(resolveConfig({ LLM_MAX_TURNS: '0' })).toMatchObject({ reason: 'invalid' });
+  // The fixture can also be requested by name, which is the only way to reach it while
+  // an endpoint variable is set at all. Any casing counts, and LLM_MODEL is ignored
+  // rather than required, because the fixture answers as itself.
+  expect(resolveConfig({ LLM_ENDPOINT: 'mock' })).toMatchObject({ reason: 'mock' });
+  expect(resolveConfig({ LLM_ENDPOINT: 'MOCK' })).toMatchObject({ reason: 'mock' });
+  expect(resolveConfig({ LLM_ENDPOINT: 'mock', LLM_MODEL: 'ignored' })).toMatchObject({ reason: 'mock' });
+  // Naming the fixture by hand is not a way to skip the knobs: a bad count still fails.
+  expect(resolveConfig({ LLM_ENDPOINT: 'mock', LLM_ITERATIONS: '99' })).toMatchObject({ reason: 'invalid' });
+  // Asking for the fixture while forbidding it is a contradiction, and the fail-closed
+  // flag wins: a caller who required a live model never gets a fixture baseline.
+  expect(resolveConfig({ LLM_ENDPOINT: 'mock', NAVI_LLM_FIXTURE: '0' })).toMatchObject({ reason: 'invalid' });
 });
 
 test('the local fixture answers as an OpenAI-compatible tool-calling model and advances its plan', async () => {
@@ -114,6 +125,31 @@ test('the local fixture answers as an OpenAI-compatible tool-calling model and a
     expect(fixture.requests).toBe(2);
   } finally {
     await fixture.close();
+  }
+});
+
+test('the mock fixture binds an ephemeral port by default, and MOCK_LLM_PORT is honoured when set', async () => {
+  const first = await createMockLlmServer();
+  const second = await createMockLlmServer();
+  try {
+    // Ephemeral by default, so two instances coexist - which is what lets the benchmark
+    // and this contract spec run without either one having to know about the other.
+    expect(new URL(first.baseUrl).port).not.toBe(new URL(second.baseUrl).port);
+    // `baseUrl` already ends in /v1, which is how the harness appends /chat/completions.
+    expect((await fetch(`${first.baseUrl}/models`)).status).toBe(200);
+    const taken = Number(new URL(first.baseUrl).port);
+    // A pinned port is honoured rather than treated as a hint: a caller who named a port
+    // is going to connect to the port they named, so a collision has to be an error.
+    await expect(createMockLlmServer({ port: taken })).rejects.toThrow(/EADDRINUSE|address already in use/i);
+    process.env.MOCK_LLM_PORT = String(taken);
+    await expect(createMockLlmServer()).rejects.toThrow(/EADDRINUSE|address already in use/i);
+    // A value that is not a port is refused with the variable named, never coerced.
+    process.env.MOCK_LLM_PORT = 'not-a-port';
+    await expect(createMockLlmServer()).rejects.toThrow(/MOCK_LLM_PORT/);
+  } finally {
+    delete process.env.MOCK_LLM_PORT;
+    await first.close();
+    await second.close();
   }
 });
 

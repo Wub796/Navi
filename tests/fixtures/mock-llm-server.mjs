@@ -15,6 +15,11 @@
 // through either of the two tool surfaces the harness offers — the raw
 // Playwright tools (`observe_page` / `browser_action`) or the Navi MCP tools
 // (`navi_get_actions` / `navi_execute_action`).
+//
+// It binds an ephemeral loopback port by default, because the harness and its
+// contract spec both start instances and neither should have to care what else is
+// running. Set `MOCK_LLM_PORT` (or pass `{ port }`) to pin it to a known address; a
+// collision then becomes a real error rather than something to paper over.
 import { createServer } from 'node:http';
 
 /** Model name this fixture answers as. */
@@ -310,6 +315,18 @@ function usageFor(body, call) {
   return { prompt_tokens: promptTokens, completion_tokens: Math.max(1, Math.ceil(completionChars / 4)), prompt_tokens_details: { cached_tokens: cachedTokens } };
 }
 
+/**
+ * Bind port for the fixture. `0` means an ephemeral port, which is the default.
+ * @param {unknown} value
+ * @returns {number}
+ */
+function resolvePort(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`MOCK_LLM_PORT must be an integer from 0 to 65535, got ${JSON.stringify(value)}`);
+  return port;
+}
+
 /** @param {import('node:http').ServerResponse} res @param {number} status @param {unknown} body */
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
@@ -333,9 +350,12 @@ async function readBody(req) {
 
 /**
  * Start the fixture and resolve once it is listening on loopback.
+ * @param {{port?: number}} [options] pin the bind port; defaults to MOCK_LLM_PORT, or
+ * an ephemeral port when that is unset.
  * @returns {Promise<MockLlmServer>}
  */
-export async function createMockLlmServer() {
+export async function createMockLlmServer(options = {}) {
+  const requestedPort = options.port ?? resolvePort(process.env.MOCK_LLM_PORT);
   let requests = 0;
   const server = createServer((req, res) => {
     void handle(req, res).catch(error => {
@@ -390,7 +410,7 @@ export async function createMockLlmServer() {
 
   await new Promise(/** @param {(value?: void) => void} resolve @param {(reason?: unknown) => void} reject */ (resolve, reject) => {
     server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(requestedPort, '127.0.0.1', () => {
       server.removeListener('error', reject);
       resolve();
     });

@@ -1,9 +1,9 @@
 {
   "status": "fixture-baseline",
   "fixture": "tests/fixtures/mock-llm-server.mjs",
-  "recordedAt": "2026-10-10T23:50:52.059Z",
+  "recordedAt": "2026-10-11T02:22:05.371Z",
   "model": "navi-mock-fixture-v1",
-  "node": "v22.23.3",
+  "node": "v24.21.0",
   "pricing": {
     "inputPerMillion": null,
     "outputPerMillion": null
@@ -44,7 +44,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1909.759125,
+      "wallMs": 1886.364958,
       "failures": []
     },
     {
@@ -58,7 +58,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1476.6069580000003,
+      "wallMs": 1479.53525,
       "failures": []
     },
     {
@@ -72,7 +72,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1633.6132499999999,
+      "wallMs": 1630.2594580000004,
       "failures": []
     },
     {
@@ -86,7 +86,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1926.3352919999998,
+      "wallMs": 1893.9619579999999,
       "failures": []
     },
     {
@@ -100,7 +100,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1944.9875840000004,
+      "wallMs": 1941.1548750000002,
       "failures": []
     },
     {
@@ -114,7 +114,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1734.401667,
+      "wallMs": 1753.152915999999,
       "failures": []
     },
     {
@@ -128,7 +128,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1882.4439170000005,
+      "wallMs": 1818.1213329999991,
       "failures": []
     },
     {
@@ -142,7 +142,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 2015.8110830000005,
+      "wallMs": 2043.5468330000003,
       "failures": []
     },
     {
@@ -156,7 +156,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 2019.4245840000021,
+      "wallMs": 2003.6137499999986,
       "failures": []
     },
     {
@@ -170,7 +170,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1851.3803750000006,
+      "wallMs": 1847.0929169999981,
       "failures": []
     },
     {
@@ -184,7 +184,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1733.8426249999975,
+      "wallMs": 1729.447250000001,
       "failures": []
     },
     {
@@ -198,7 +198,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1830.8186659999992,
+      "wallMs": 1847.8551249999982,
       "failures": []
     },
     {
@@ -212,7 +212,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1882.0847499999982,
+      "wallMs": 1893.8137920000008,
       "failures": []
     },
     {
@@ -226,7 +226,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1633.7044580000002,
+      "wallMs": 1654.4402090000003,
       "failures": []
     },
     {
@@ -240,7 +240,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1779.435375000001,
+      "wallMs": 1809.4198340000003,
       "failures": []
     },
     {
@@ -254,7 +254,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1904.2782079999997,
+      "wallMs": 1906.752999999997,
       "failures": []
     },
     {
@@ -268,7 +268,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1942.1630829999995,
+      "wallMs": 1946.7832080000007,
       "failures": []
     },
     {
@@ -282,7 +282,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1920.1199169999963,
+      "wallMs": 1950.2898749999986,
       "failures": []
     },
     {
@@ -296,7 +296,7 @@
       "cachedTokens": 8736,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1838.143790999995,
+      "wallMs": 1803.7124169999952,
       "failures": []
     },
     {
@@ -310,7 +310,7 @@
       "cachedTokens": 3411,
       "usageComplete": true,
       "cachedComplete": true,
-      "wallMs": 1979.6890420000054,
+      "wallMs": 1979.992207999996,
       "failures": []
     }
   ]
