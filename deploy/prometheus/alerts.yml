@@ -1,0 +1,195 @@
+# Alerting rules for the Navi host service and the MCP bridge.
+#
+# Every expression here references a series one of the two expositions really
+# serves. /metrics on the host (port 3000) carries `navi_host_*`; /metrics on the
+# MCP bridge (port 3001) carries `navi_containment_*` and `navi_mcp_*`. Both are
+# unauthenticated by design, so a scraper needs no credentials - and neither
+# carries a URL, a tenant key or a session identifier, which is what makes these
+# rules safe to keep in a shared Prometheus.
+#
+# Load with:
+#   prometheus --config.file=prometheus.yml     # rule_files: [alerts.yml]
+#   promtool check rules alerts.yml             # syntax and expression check
+#
+# The `up` series used by NaviServiceDown is synthesized by Prometheus itself from
+# each scrape target; it is the only non-`navi_*` series any rule depends on.
+
+groups:
+  # A refusal is the security boundary doing its job, so it is warned about rather
+  # than paged: an agent that keeps probing blocked destinations is worth a look,
+  # and it is one alert instance per category, which is the breakdown an operator
+  # needs to tell a misconfigured page from an actual SSRF attempt.
+  - name: navi-containment
+    rules:
+      - alert: NaviContainmentBreachAttempt
+        # Per category, because a single summed rule could not name what was
+        # blocked. `navi_containment_violations` is the categorical counter the MCP
+        # exposition serves alongside the total.
+        expr: sum by (category) (rate(navi_containment_violations[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: mcp
+        annotations:
+          summary: "Navi refused a destination (category {{ $labels.category }})"
+          description: >-
+            {{ printf "%.3f" $value }} refusals per second in category
+            {{ $labels.category }} over the last 5 minutes. A steady rate is an
+            agent repeatedly trying to reach metadata, a private address, loopback
+            or a rebinding target; a single spike is usually a page whose fixture
+            the deployment forgot to allow. The cumulative count per category is
+            navi_containment_violations{category="{{ $labels.category }}"}, and each
+            refusal also writes one SECURITY_CONTAINMENT_VIOLATION line to the MCP
+            service's stderr.
+
+      - alert: NaviContainmentEnforcementDisabled
+        # 0 means NAVI_ALLOW_LOCAL_NETWORK=1 turned the private-network policy off.
+        # That is legitimate only for an isolated fixture: on any deployment that
+        # faces an untrusted agent it is a control that has been silently dropped,
+        # so it warns continuously rather than after a threshold.
+        expr: navi_containment_enforced == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: mcp
+        annotations:
+          summary: "Navi containment policy is not enforced on {{ $labels.instance }}"
+          description: >-
+            navi_containment_enforced has been 0 for 5 minutes, so any destination
+            is allowed, including cloud metadata endpoints and loopback. Unset
+            NAVI_ALLOW_LOCAL_NETWORK and restart the MCP service unless this host is
+            a disposable fixture.
+
+      - alert: NaviForwarderQueueSaturated
+        # `dropped` is a counter, so the useful question is whether anything is
+        # being dropped *now*: a plain `> 0` would fire forever after a single drop
+        # months ago. 200 is 78% of the 256-event queue the forwarder holds, and
+        # both conditions are evaluated over the same 5-minute window.
+        expr: >-
+          navi_containment_forward_queued > 200
+          or increase(navi_containment_forward_dropped_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: mcp
+        annotations:
+          summary: "Navi is losing audit records before they reach the host"
+          description: >-
+            {{ if gt $value 200 }}The forward queue holds {{ $value }} events of its
+            256-event capacity{{ else }}Audit events were dropped because the queue
+            filled{{ end }}, so the tenant's security-audit trail has holes. Check
+            that NAVI_TELEMETRY_ENDPOINT is reachable from the MCP service and that
+            navi_host_rate_limited_total on the host is not climbing for that
+            tenant - a rate-limited forward is counted as failed, not retried.
+
+      - alert: NaviForwarderFailed
+        # Distinct from saturation: nothing was dropped yet, but the host refused or
+        # never answered, which is the other way an audit trail loses records.
+        expr: increase(navi_containment_forward_failed_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: mcp
+        annotations:
+          summary: "Navi refusals are not reaching the telemetry host"
+          description: >-
+            {{ printf "%.0f" $value }} forward(s) failed in the last 15 minutes and
+            were not retried. The refusal itself still happened and is still on
+            stderr, but GET /v1/tenants/<tenant_id>/security-audit will be missing
+            it. Check the host's own metrics for the same tenant.
+
+  # The host service is the only writer of the audit trail, so its loss is about
+  # durability as much as availability.
+  - name: navi-host
+    rules:
+      - alert: NaviTenantRateLimitSpike
+        # The token bucket is 120 requests/minute with a burst of 30, so more than
+        # 10 rejections per second sustained for five minutes is far past the
+        # configured ceiling rather than a burst being absorbed.
+        expr: sum by (tenant_id) (rate(navi_host_rate_limited_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} is being rate limited"
+          description: >-
+            {{ printf "%.1f" $value }} rejected ingest requests per second from
+            tenant {{ $labels.tenant_id }}. This is either a genuinely busier tenant
+            (raise NAVI_RATE_LIMIT_PER_MINUTE for it) or a forwarder in a retry loop.
+            Note that a rate-limited MCP forward is counted as failed rather than
+            retried, so sustained limiting here also means a gap in that tenant's
+            audit trail.
+
+      - alert: NaviRetentionSweepStalled
+        # A sweep runs at startup and every six hours, so a full day with none means
+        # the scheduled prune is not running - or NAVI_RETENTION_DAYS=0 disabled it on
+        # purpose. Silent either way until someone reads the store's size.
+        expr: increase(navi_host_prune_events_total[24h]) == 0
+        for: 1h
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "No retention prune has run on {{ $labels.instance }} for a day"
+          description: >-
+            The store keeps accumulating expired violations. Confirm NAVI_RETENTION_DAYS
+            is not 0 (which disables the automatic sweep by design) and that the host
+            is not restarting more often than the six-hour sweep interval. Watch
+            navi_host_store_bytes against the volume it lives on.
+
+      - alert: NaviMcpSessionSaturation
+        # The SSE ceiling defaults to 2 in the container and 10 on the command line;
+        # either way, running at the cap means callers are being refused with 503.
+        expr: navi_mcp_sessions / navi_mcp_sessions_max > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: mcp
+        annotations:
+          summary: "Navi is at {{ printf \"%.0f\" $value }}% of its session ceiling"
+          description: >-
+            {{ $value | humanizePercentage }} of the configured concurrent SSE
+            sessions are open. Further callers answer 503 until one closes or idles
+            out. Raise NAVI_MCP_MAX_SESSIONS - each session is a real Chromium, so
+            size it against the memory limit.
+
+  # Termination and availability. Both services stop on their own terms within their
+  # 5-second deadline and then exit 0, so a restart is not automatically a fault;
+  # what these rules catch is a service that is down and a process that keeps
+  # restarting.
+  - name: navi-availability
+    rules:
+      - alert: NaviServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Navi target {{ $labels.instance }} is not scrapeable"
+          description: >-
+            Prometheus has failed to scrape {{ $labels.job }} on
+            {{ $labels.instance }} for 2 minutes. The container's own healthcheck
+            probes /healthz on the same listener, so check the container state too.
+
+      - alert: NaviUngracefulShutdown
+        # There is no exit-code or process-start series to alert on yet, so a restart
+        # is detected from the outside: a process-lifetime counter that resets means a
+        # new process began. One reset is a deliberate restart or deploy - which is
+        # why this needs more than two inside the window before it fires - and that is
+        # also the honest limit of this rule: it cannot tell a clean SIGTERM exit from
+        # a crash, only that the service keeps coming back.
+        expr: >-
+          resets(navi_host_requests_total[15m]) > 2
+          or resets(navi_containment_violations_total[15m]) > 2
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Navi is restarting repeatedly on {{ $labels.instance }}"
+          description: >-
+            The process-lifetime counters reset more than twice in 15 minutes, which
+            is what a crash or restart loop looks like from the scrape side. Check
+            `docker inspect` for the exit code and whether the last stop finished
+            inside the 5-second shutdown deadline; a stop that is killed by the
+            runtime's timeout shows up as a SIGKILL exit.

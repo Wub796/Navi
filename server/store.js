@@ -7,13 +7,20 @@
 // page data. Persistence uses the runtime's own facilities so the service keeps
 // the repository's zero-runtime-dependency rule:
 //
-//   * `node:sqlite` when the runtime provides it (Node 22.5+), which is the
-//     preferred store and the one `server/telemetry.db` refers to;
+//   * `node:sqlite` when the runtime provides it (Node 22.5+, importable without a
+//     flag from 22.13), which is the preferred store and the one
+//     `server/telemetry.db` refers to;
 //   * otherwise an append-only JSONL log at the same path, so the documented
 //     `engines.node: ">=22.0.0"` range keeps working.
 //
 // Both modes answer with the identical summary shape, so callers never branch on
 // which one is active.
+//
+// Which one serves an existing path is decided by the file's own bytes and not by
+// the runtime that happens to be running: both backends share one path, so a
+// runtime that gains `node:sqlite` must not reopen an operator's JSONL log as a
+// database, and one that lacks it must not read a database as an empty log. See
+// `storeFormat`.
 //
 // Neither record type grows forever: `pruneViolations` drops audit rows past a
 // retention window, deleting them in SQLite and compacting the log by streaming
@@ -22,7 +29,7 @@
 // a pruned row must not renumber the rows around it.
 
 import { createReadStream, createWriteStream } from 'node:fs';
-import { appendFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -120,16 +127,22 @@ function retentionCutoff(days) {
 }
 
 /**
- * Resolve `node:sqlite` without a static import. It only exists from Node 22.5,
- * so it is absent across part of the supported engines range, and a static import
+ * Resolve `node:sqlite` without a static import. It only exists from Node 22.5, so
+ * it is absent across part of the supported engines range, and a static import
  * would break that range at module load rather than degrading to the log.
+ *
+ * The runtime's version is deliberately not consulted. The module was unflagged in
+ * Node 22.13 (nodejs/node#55890), so refusing it on the Node 22 line - which this
+ * store did - meant the preferred backend was unreachable on the exact runtime the
+ * image pins. Nothing about the version tells us whether the module will import;
+ * only the import does, and it degrades to the log when it fails. The import does
+ * emit an ExperimentalWarning wherever it succeeds, which is accurate rather than
+ * noise: the module is Stability 1 across the Node 22 line. A runtime that wants
+ * the log backend can say so with `--no-experimental-sqlite`, which makes this
+ * import fail exactly as it does on a runtime that never had the module.
  * @returns {Promise<any>}
  */
 async function loadSqlite() {
-  // node:sqlite emits an ExperimentalWarning throughout Node 22. Select the
-  // existing durable log backend on this supported runtime, without suppressing
-  // warnings; newer runtimes may use SQLite once the module is stable.
-  if (Number(process.versions.node.split('.')[0]) === 22) return null;
   try {
     // Variable specifier on purpose: the module is optional at runtime.
     const specifier = 'node:sqlite';
@@ -137,6 +150,44 @@ async function loadSqlite() {
     return typeof module?.DatabaseSync === 'function' ? module : null;
   } catch {
     return null;
+  }
+}
+
+/** The sixteen bytes every SQLite database file starts with. */
+const SQLITE_HEADER = 'SQLite format 3\u0000';
+
+/**
+ * Which backend may serve a store path, decided by its bytes rather than its name.
+ *
+ * The two backends share one path - there is no `.log` suffix to go by - so a
+ * runtime that gains `node:sqlite` would otherwise open an existing JSONL log as a
+ * database, which fails on the first statement (SQLITE_NOTADB), and the reverse
+ * would read a database as a log and report an empty audit trail as though it were
+ * real. Both are silent-wrong-answer failures, which is why the file itself is the
+ * only trustworthy input here. An empty file is not a format: SQLite opens a
+ * zero-length file as an empty database, and a log that has never been appended to
+ * is a log, so either backend may claim it without losing anything.
+ * @param {string} path
+ * @returns {Promise<'missing' | 'empty' | 'sqlite' | 'jsonl'>}
+ */
+export async function storeFormat(path) {
+  /** @type {import('node:fs/promises').FileHandle | undefined} */
+  let handle;
+  try {
+    handle = await open(path, 'r');
+  } catch (error) {
+    if (/** @type {{code?: string}} */ (error)?.code === 'ENOENT') return 'missing';
+    throw error;
+  }
+  try {
+    const bytes = Buffer.alloc(SQLITE_HEADER.length);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    if (bytesRead === 0) return 'empty';
+    // A short file is never a database: a real one carries a 100-byte header.
+    if (bytesRead < SQLITE_HEADER.length) return 'jsonl';
+    return bytes.toString('utf8') === SQLITE_HEADER ? 'sqlite' : 'jsonl';
+  } finally {
+    await handle.close();
   }
 }
 
@@ -572,5 +623,15 @@ export async function createStore(file, options = {}) {
     if (!sqlite) throw new Error(`The sqlite backend needs a runtime that provides node:sqlite; node ${process.versions.node} does not, and was asked for it explicitly, so no fallback was used.`);
     return createSqliteStore(path, sqlite);
   }
-  return sqlite ? createSqliteStore(path, sqlite) : createLogStore(path);
+  // An existing log keeps its backend even where SQLite is available: a store an
+  // operator already holds records in must not change format because the runtime
+  // changed underneath it. Everything else - a new path, an empty file, and a file
+  // that is already a database - is served by whichever backend can serve it.
+  const format = await storeFormat(path);
+  if (format === 'jsonl') return createLogStore(path);
+  if (sqlite) return createSqliteStore(path, sqlite);
+  if (format === 'sqlite') {
+    throw new Error(`The store at ${path} is a SQLite database and node ${process.versions.node} cannot read it: node:sqlite needs Node 22.5 or newer, and a runtime that disabled the module with --no-experimental-sqlite reports the import as absent without saying why. Refusing to open it as a log, which would answer with an empty audit trail instead of an error; run the service on a runtime that provides node:sqlite, or move this database aside and start a fresh log.`);
+  }
+  return createLogStore(path);
 }

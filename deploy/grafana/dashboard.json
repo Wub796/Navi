@@ -1,0 +1,166 @@
+{
+  "title": "Navi — browser-agent bridge and telemetry host",
+  "uid": "navi-overview",
+  "description": "One dashboard for both Navi services: the MCP bridge's containment and session metrics, and the ingestion host's request, rate-limit, retention and store metrics. Every panel reads a series the services actually export on their unauthenticated /metrics endpoints; nothing here is a placeholder.",
+  "tags": ["navi", "browser-agents"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "description": "Select the Prometheus that scrapes both Navi /metrics endpoints. Every panel binds to this variable, so an imported dashboard needs no per-panel editing.",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "hide": 0,
+        "skipUrlSync": false,
+        "current": { "selected": false, "text": "Prometheus", "value": "Prometheus" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Scrape targets up",
+      "description": "Prometheus-synthesized `up`, one series per configured Navi target. 0 means the service is not answering /metrics at all, which is also what its container healthcheck probes.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "sum(up)", "legendFormat": "targets" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Containment enforced",
+      "description": "1 while the private-network policy is active, 0 once NAVI_ALLOW_LOCAL_NETWORK=1 disabled it. Anything other than 1 on a deployment that serves untrusted agents is a dropped control; NaviContainmentEnforcementDisabled alerts on it.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "navi_containment_enforced", "legendFormat": "enforced" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "mappings": [{ "type": "value", "options": { "0": { "text": "off" }, "1": { "text": "on" } } }]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "MCP sessions (open vs ceiling)",
+      "description": "navi_mcp_sessions against its configured ceiling. A dashboard that only showed the open count could not tell quiet from saturated. Every session is a real Chromium, so size the ceiling against the container's memory limit.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 7, "x": 9, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "navi_mcp_sessions", "legendFormat": "open" },
+        { "refId": "B", "expr": "navi_mcp_sessions_max", "legendFormat": "ceiling" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" } }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Refusals per second by category",
+      "description": "The rate view of the containment counter, split by the category the MCP service classified: metadata_endpoint, private_ipv4, loopback_or_local, cgnat_or_multicast, ipv6_special or dns_rebinding_rejected. A steady rate is an agent probing; a single spike is usually a fixture the deployment forgot to allow.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "sum by (category) (rate(navi_containment_violations[5m]))", "legendFormat": "{{category}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "stacking": { "mode": "normal" } } }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Containment violations by category (cumulative)",
+      "description": "navi_containment_violations is a process-lifetime counter per category, so this panel resets whenever the MCP service restarts. Read it for the shape of the audit trail; read the rate panel for what is happening now.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 10, "x": 0, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (category) (navi_containment_violations)", "legendFormat": "{{category}}" },
+        { "refId": "B", "expr": "navi_containment_violations_total", "legendFormat": "total" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" } }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Host request throughput by route and status",
+      "description": "Rate of navi_host_requests_total, labelled by the closed route set and the status the host answered. This is also the closest thing to a latency signal that exists: no latency histogram is exported yet, so a route whose throughput collapses while its error rate rises is the observable symptom, not a p99.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 14, "x": 10, "y": 8 },
+      "targets": [{ "refId": "A", "expr": "sum by (route, status) (rate(navi_host_requests_total[5m]))", "legendFormat": "{{route}} {{status}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" } }, "overrides": [] }
+    },
+    {
+      "id": 7,
+      "type": "gauge",
+      "title": "Store bytes on disk",
+      "description": "navi_host_store_bytes is the size of the active store file: the SQLite database, or the append-only JSONL log when the runtime fell back to it. Watch it against the volume it lives on, and against navi_host_pruned_records_total - growth with no prunes is a retention problem, not a traffic problem.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 7, "x": 0, "y": 16 },
+      "targets": [{ "refId": "A", "expr": "navi_host_store_bytes", "legendFormat": "{{instance}}" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Retention prunes and records removed",
+      "description": "navi_host_prune_events_total counts every prune invocation - the six-hourly sweep and the tenant maintenance route alike - and navi_host_pruned_records_total what those prunes deleted. A flat event counter over a day means NAVI_RETENTION_DAYS is 0 or the sweep is not running.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 9, "x": 7, "y": 16 },
+      "targets": [
+        { "refId": "A", "expr": "navi_host_prune_events_total", "legendFormat": "prune events" },
+        { "refId": "B", "expr": "navi_host_pruned_records_total", "legendFormat": "records removed" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" } }, "overrides": [] }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Rate-limited tenants",
+      "description": "navi_host_rate_limited_total per tenant: 429s the token bucket emitted on the two ingest routes. A sustained rate means the tenant is genuinely busier than its ceiling, or its forwarder is retrying; because a rate-limited MCP forward counts as failed rather than being retried, it is also a gap in that tenant's audit trail.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 16 },
+      "targets": [{ "refId": "A", "expr": "sum by (tenant_id) (rate(navi_host_rate_limited_total[5m]))", "legendFormat": "{{tenant_id}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" } }, "overrides": [] }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Forwarder queue depth and losses",
+      "description": "The MCP bridge queues each refusal for the host and never blocks the request it describes: forwarded means accepted, failed means the host refused or never answered, dropped means the 256-event backlog was full, and queued is what is waiting now. Any movement in dropped or failed is an audit record the tenant cannot read back.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 23 },
+      "targets": [
+        { "refId": "A", "expr": "navi_containment_forward_queued", "legendFormat": "queued" },
+        { "refId": "B", "expr": "navi_containment_forward_dropped_total", "legendFormat": "dropped" },
+        { "refId": "C", "expr": "navi_containment_forward_failed_total", "legendFormat": "failed" },
+        { "refId": "D", "expr": "navi_containment_forwarded_total", "legendFormat": "forwarded" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" } }, "overrides": [] }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Active tenants in the rate limiter",
+      "description": "navi_host_active_tenants is the current size of the token-bucket map. Buckets are forgotten after ten idle minutes, so this is who is active now, not how many tenants exist - a number that tracks the map rather than the registry is exactly what makes an unbounded-rate-limit bug visible.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 4, "x": 12, "y": 23 },
+      "targets": [{ "refId": "A", "expr": "navi_host_active_tenants", "legendFormat": "tenants" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    }
+  ]
+}

@@ -25,6 +25,9 @@ services:
       NAVI_PORT: '3000'
       NAVI_TENANTS: ${NAVI_TENANTS:?Set NAVI_TENANTS to key:tenantId pairs}
       NAVI_STORE: /data/telemetry.db
+      # Same as the production file: reaches node:sqlite on 22.5-22.12, no-op on
+      # 22.13+ where the module is unflagged. The image sets it too.
+      NODE_OPTIONS: "--experimental-sqlite"
     ports: ['127.0.0.1:3000:3000']
     volumes: [telemetry:/data]
     mem_limit: 256m
@@ -39,6 +42,7 @@ services:
       NAVI_MCP_TOKEN: ${NAVI_MCP_TOKEN:?Set a strong NAVI_MCP_TOKEN}
       NAVI_MCP_MAX_SESSIONS: ${NAVI_MCP_MAX_SESSIONS:-2}
       NAVI_MCP_IDLE_TIMEOUT: ${NAVI_MCP_IDLE_TIMEOUT:-300}
+      NODE_OPTIONS: "--experimental-sqlite"
     ports: ['127.0.0.1:3001:3001']
     security_opt:
       - no-new-privileges:true

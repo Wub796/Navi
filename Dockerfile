@@ -20,6 +20,15 @@ RUN node node_modules/playwright-core/cli.js install --only-shell chromium
 
 FROM base AS runtime
 ENV NODE_ENV=production HOME=/tmp/pwuser NAVI_MODE=host
+# `node:sqlite` is the store's preferred backend and IS importable without this
+# flag from Node 22.13 (nodejs/node#55890), which is what the pinned base is - so
+# on this image the flag is belt-and-braces, not the enabler, and the store's own
+# import is what actually decides. It is still set because it is the supported way
+# to reach the module on 22.5-22.12, it is legal in NODE_OPTIONS on both lines, and
+# an explicit flag is the honest record of the intent. The import emits an
+# ExperimentalWarning at startup wherever it succeeds; that warning is accurate (the
+# module is Stability 1 on Node 22) and is not suppressed here.
+ENV NODE_OPTIONS="--experimental-sqlite"
 # Only playwright-core is needed at runtime: MCP/host have no other external
 # imports. Do not copy the development toolchain, test libraries or tokenizers.
 COPY --from=build /app/node_modules/playwright-core ./node_modules/playwright-core

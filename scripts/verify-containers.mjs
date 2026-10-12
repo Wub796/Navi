@@ -200,6 +200,27 @@ try {
   assert(hostExposition.includes('navi_host_requests_total{route="metrics",status="200"} 1'), 'the host did not count a scrape it answered');
   assert(!hostExposition.includes('http') && !hostExposition.includes(tenantKey) && !hostExposition.includes('container-check'), 'the host exposition must carry no URL, key or tenant identifier');
   record('host-metrics', `${hostRouted.length} request series in ${hostExposition.trim().split('\n').length} lines scraped from the shipped host service`);
+  // The store backend is a runtime capability, not a config flag: node:sqlite has
+  // been importable without --experimental-sqlite since Node 22.13, which is the
+  // pinned base. What has to be proven is that this image reaches the module and
+  // serves a database in WAL mode, rather than quietly falling back to the
+  // append-only log that shares the same path - both are durable, and only one of
+  // them is what the deployment guide promises.
+  const storeHealth = await (await request(`${host}/healthz`)).json();
+  const storeProbe = JSON.parse(compose(['exec', '-T', 'navi-host', 'node', '--input-type=module', '-e', `
+    import { storeFormat } from '/app/server/store.js';
+    import { readFile, readdir } from 'node:fs/promises';
+    const header = (await readFile('/data/telemetry.db')).subarray(0, 16).toString('utf8');
+    console.log(JSON.stringify({
+      format: await storeFormat('/data/telemetry.db'),
+      header: header === 'SQLite format 3\\u0000',
+      files: (await readdir('/data')).sort()
+    }));
+  `]));
+  assert(storeHealth.mode === 'sqlite', `the host reported the ${storeHealth.mode} backend, so node:sqlite was not reached`);
+  assert(storeProbe.format === 'sqlite' && storeProbe.header, `the store file is not a SQLite database: ${JSON.stringify(storeProbe)}`);
+  assert(storeProbe.files.includes('telemetry.db-wal'), `the write-ahead log sidecar is missing, so the store is not in WAL mode: ${JSON.stringify(storeProbe.files)}`);
+  record('sqlite-store', `the host serves the ${storeHealth.mode} backend with the SQLite header and its -wal sidecar present (${storeProbe.files.join(', ')})`);
   // The containment guard is the shipped default, independent of the fixture
   // override this deployment adds: drive stdio MCP in a container that carries
   // no NAVI_ALLOW_LOCAL_NETWORK and require the metadata endpoint to be refused
