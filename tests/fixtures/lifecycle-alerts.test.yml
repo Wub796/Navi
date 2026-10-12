@@ -1,0 +1,78 @@
+# Run with promtool test rules tests/fixtures/lifecycle-alerts.test.yml.
+rule_files:
+  - ../../deploy/prometheus/alerts.yml
+evaluation_interval: 1m
+tests:
+  - name: first scrape detects unclean boots but not clean boots or another target
+    interval: 1m
+    input_series:
+      - series: 'navi_host_unclean_shutdowns_total{job="host",instance="dirty"}'
+        values: '1x11'
+      - series: 'process_start_time_seconds{job="host",instance="dirty"}'
+        values: '0x11'
+      - series: 'navi_mcp_unclean_shutdowns_total{job="mcp",instance="dirty"}'
+        values: '1x11'
+      - series: 'process_start_time_seconds{job="mcp",instance="dirty"}'
+        values: '0x11'
+      - series: 'navi_host_unclean_shutdowns_total{job="host",instance="clean"}'
+        values: '0x11'
+      - series: 'process_start_time_seconds{job="host",instance="clean"}'
+        values: '0x11'
+      - series: 'navi_mcp_unclean_shutdowns_total{job="mcp",instance="missing-start"}'
+        values: '1x11'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: NaviUngracefulShutdown
+        exp_alerts:
+          - exp_labels: {job: host, instance: dirty, severity: warning}
+            exp_annotations: {summary: "Unclean process termination detected", description: "Navi service restarted without completing graceful teardown handlers."}
+          - exp_labels: {job: mcp, instance: dirty, severity: warning}
+            exp_annotations: {summary: "Unclean process termination detected", description: "Navi service restarted without completing graceful teardown handlers."}
+      - eval_time: 10m
+        alertname: NaviUngracefulShutdown
+        exp_alerts: []
+      - eval_time: 0m
+        alertname: NaviProcessUptimeLow
+        exp_alerts:
+          - exp_labels: {job: host, instance: dirty, severity: info}
+            exp_annotations: {summary: "Service recently started or restarted", description: "Instance has been running for less than 2 minutes."}
+          - exp_labels: {job: mcp, instance: dirty, severity: info}
+            exp_annotations: {summary: "Service recently started or restarted", description: "Instance has been running for less than 2 minutes."}
+          - exp_labels: {job: host, instance: clean, severity: info}
+            exp_annotations: {summary: "Service recently started or restarted", description: "Instance has been running for less than 2 minutes."}
+      - eval_time: 2m
+        alertname: NaviProcessUptimeLow
+        exp_alerts: []
+  - name: consecutive dirty boots still alert when the boot counter stays at one
+    interval: 1m
+    input_series:
+      - series: 'navi_mcp_unclean_shutdowns_total{job="mcp",instance="repeated"}'
+        values: '1x21'
+      - series: 'process_start_time_seconds{job="mcp",instance="repeated"}'
+        values: '0x10 660x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NaviUngracefulShutdown
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: NaviUngracefulShutdown
+        exp_alerts:
+          - exp_labels: {job: mcp, instance: repeated, severity: warning}
+            exp_annotations: {summary: "Unclean process termination detected", description: "Navi service restarted without completing graceful teardown handlers."}
+      - eval_time: 21m
+        alertname: NaviUngracefulShutdown
+        exp_alerts: []
+  - name: range increase remains useful without a startup gauge
+    interval: 1m
+    input_series:
+      - series: 'navi_host_unclean_shutdowns_total{job="host",instance="transition"}'
+        values: '0 1x12'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: NaviUngracefulShutdown
+        exp_alerts:
+          - exp_labels: {job: host, instance: transition, severity: warning}
+            exp_annotations: {summary: "Unclean process termination detected", description: "Navi service restarted without completing graceful teardown handlers."}
+      - eval_time: 11m
+        alertname: NaviUngracefulShutdown
+        exp_alerts: []

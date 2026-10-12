@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ import {
   SHUTDOWN_DEADLINE_MS
 } from '../server/index.js';
 import { createStore, sqliteAvailable } from '../server/store.js';
-import { SHUTDOWN_DEADLINE_MS as MCP_SHUTDOWN_DEADLINE_MS } from '../src/mcp/sse.js';
+import { createSseServer, SHUTDOWN_DEADLINE_MS as MCP_SHUTDOWN_DEADLINE_MS } from '../src/mcp/sse.js';
 
 /**
  * Host observability, write-ahead-log lifecycle and process shutdown.
@@ -27,6 +27,8 @@ const binPath = join(root, 'bin/navi-mcp.js');
 
 /** @type {any[]} */
 const started = [];
+/** @type {import('node:child_process').ChildProcess[]} */
+const children = [];
 
 /** @param {string} [suffix] @returns {string} */
 const tempFile = suffix => join(tmpdir(), `navi-lifecycle-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.${suffix}`);
@@ -49,6 +51,10 @@ async function startHost(options = {}) {
 }
 
 test.afterEach(async () => {
+  for (const child of children.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await waitForExit(child);
+  }
   for (const host of started.splice(0)) await host.close();
 });
 
@@ -90,11 +96,13 @@ const waitForExit = (child) => new Promise(resolve => {
  * @returns {Promise<{child: import('node:child_process').ChildProcess, port: number, stderr: () => string, exit: () => Promise<number | string>}>}
  */
 async function startHostCli(storeFile) {
+  const boot = Math.floor(Date.now() / 1000);
   const child = spawn(process.execPath, [join(root, 'server/index.js'), '--host', '127.0.0.1', '--port', '0', '--store', storeFile], {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NAVI_TENANTS: 'key-alpha:tenant-alpha' }
   });
+  children.push(child);
   let stderr = '';
   child.stderr?.on('data', chunk => { stderr += String(chunk); });
   const port = await new Promise((resolve, reject) => {
@@ -108,6 +116,11 @@ async function startHostCli(storeFile) {
     child.once('exit', code => { clearTimeout(timer); reject(new Error(`the host exited early with ${code}; stderr:\n${stderr}`)); });
   });
   expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status, 'the host must answer once it reports its port').toBe(200);
+  const body = await metricsBody(port);
+  const timestamp = Number(seriesLine(body, 'process_start_time_seconds')?.split(' ')[1]);
+  expect(body).toContain('# TYPE process_start_time_seconds gauge');
+  expect(timestamp).toBeGreaterThanOrEqual(boot);
+  expect(timestamp).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
   return { child, port, stderr: () => stderr, exit: () => waitForExit(child) };
 }
 
@@ -293,6 +306,181 @@ test('SIGTERM drains the host CLI, checkpoints the store and exits 0', async () 
   await reopened.close();
 });
 
+for (const backend of ['sqlite', 'log']) {
+  for (const signal of /** @type {const} */ (['SIGTERM', 'SIGINT', 'SIGKILL'])) {
+    test(`${backend}: ${signal} is classified from durable lifecycle state on restart`, async () => {
+      const file = tempFile(backend === 'log' ? 'log' : 'db');
+      const first = await startHostCli(file);
+      const boot = Number(seriesLine(await metricsBody(first.port), 'process_start_time_seconds')?.split(' ')[1]);
+      expect(boot).toBeGreaterThanOrEqual(Math.floor(Date.now() / 1000) - 5);
+      expect(boot).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+      expect(await metricsBody(first.port)).toContain('# TYPE process_start_time_seconds gauge');
+      expect(await metricsBody(first.port)).toContain('navi_host_unclean_shutdowns_total 0');
+      if (backend === 'log') {
+        // Convert the brand-new empty SQLite store into a fresh JSONL fixture,
+        // then start a process that selects log mode from the existing file.
+        first.child.kill('SIGTERM');
+        expect(await first.exit()).toBe(0);
+        await writeFile(file, JSON.stringify({ kind: 'navi_store_meta', violation_sequence: 0 }) + '\n');
+      }
+      const running = backend === 'log' ? await startHostCli(file) : first;
+      if (backend === 'log') expect(running.stderr()).toContain('store: log');
+      expect(await metricsBody(running.port)).toContain('navi_host_unclean_shutdowns_total 0');
+      await expect(stat(`${file}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+      running.child.kill(signal);
+      expect(await running.exit()).toBe(signal === 'SIGKILL' ? 'signal' : 0);
+      if (signal === 'SIGKILL') await expect(stat(`${file}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+      else expect((await stat(`${file}.clean`)).isFile()).toBe(true);
+      const next = await startHostCli(file);
+      expect(await metricsBody(next.port)).toContain(`# TYPE navi_host_unclean_shutdowns_total counter`);
+      expect(await metricsBody(next.port)).toContain(`navi_host_unclean_shutdowns_total ${signal === 'SIGKILL' ? 1 : 0}`);
+      await expect(stat(`${file}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+      if (signal === 'SIGKILL') {
+        // Consecutive crashes must still report 1, not require a prior clean boot.
+        next.child.kill('SIGKILL');
+        await next.exit();
+        const again = await startHostCli(file);
+        expect(await metricsBody(again.port)).toContain('navi_host_unclean_shutdowns_total 1');
+        again.child.kill('SIGTERM');
+        expect(await again.exit()).toBe(0);
+      } else {
+        next.child.kill('SIGTERM');
+        expect(await next.exit()).toBe(0);
+      }
+      const recovered = await startHostCli(file);
+      expect(await metricsBody(recovered.port)).toContain('navi_host_unclean_shutdowns_total 0');
+      recovered.child.kill('SIGTERM');
+      expect(await recovered.exit()).toBe(0);
+    });
+  }
+}
+
+for (const failure of ['checkpoint', 'busy checkpoint', 'close']) {
+  test(`host ${failure} failure never records a clean stop`, async () => {
+    const file = tempFile('db');
+    const store = await createStore(file);
+    const host = await createNaviHostServer({ port: 0, store, retentionDays: 0 });
+    const checkpoint = store.checkpoint.bind(store);
+    const close = store.close.bind(store);
+    if (failure === 'checkpoint') store.checkpoint = async () => { throw new Error('checkpoint failure'); };
+    if (failure === 'busy checkpoint') store.checkpoint = async () => ({ busy: 1, log: 1, checkpointed: 0 });
+    if (failure === 'close') store.close = async () => { await close(); throw new Error('close failure'); };
+    await expect(host.close()).rejects.toThrow(/failure|busy/);
+    await expect(host.close(), 'repeat close must join the same failed teardown').rejects.toThrow(/failure|busy/);
+    await expect(stat(`${file}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+    store.checkpoint = checkpoint;
+    store.close = close;
+    const next = await startHost({ storeFile: file });
+    expect(await metricsBody(next.port)).toContain('navi_host_unclean_shutdowns_total 1');
+  });
+}
+
+/** @param {string} stateFile */
+async function startMcpCli(stateFile) {
+  const boot = Math.floor(Date.now() / 1000);
+  const child = spawn(process.execPath, [binPath, '--transport', 'sse', '--port', '0'], {
+    cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, NAVI_MCP_STATE_FILE: stateFile }
+  });
+  children.push(child);
+  let stderr = '';
+  child.stderr?.on('data', chunk => { stderr += String(chunk); });
+  await expect.poll(() => /SSE transport listening on http:\/\/127\.0\.0\.1:\d+/.test(stderr)).toBe(true);
+  const port = Number(/SSE transport listening on http:\/\/127\.0\.0\.1:(\d+)/.exec(stderr)?.[1]);
+  const body = await metricsBody(port);
+  const startTime = Number(seriesLine(body, 'process_start_time_seconds')?.split(' ')[1]);
+  expect(startTime).toBeGreaterThanOrEqual(boot);
+  expect(startTime).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+  expect(body).toContain('# TYPE process_start_time_seconds gauge');
+  expect(body).toContain('# TYPE navi_mcp_unclean_shutdowns_total counter');
+  return { child, port };
+}
+
+for (const signal of /** @type {const} */ (['SIGTERM', 'SIGINT', 'SIGKILL'])) {
+  test(`MCP ${signal}: first boot, restart, and clean recovery use lifecycle state`, async () => {
+    const stateFile = tempFile('mcp-state');
+    const first = await startMcpCli(stateFile);
+    expect(await metricsBody(first.port)).toContain('navi_mcp_unclean_shutdowns_total 0');
+    expect((await stat(stateFile)).isFile()).toBe(true);
+    await expect(stat(`${stateFile}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+    first.child.kill(signal);
+    expect(await waitForExit(first.child)).toBe(signal === 'SIGKILL' ? 'signal' : 0);
+    if (signal === 'SIGKILL') await expect(stat(`${stateFile}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+    else expect((await stat(`${stateFile}.clean`)).isFile()).toBe(true);
+    const next = await startMcpCli(stateFile);
+    expect(await metricsBody(next.port)).toContain(`navi_mcp_unclean_shutdowns_total ${signal === 'SIGKILL' ? 1 : 0}`);
+    await expect(stat(`${stateFile}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+    next.child.kill('SIGTERM');
+    expect(await waitForExit(next.child)).toBe(0);
+    const recovered = await startMcpCli(stateFile);
+    expect(await metricsBody(recovered.port)).toContain('navi_mcp_unclean_shutdowns_total 0');
+    recovered.child.kill('SIGTERM');
+    expect(await waitForExit(recovered.child)).toBe(0);
+  });
+}
+
+for (const failure of ['rejection', 'timeout', 'earlier disconnect']) {
+  test(`MCP ${failure} during session cleanup leaves lifecycle dirty`, async () => {
+    const stateFile = tempFile('mcp-state');
+    const remote = await createSseServer({
+      port: 0, stateFile, shutdownDeadlineMs: 50,
+      createSession: () => ({ close: () => failure === 'timeout' ? new Promise(() => {}) : Promise.reject(new Error('session cleanup failure')) }),
+      handleMessage: async () => null
+    });
+    const stream = await fetch(`http://127.0.0.1:${remote.port}/sse`);
+    if (failure === 'earlier disconnect') {
+      await stream.body?.cancel();
+      await expect.poll(() => remote.sessions.size).toBe(0);
+    }
+    await expect(remote.close()).rejects.toThrow(/cleanup|finish/);
+    await expect(stat(`${stateFile}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+    const next = await createSseServer({ port: 0, stateFile, createSession: () => ({ close: async () => {} }), handleMessage: async () => null });
+    try { expect(await metricsBody(next.port)).toContain('navi_mcp_unclean_shutdowns_total 1'); }
+    finally { await next.close(); }
+  });
+}
+
+test('host clean marker waits for a background prune and concurrent close callers join', async () => {
+  const file = tempFile('db');
+  const store = await createStore(file);
+  let finishPrune = () => {};
+  const held = new Promise(resolve => { finishPrune = () => resolve({ pruned_count: 0, remaining_count: 0 }); });
+  store.pruneViolations = async () => held;
+  const host = await createNaviHostServer({ port: 0, store, retentionDays: 30 });
+  const closed = host.close();
+  try {
+    expect(host.close()).toBe(closed);
+    await expect(stat(`${file}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+    finishPrune();
+    await closed;
+    expect((await stat(`${file}.clean`)).isFile()).toBe(true);
+  } finally { finishPrune(); await closed; }
+});
+
+test('MCP clean marker waits for successful session cleanup', async () => {
+  const stateFile = tempFile('mcp-state');
+  let finishCleanup = () => {};
+  const held = new Promise(resolve => { finishCleanup = () => resolve(undefined); });
+  const remote = await createSseServer({ port: 0, stateFile, createSession: () => ({ close: () => held }), handleMessage: async () => null });
+  const stream = await fetch(`http://127.0.0.1:${remote.port}/sse`);
+  const closed = remote.close();
+  try {
+    expect(remote.close()).toBe(closed);
+    await expect(stat(`${stateFile}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+    finishCleanup();
+    await closed;
+    expect((await stat(`${stateFile}.clean`)).isFile()).toBe(true);
+  } finally { finishCleanup(); await closed; await stream.body?.cancel(); }
+});
+
+test('a stale clean marker cannot turn a first boot into an unclean event', async () => {
+  const file = tempFile('db');
+  await writeFile(`${file}.clean`, 'clean\n');
+  const host = await startHost({ storeFile: file });
+  expect(await metricsBody(host.port)).toContain('navi_host_unclean_shutdowns_total 0');
+  await expect(stat(`${file}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
 test('a request that is never finished cannot hold the shutdown past its deadline', async () => {
   const cli = await startHostCli(tempFile('db'));
   // A socket that sends an incomplete request is neither idle nor finished, so
@@ -318,7 +506,7 @@ test('SIGTERM over stdio closes the browser and removes its download directory',
   const child = spawn(process.execPath, [binPath], {
     cwd: root,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '1' }
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '1', NAVI_MCP_STATE_FILE: tempFile('mcp-state') }
   });
   let stdout = '';
   let stderr = '';
@@ -347,6 +535,7 @@ test('SIGTERM over stdio closes the browser and removes its download directory',
 });
 
 test('SIGTERM over SSE closes the session and removes its download directory', async () => {
+  const stateFile = tempFile('mcp-state');
   const fixture = await fixtureServer();
   const before = new Set(await downloadDirectories());
   const port = await new Promise(resolve => {
@@ -360,8 +549,9 @@ test('SIGTERM over SSE closes the session and removes its download directory', a
   const child = spawn(process.execPath, [binPath, '--transport', 'sse', '--port', String(port)], {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '1' }
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '1', NAVI_MCP_STATE_FILE: stateFile }
   });
+  children.push(child);
   let stderr = '';
   child.stderr?.on('data', chunk => { stderr += String(chunk); });
   try {
@@ -398,6 +588,7 @@ test('SIGTERM over SSE closes the session and removes its download directory', a
     child.kill('SIGTERM');
     const code = await waitForExit(child);
     expect(code, `the SSE server must exit 0 on SIGTERM; stderr:\n${stderr}`).toBe(0);
+    expect((await stat(`${stateFile}.clean`)).isFile()).toBe(true);
     expect(Date.now() - startedAt).toBeLessThan(SHUTDOWN_DEADLINE_MS + 5000);
     await expect.poll(async () => (await downloadDirectories()).filter(name => !before.has(name))).toEqual([]);
   } finally {

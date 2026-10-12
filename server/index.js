@@ -42,8 +42,11 @@ import { readFile, stat } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createStore, DEFAULT_RETENTION_DAYS, DEFAULT_VIOLATION_LIMIT, MAX_RETENTION_DAYS, MAX_VIOLATION_LIMIT } from './store.js';
+import { beginProcessLifecycle, createStore, DEFAULT_RETENTION_DAYS, DEFAULT_VIOLATION_LIMIT, MAX_RETENTION_DAYS, MAX_VIOLATION_LIMIT } from './store.js';
 import { loadTenants, tenantFor, tenantIds } from './tenants.js';
+
+/** Process boot timestamp, shared by every listener in this process. */
+const START_TIME_SECONDS = Math.floor(Date.now() / 1000);
 
 /** Hard cap for one telemetry beacon body. */
 export const MAX_PAYLOAD_BYTES = 2048;
@@ -581,7 +584,16 @@ export async function createNaviHostServer(options = {}) {
   const host = options.host ?? DEFAULT_HOST;
   const requestedPort = options.port ?? DEFAULT_PORT;
   const tenants = options.tenants ?? loadTenants();
-  const store = options.store ?? (await createStore(options.storeFile ?? resolve(DEFAULT_STORE_FILE)));
+  const storeFile = options.store?.file ?? options.storeFile ?? resolve(DEFAULT_STORE_FILE);
+  const lifecycle = await beginProcessLifecycle(storeFile);
+  const store = options.store ?? (await createStore(storeFile));
+  /** Requests and background writers must finish before the final checkpoint. */
+  const activeTasks = new Set();
+  /** @param {Promise<void>} task */
+  const track = task => {
+    activeTasks.add(task);
+    void task.finally(() => activeTasks.delete(task)).catch(() => {});
+  };
   const sdkPath = options.sdkPath ?? defaultSdkPath();
   const loaderPath = options.loaderPath ?? defaultLoaderPath();
   const integrity = options.integrity === undefined ? await defaultIntegrity() : options.integrity;
@@ -712,6 +724,12 @@ export async function createNaviHostServer(options = {}) {
       lines.push(`navi_host_rate_limited_total{tenant_id="${escapeLabel(tenant)}"} ${rateLimitedByTenant.get(tenant)}`);
     }
     lines.push(
+      '# HELP process_start_time_seconds Process start time in Unix seconds.',
+      '# TYPE process_start_time_seconds gauge',
+      `process_start_time_seconds ${START_TIME_SECONDS}`,
+      '# HELP navi_host_unclean_shutdowns_total Previous store owner did not complete graceful teardown (0 or 1 per boot).',
+      '# TYPE navi_host_unclean_shutdowns_total counter',
+      `navi_host_unclean_shutdowns_total ${lifecycle.uncleanShutdowns}`,
       '# HELP navi_host_prune_events_total Retention prunes executed, scheduled and on demand.',
       '# TYPE navi_host_prune_events_total counter',
       `navi_host_prune_events_total ${pruneEvents}`,
@@ -808,11 +826,11 @@ export async function createNaviHostServer(options = {}) {
       const key = `${route}|${res.statusCode}`;
       requestCounts.set(key, (requestCounts.get(key) ?? 0) + 1);
     });
-    void handle(req, res).catch(error => {
+    track(handle(req, res).catch(error => {
       log(`request failed: ${error instanceof Error ? error.message : String(error)}`);
       if (!res.headersSent) sendError(res, 500, 'INTERNAL_ERROR', 'The host service failed to handle this request.');
       else res.end();
-    });
+    }));
   });
 
   /**
@@ -1192,15 +1210,16 @@ export async function createNaviHostServer(options = {}) {
   // is unref'd: it must never be the reason a process is still alive.
   const retentionTimer = retentionDays > 0 && typeof store.pruneViolations === 'function'
     ? (() => {
-      const timer = setInterval(() => { void sweepRetention(); }, retentionIntervalMs);
+      const timer = setInterval(() => { track(sweepRetention()); }, retentionIntervalMs);
       timer.unref?.();
       return timer;
     })()
     : null;
-  void sweepRetention();
+  track(sweepRetention());
   log(`listening on http://${host}:${boundPort} (store: ${store.mode}, tenants: ${tenants.size}, retention: ${retentionDays > 0 ? `${retentionDays}d` : 'off'}, rate limit: ${limiter.enabled ? `${limiter.perMinute}/min burst ${limiter.burst}` : 'off'})`);
 
-  let closed = false;
+  /** @type {Promise<void> | null} */
+  let closePromise = null;
   return {
     server,
     port: boundPort,
@@ -1209,34 +1228,44 @@ export async function createNaviHostServer(options = {}) {
     tenants,
     limiter,
     retention: { days: retentionDays, intervalMs: retentionIntervalMs },
-    async close() {
-      if (closed) return;
-      closed = true;
-      if (retentionTimer) clearInterval(retentionTimer);
-      limiter.close();
-      // Stop accepting, then give in-flight requests a bounded chance to finish. A
-      // connection that is neither idle nor finished - a client that opened a
-      // socket and stopped mid-request - is destroyed when the deadline passes: a
-      // shutdown one peer can hold open forever is not a shutdown.
-      let timer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
-      const deadline = new Promise(/** @param {(value: string) => void} resolveDeadline */ resolveDeadline => {
-        timer = setTimeout(() => {
-          server.closeAllConnections();
-          resolveDeadline('deadline');
-        }, SHUTDOWN_DEADLINE_MS);
-        timer.unref?.();
-      });
-      const drained = new Promise(/** @param {(value: string) => void} resolveDrained */ resolveDrained => server.close(() => resolveDrained('drained')));
-      const outcome = await Promise.race([drained, deadline]);
-      if (timer) clearTimeout(timer);
-      if (outcome === 'deadline') log(`shutdown deadline of ${SHUTDOWN_DEADLINE_MS}ms passed with connections still open; they were closed`);
-      // The store is flushed last, so no request can append behind the checkpoint.
-      try {
-        if (typeof store.checkpoint === 'function') await store.checkpoint({ truncate: true });
-      } catch (error) {
-        log(`final checkpoint failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      await store.close();
+    close() {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        if (retentionTimer) clearInterval(retentionTimer);
+        limiter.close();
+        // Stop accepting, then give in-flight requests a bounded chance to finish. A
+        // connection that is neither idle nor finished - a client that opened a
+        // socket and stopped mid-request - is destroyed when the deadline passes: a
+        // shutdown one peer can hold open forever is not a shutdown.
+        let timer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+        const deadline = new Promise(/** @param {(value: string) => void} resolveDeadline */ resolveDeadline => {
+          timer = setTimeout(() => {
+            server.closeAllConnections();
+            resolveDeadline('deadline');
+          }, SHUTDOWN_DEADLINE_MS);
+          timer.unref?.();
+        });
+        const drained = new Promise(/** @param {(value: string) => void} resolveDrained */ resolveDrained => server.close(() => resolveDrained('drained')));
+        const outcome = await Promise.race([drained, deadline]);
+        if (timer) clearTimeout(timer);
+        if (outcome === 'deadline') log(`shutdown deadline of ${SHUTDOWN_DEADLINE_MS}ms passed with connections still open; they were closed`);
+        // HTTP close alone does not join handlers already awaiting a store write,
+        // or the scheduled prune. Neither may write behind the final checkpoint.
+        await drained;
+        await Promise.all([...activeTasks]);
+        // Always release the store, even on checkpoint failure, but never write a
+        // clean marker for a failed or busy final checkpoint.
+        try {
+          if (typeof store.checkpoint === 'function') {
+            const checkpoint = await store.checkpoint({ truncate: true });
+            if (checkpoint.busy !== 0) throw new Error('final checkpoint was busy');
+          }
+        } finally {
+          await store.close();
+        }
+        await lifecycle.markClean();
+      })();
+      return closePromise;
     }
   };
 }

@@ -8,6 +8,7 @@ playwright-report/
 # Runtime store for the ingestion service (SQLite file plus its sidecars, or the
 # append-only log fallback at the same path). Never commit tenant telemetry.
 server/telemetry.db*
+server/telemetry.log.clean*
 
 # Credentials. An exported MCP bearer token is a working key to a browser driver,
 # and a storageState.json holds live cookies and session tokens.

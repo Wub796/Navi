@@ -81,14 +81,19 @@ To keep the audit trail past the life of the process, set `NAVI_TELEMETRY_ENDPOI
 
 ## Alerting and dashboards
 
-[deploy/prometheus/alerts.yml](../deploy/prometheus/alerts.yml) is a Prometheus rules file over the two expositions: containment refusals per category, the forwarder queue losing audit events, host rate-limit pressure, a retention sweep that has stopped, MCP session saturation, an unreachable target, and a restart loop. [deploy/grafana/dashboard.json](../deploy/grafana/dashboard.json) is a dashboard that binds every panel to a single datasource template variable, so importing it needs no per-panel editing.
+[deploy/prometheus/alerts.yml](../deploy/prometheus/alerts.yml) is a Prometheus rules file over the two expositions: containment refusals per category, the forwarder queue losing audit events, host rate-limit pressure, a retention sweep that has stopped, MCP session saturation, an unreachable target, state-based unclean shutdowns, and recent process starts. [deploy/grafana/dashboard.json](../deploy/grafana/dashboard.json) is a dashboard that binds every panel to a single datasource template variable, so importing it needs no per-panel editing.
 
 ```sh
 promtool check rules deploy/prometheus/alerts.yml
+promtool test rules tests/fixtures/lifecycle-alerts.test.yml
 # prometheus.yml: rule_files: [alerts.yml]
 ```
 
-Both files are checked by `npm test` against the metric names the running services declare, so a renamed series fails the suite instead of failing to page someone. Two limits are recorded in the files themselves rather than left for an operator to discover: neither exposition has a latency histogram, so the throughput panel says it is a proxy, and nothing exports a process-start or exit-code series, so the restart-loop rule infers restarts from counter resets — it can see that the service keeps coming back, not why it left.
+Both files are checked by `npm test` against the metric names the running services declare and the Prometheus PromQL grammar. `promtool` fixtures additionally evaluate first-scrape, consecutive-crash, clean-start, target-matching and expiry behavior. Neither exposition has a latency histogram, so the throughput panel remains a proxy.
+
+Lifecycle metrics do not infer crashes from request-counter resets. Both services expose `process_start_time_seconds`; the host and MCP expose `navi_host_unclean_shutdowns_total` / `navi_mcp_unclean_shutdowns_total` (0 or 1 per boot). The host uses its persistent store plus `${store.file}.clean`. MCP defaults to `/tmp/navi-mcp-state` (dirty evidence) and `/tmp/navi-mcp-state.clean` (successful teardown), and supports `NAVI_MCP_STATE_FILE` for an exclusive persistent path. First boot is 0, an existing dirty state is 1, and clean markers are removed before accepting traffic. Session cleanup failures or deadline expiry never publish a clean marker.
+
+**Persistence boundary:** the production Compose `/tmp` is a tmpfs and is lost on container stop/replacement. The default MCP path therefore detects process restarts only while those files survive; to observe container restarts, place `NAVI_MCP_STATE_FILE` on a persistent mounted volume owned by `pwuser`. Do not share one state path between replicas. These sentinels attest completed handlers, not an OS exit code or host power-loss durability. A scrape must observe the new process within ten minutes for the startup-aware warning to fire.
 
 ## Verify the delivered container
 

@@ -360,11 +360,14 @@ function createSqliteStore(path, sqlite) {
     async close() {
       if (closed) return;
       closed = true;
-      // A clean stop checkpoints the write-ahead log and lets SQLite remove its
-      // sidecars. Best effort on purpose: a store that cannot checkpoint must
-      // still close, and the sidecars are recovered from on the next open.
-      try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* recovery on the next open */ }
-      db.close();
+      // Always release the connection, but a failed/busy checkpoint must remain
+      // visible to the owner: swallowing it would permit a false clean marker.
+      try {
+        const row = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+        if (asNumber(row?.busy) !== 0) throw new Error('store close checkpoint was busy');
+      } finally {
+        db.close();
+      }
     }
   };
 }
@@ -596,7 +599,52 @@ function createLogStore(path) {
       });
     },
     async close() {
-      // Nothing to release: every append is already durable.
+      // Join queued writes/compaction before the owner can mark its stop clean.
+      await tail;
+    }
+  };
+}
+
+/**
+ * Consume the previous owner's clean marker before accepting work. One process
+ * must own each state path. Only ENOENT means first boot; I/O failures abort startup.
+ * MCP creates a dirty file because it has no telemetry database to prove a boot.
+ * @param {string} file
+ * @param {{createState?: boolean}} [options]
+ * @returns {Promise<{uncleanShutdowns: number, markClean(): Promise<void>}>}
+ */
+export async function beginProcessLifecycle(file, options = {}) {
+  const path = resolve(file);
+  await mkdir(dirname(path), { recursive: true });
+  const exists = async (/** @type {string} */ target) => {
+    try { await stat(target); return true; }
+    catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') return false;
+      throw error;
+    }
+  };
+  const existed = await exists(path);
+  const clean = await exists(`${path}.clean`);
+  await rm(`${path}.clean`, { force: true });
+  if (options.createState) {
+    const handle = await open(path, 'a', 0o600);
+    try { await handle.sync(); } finally { await handle.close(); }
+  }
+  return {
+    uncleanShutdowns: existed && !clean ? 1 : 0,
+    async markClean() {
+      // Publish only a complete, flushed marker. SIGKILL during its write must
+      // not leave a partially-written .clean file that the next boot trusts.
+      const temporary = `${path}.clean.tmp`;
+      const handle = await open(temporary, 'w', 0o600);
+      try {
+        try { await handle.writeFile('clean\n'); await handle.sync(); }
+        finally { await handle.close(); }
+        await rename(temporary, `${path}.clean`);
+      } catch (error) {
+        await rm(temporary, { force: true });
+        throw error;
+      }
     }
   };
 }

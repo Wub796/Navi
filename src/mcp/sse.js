@@ -27,6 +27,9 @@
 // only — never a refused URL or a session identifier.
 import { createServer } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { beginProcessLifecycle } from '../../server/store.js';
+
+const START_TIME_SECONDS = Math.floor(Date.now() / 1000);
 import { containmentForwardingMetrics, containmentMetrics } from './containment.js';
 
 /** Default port for the remote transport. */
@@ -80,12 +83,18 @@ function sendText(res, status, text, contentType) {
  * Containment counters and the session gauge in the Prometheus text format. The
  * categories are sorted so a scrape diff shows real movement rather than a
  * reordered exposition.
- * @param {number} sessionCount @param {number} sessionCeiling @returns {string}
+ * @param {number} sessionCount @param {number} sessionCeiling @param {number} uncleanShutdowns @returns {string}
  */
-function prometheusMetrics(sessionCount, sessionCeiling) {
+function prometheusMetrics(sessionCount, sessionCeiling, uncleanShutdowns) {
   const { containment } = containmentMetrics();
   const forwarding = containmentForwardingMetrics();
   const lines = [
+    '# HELP process_start_time_seconds Process start time in Unix seconds.',
+    '# TYPE process_start_time_seconds gauge',
+    `process_start_time_seconds ${START_TIME_SECONDS}`,
+    '# HELP navi_mcp_unclean_shutdowns_total Previous SSE owner did not complete graceful teardown (0 or 1 per boot).',
+    '# TYPE navi_mcp_unclean_shutdowns_total counter',
+    `navi_mcp_unclean_shutdowns_total ${uncleanShutdowns}`,
     '# HELP navi_containment_enforced 1 while the private-network policy is active, 0 when NAVI_ALLOW_LOCAL_NETWORK=1 disabled it.',
     '# TYPE navi_containment_enforced gauge',
     `navi_containment_enforced ${containment.enforced ? 1 : 0}`,
@@ -209,6 +218,8 @@ function readBody(req, limit) {
  * @param {number} [options.maxSessions] Concurrent streams allowed.
  * @param {number} [options.idleTimeoutMs] 0 disables idle reaping.
  * @param {number} [options.sessionMaxTtlMs] May shorten, never extend the hard TTL.
+ * @param {string} [options.stateFile] Exclusive lifecycle state path; defaults to /tmp/navi-mcp-state.
+ * @param {number} [options.shutdownDeadlineMs] May shorten the teardown deadline for embedded callers.
  * @returns {Promise<{ server: import('node:http').Server, port: number, host: string, sessions: Map<string, SseSession>, close: () => Promise<void> }>}
  */
 export async function createSseServer(options) {
@@ -222,7 +233,13 @@ export async function createSseServer(options) {
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const sessionMaxTtlMs = options.sessionMaxTtlMs ?? SESSION_MAX_TTL_MS;
   if (!Number.isInteger(sessionMaxTtlMs) || sessionMaxTtlMs < 1 || sessionMaxTtlMs > SESSION_MAX_TTL_MS) throw new Error('Session TTL must be between 1 and 1800000ms');
+  const shutdownDeadlineMs = Math.min(SHUTDOWN_DEADLINE_MS, Math.max(1, options.shutdownDeadlineMs ?? SHUTDOWN_DEADLINE_MS));
+  const lifecycle = await beginProcessLifecycle(options.stateFile ?? process.env.NAVI_MCP_STATE_FILE ?? '/tmp/navi-mcp-state', { createState: true });
   const cleanupTasks = new Set();
+  /** Remember even failed disconnect cleanups already removed from the registry. */
+  let cleanupFailure = /** @type {unknown} */ (null);
+  /** @type {Promise<void> | null} */
+  let closePromise = null;
   let stopping = false;
   /** @type {Map<string, SseSession>} */
   const sessions = new Map();
@@ -246,6 +263,7 @@ export async function createSseServer(options) {
     try { closing = entry.session.close?.(); } catch (error) { closing = Promise.reject(error); }
     entry.cleanup = Promise.resolve(closing).catch(error => {
       log(`sse session cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      cleanupFailure ??= error;
       throw error;
     }).finally(() => {
       sessions.delete(entry.id);
@@ -409,7 +427,7 @@ export async function createSseServer(options) {
     if (req.method === 'GET' && url.pathname === '/metrics') {
       // A scraper asking for OpenMetrics text gets the same body: the counters it
       // reads are identical, and the version parameter names the format served.
-      sendText(res, 200, prometheusMetrics(sessions.size, maxSessions), 'text/plain; version=0.0.4; charset=utf-8');
+      sendText(res, 200, prometheusMetrics(sessions.size, maxSessions, lifecycle.uncleanShutdowns), 'text/plain; version=0.0.4; charset=utf-8');
       return;
     }
 
@@ -440,28 +458,34 @@ export async function createSseServer(options) {
     port: boundPort,
     host,
     sessions,
-    close: async () => {
-      stopping = true;
-      for (const entry of [...sessions.values()]) release(entry, 'server shutdown');
-      // Every session has been asked to close, which is what terminates its browser
-      // and removes its download directory. The join is bounded: a cleanup that does
-      // not finish in time is reported and abandoned, because a stop that one wedged
-      // browser can hold open is not a stop.
-      const results = await Promise.race([
-        Promise.allSettled([...cleanupTasks]),
-        new Promise(/** @param {(value: null) => void} resolve */ resolve => {
-          const timer = setTimeout(() => resolve(null), SHUTDOWN_DEADLINE_MS);
-          timer.unref?.();
-        })
-      ]);
-      server.closeAllConnections();
-      await new Promise(/** @param {(value?: void) => void} resolve */ resolve => server.close(() => resolve()));
-      if (!Array.isArray(results)) {
-        log(`browser cleanup did not finish within ${SHUTDOWN_DEADLINE_MS}ms; shutting the transport down anyway`);
-        return;
-      }
-      const failed = results.find(result => result.status === 'rejected');
-      if (failed?.status === 'rejected') throw failed.reason;
+    close: () => {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        stopping = true;
+        for (const entry of [...sessions.values()]) release(entry, 'server shutdown');
+        // Every session has been asked to close, which is what terminates its browser
+        // and removes its download directory. The join is bounded: a cleanup that does
+        // not finish in time is reported and abandoned, because a stop that one wedged
+        // browser can hold open is not a stop.
+        let timer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+        const results = await Promise.race([
+          Promise.allSettled([...cleanupTasks]),
+          new Promise(/** @param {(value: null) => void} resolve */ resolve => {
+            timer = setTimeout(() => resolve(null), shutdownDeadlineMs);
+          })
+        ]);
+        if (timer) clearTimeout(timer);
+        server.closeAllConnections();
+        await new Promise(/** @param {(value?: void) => void} resolve */ resolve => server.close(() => resolve()));
+        if (!Array.isArray(results)) {
+          throw new Error(`browser cleanup did not finish within ${shutdownDeadlineMs}ms; transport stopped without a clean marker`);
+        }
+        const failed = results.find(result => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+        if (cleanupFailure !== null) throw cleanupFailure;
+        await lifecycle.markClean();
+      })();
+      return closePromise;
     }
   };
 }

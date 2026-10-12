@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { parser } from '@prometheus-io/lezer-promql';
 import { createNaviHostServer } from '../server/index.js';
 import { createSseServer } from '../src/mcp/sse.js';
 import { NaviSession } from '../src/mcp/server.js';
@@ -24,7 +25,7 @@ const dashboardPath = join(root, 'deploy/grafana/dashboard.json');
 const PROMETHEUS_BUILTINS = ['up'];
 
 /** The rule names the runbook refers to, so a rewrite cannot quietly drop one. */
-const REQUIRED_ALERTS = ['NaviContainmentBreachAttempt', 'NaviForwarderQueueSaturated', 'NaviTenantRateLimitSpike', 'NaviUngracefulShutdown'];
+const REQUIRED_ALERTS = ['NaviContainmentBreachAttempt', 'NaviForwarderQueueSaturated', 'NaviTenantRateLimitSpike', 'NaviUngracefulShutdown', 'NaviProcessUptimeLow'];
 /** The panel intents the operations section documents. */
 const REQUIRED_PANELS = ['navi_mcp_sessions', 'navi_containment_violations', 'navi_host_requests_total', 'navi_host_store_bytes'];
 
@@ -51,6 +52,7 @@ async function exportedMetricNames() {
     remote = await createSseServer({
       host: '127.0.0.1',
       port: 0,
+      stateFile: join(tmpdir(), `navi-alerts-mcp-${process.pid}-${Date.now()}`),
       log: () => {},
       handleMessage: async () => null,
       authToken: '',
@@ -69,13 +71,13 @@ async function exportedMetricNames() {
 
 /** The `navi_*` identifiers an expression or a panel query references.
  * @param {string} expression @returns {string[]} */
-const referenced = expression => [...expression.matchAll(/\bnavi_[a-z0-9_]+/g)].map(match => match[0]);
+const referenced = expression => [...expression.matchAll(/\b(?:navi_[a-z0-9_]+|process_start_time_seconds|up)\b/g)].map(match => match[0]);
 
 /** @param {string[]} expressions @param {Set<string>} exported @param {string} where */
 function assertKnownSeries(expressions, exported, where) {
   for (const expression of expressions) {
     for (const name of referenced(expression)) {
-      expect(exported.has(name), `${where} references ${name}, which no service declares in its exposition: ${expression}`).toBe(true);
+      expect(exported.has(name) || PROMETHEUS_BUILTINS.includes(name), `${where} references ${name}, which no service declares in its exposition: ${expression}`).toBe(true);
     }
   }
 }
@@ -90,10 +92,50 @@ function assertKnownSeries(expressions, exported, where) {
  * @returns {string[]} counter names read without a window
  */
 function unwindowedCounters(expression) {
+  // Only these 0/1 boot counters may use a direct comparison, and only inside
+  // the exact uptime-bounded branch that expires. A bare threshold still fails.
+  expression = expression.replace(/\(navi_(?:host|mcp)_unclean_shutdowns_total == 1 and \(time\(\) - process_start_time_seconds\) < 600\)/g, '');
   return [...expression.matchAll(/\bnavi_[a-z0-9_]+_total\b/g)]
     .filter(match => !/increase\(|rate\(|resets\(/.test(expression.slice(Math.max(0, (match.index ?? 0) - 24), match.index ?? 0)))
     .map(match => match[0]);
 }
+
+/** Parse with Prometheus's own UI grammar, not balanced-parenthesis guesses.
+ * @param {string} expression @returns {string[]} */
+function syntaxErrors(expression) {
+  /** @type {string[]} */
+  const errors = [];
+  parser.parse(expression).iterate({ enter(node) {
+    if (node.type.isError) errors.push(expression.slice(node.from, node.to) || `at ${node.from}`);
+  } });
+  return errors;
+}
+
+test('the PromQL syntax validator rejects invalid expressions and unbounded boot comparisons', () => {
+  expect(syntaxErrors('increase(navi_host_unclean_shutdowns_total[10m]) > 0')).toEqual([]);
+  expect(syntaxErrors('increase(navi_host_unclean_shutdowns_total[10m] >')).not.toEqual([]);
+  expect(unwindowedCounters('navi_host_unclean_shutdowns_total == 1')).toEqual(['navi_host_unclean_shutdowns_total']);
+  expect(unwindowedCounters('(navi_host_unclean_shutdowns_total == 1 and (time() - process_start_time_seconds) < 600)')).toEqual([]);
+});
+
+test('lifecycle alerts retain range increases and cover first-scrape and consecutive-crash boots', async () => {
+  const document = parse(await readFile(alertsPath, 'utf8'));
+  /** @type {any[]} */
+  const rules = document.groups.flatMap((/** @type {any} */ group) => group.rules);
+  const unclean = rules.find(rule => rule.alert === 'NaviUngracefulShutdown');
+  for (const service of ['host', 'mcp']) {
+    expect(unclean.expr).toContain(`increase(navi_${service}_unclean_shutdowns_total[10m]) > 0`);
+    expect(unclean.expr).toContain(`(navi_${service}_unclean_shutdowns_total == 1 and (time() - process_start_time_seconds) < 600)`);
+  }
+  expect(unclean.expr).not.toContain('resets(');
+  expect(unclean.labels.severity).toBe('warning');
+  expect(unclean.for).toBe('0m');
+  expect(unclean.annotations.summary).toBe('Unclean process termination detected');
+  const uptime = rules.find(rule => rule.alert === 'NaviProcessUptimeLow');
+  expect(uptime.expr).toBe('(time() - process_start_time_seconds) < 120');
+  expect(uptime.for).toBe('0m');
+  expect(uptime.labels.severity).toBe('info');
+});
 
 test('every alert rule is well formed and reads series the services export', async () => {
   const exported = await exportedMetricNames();
@@ -111,6 +153,7 @@ test('every alert rule is well formed and reads series the services export', asy
       expect(typeof rule?.alert, `${group.name} has a rule without an alert name`).toBe('string');
       expect(typeof rule?.expr, `${rule.alert} has no expression`).toBe('string');
       expect(rule.expr.trim().length, `${rule.alert} has an empty expression`).toBeGreaterThan(0);
+      expect(syntaxErrors(rule.expr), `${rule.alert} has invalid PromQL`).toEqual([]);
       // A severity the runbook routes on, and an annotation a responder can act on.
       expect(['critical', 'warning', 'info'], `${rule.alert} has an unroutable severity`).toContain(rule?.labels?.severity);
       expect(typeof rule?.annotations?.summary, `${rule.alert} has no summary`).toBe('string');
@@ -193,6 +236,7 @@ test('the dashboard imports without per-panel editing and reads only real series
     for (const target of panel.targets) {
       expect(typeof target?.expr, `panel "${panel.title}" has a target without an expression`).toBe('string');
       expect(target.expr.trim().length).toBeGreaterThan(0);
+      expect(syntaxErrors(target.expr), `panel ${panel.title} has invalid PromQL`).toEqual([]);
       expect(typeof target?.refId, `panel "${panel.title}" has a target without a refId`).toBe('string');
       expressions.push(target.expr);
     }
@@ -233,6 +277,7 @@ test('both expositions are scrapeable without credentials, which is what a rule 
     remote = await createSseServer({
       host: '127.0.0.1',
       port: 0,
+      stateFile: join(tmpdir(), `navi-alerts-mcp-${process.pid}-${Date.now()}`),
       log: () => {},
       handleMessage: async () => null,
       // A token is deliberately configured: the scraper must still be let in, or

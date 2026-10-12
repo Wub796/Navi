@@ -12,7 +12,10 @@
 #   promtool check rules alerts.yml             # syntax and expression check
 #
 # The `up` series used by NaviServiceDown is synthesized by Prometheus itself from
-# each scrape target; it is the only non-`navi_*` series any rule depends on.
+# each scrape target; process_start_time_seconds is exported by both services.
+# Lifecycle state needs an exclusive, persistent path across restarts. The MCP
+# default is /tmp/navi-mcp-state[.clean]; mount persistent storage there or set
+# NAVI_MCP_STATE_FILE to a persistent volume path to detect container replacement.
 
 groups:
   # A refusal is the security boundary doing its job, so it is warned about rather
@@ -173,23 +176,26 @@ groups:
             probes /healthz on the same listener, so check the container state too.
 
       - alert: NaviUngracefulShutdown
-        # There is no exit-code or process-start series to alert on yet, so a restart
-        # is detected from the outside: a process-lifetime counter that resets means a
-        # new process began. One reset is a deliberate restart or deploy - which is
-        # why this needs more than two inside the window before it fires - and that is
-        # also the honest limit of this rule: it cannot tell a clean SIGTERM exit from
-        # a crash, only that the service keeps coming back.
+        # Boot counters are 0/1: increase alone misses a first scrape at 1 or
+        # consecutive unclean boots (1 -> 1). The uptime-bound branches catch
+        # those cases and expire after ten minutes, not forever after one event.
         expr: >-
-          resets(navi_host_requests_total[15m]) > 2
-          or resets(navi_containment_violations_total[15m]) > 2
+          increase(navi_host_unclean_shutdowns_total[10m]) > 0
+          or increase(navi_mcp_unclean_shutdowns_total[10m]) > 0
+          or (navi_host_unclean_shutdowns_total == 1 and (time() - process_start_time_seconds) < 600)
+          or (navi_mcp_unclean_shutdowns_total == 1 and (time() - process_start_time_seconds) < 600)
         for: 0m
         labels:
           severity: warning
         annotations:
-          summary: "Navi is restarting repeatedly on {{ $labels.instance }}"
-          description: >-
-            The process-lifetime counters reset more than twice in 15 minutes, which
-            is what a crash or restart loop looks like from the scrape side. Check
-            `docker inspect` for the exit code and whether the last stop finished
-            inside the 5-second shutdown deadline; a stop that is killed by the
-            runtime's timeout shows up as a SIGKILL exit.
+          summary: "Unclean process termination detected"
+          description: "Navi service restarted without completing graceful teardown handlers."
+
+      - alert: NaviProcessUptimeLow
+        expr: (time() - process_start_time_seconds) < 120
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "Service recently started or restarted"
+          description: "Instance has been running for less than 2 minutes."

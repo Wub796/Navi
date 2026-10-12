@@ -111,7 +111,7 @@ async function completeSettle(page, plan, targetId, prepared) {
       if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: 0 };
       const started = Date.now();
       while (Date.now() - started < plan.timeoutMs) {
-        await new Promise((resolve2) => setTimeout(resolve2, NAVIGATION_POLL_MS));
+        await new Promise((resolve3) => setTimeout(resolve3, NAVIGATION_POLL_MS));
         if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: Date.now() - started };
         try {
           const token = await page.evaluate(() => (
@@ -145,7 +145,7 @@ async function completeSettle(page, plan, targetId, prepared) {
               const now = performance.now();
               if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start };
               if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: "timeout" };
-              await new Promise((resolve2) => setTimeout(resolve2, Math.min(50, Math.max(1, deadline - now))));
+              await new Promise((resolve3) => setTimeout(resolve3, Math.min(50, Math.max(1, deadline - now))));
             }
           } finally {
             for (const observer of state.observers) observer.disconnect();
@@ -172,7 +172,7 @@ async function completeSettle(page, plan, targetId, prepared) {
           const hidden = action ? !action.state.is_visible || action.state.is_occluded : !map.truncated;
           if (hidden) return { settled: true, elapsedMs: performance.now() - start };
           if (performance.now() >= deadline) return { settled: false, elapsedMs: performance.now() - start, reason: "timeout" };
-          await new Promise((resolve2) => setTimeout(resolve2, arg.pollMs));
+          await new Promise((resolve3) => setTimeout(resolve3, arg.pollMs));
         }
       }, { targetId, timeoutMs: plan.timeoutMs, pollMs: TARGET_POLL_MS })
     );
@@ -415,7 +415,7 @@ var init_adapter = __esm({
 
 // src/mcp/server.js
 import { createHash, randomUUID as randomUUID3 } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm as rm2 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -650,7 +650,7 @@ async function containedGet(value, allowLocalNetwork, options = {}) {
     if (remaining <= 0) throw containmentError("Runtime request timed out");
     const response = await new Promise(
       /** @param {(value: {status: number, headers: import('node:http').IncomingHttpHeaders, bytes: Buffer, url: string}) => void} resolve @param {(error: Error) => void} reject */
-      (resolve2, reject) => {
+      (resolve3, reject) => {
         const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
           agent: false,
           lookup: (_host, _options, callback) => callback(null, address, family),
@@ -668,7 +668,7 @@ async function containedGet(value, allowLocalNetwork, options = {}) {
             else chunks.push(chunk);
           });
           incoming.on("error", reject);
-          incoming.on("end", () => resolve2({ status: incoming.statusCode ?? 502, headers: incoming.headers, bytes: Buffer.concat(chunks), url: url.href }));
+          incoming.on("end", () => resolve3({ status: incoming.statusCode ?? 502, headers: incoming.headers, bytes: Buffer.concat(chunks), url: url.href }));
         });
         request.on("error", reject);
         request.end();
@@ -776,9 +776,9 @@ ${CONTAINMENT_CODE}`);
   server.on("clientError", (_error, socket) => socket.destroy());
   await new Promise(
     /** @param {(value?: void) => void} resolve @param {(error: Error) => void} reject */
-    (resolve2, reject) => {
+    (resolve3, reject) => {
       server.once("error", reject);
-      server.listen(0, "127.0.0.1", resolve2);
+      server.listen(0, "127.0.0.1", resolve3);
     }
   );
   const address = server.address();
@@ -790,8 +790,8 @@ ${CONTAINMENT_CODE}`);
       for (const socket of sockets) socket.destroy();
       await new Promise(
         /** @param {(value?: void) => void} resolve */
-        (resolve2) => {
-          server.close(() => resolve2());
+        (resolve3) => {
+          server.close(() => resolve3());
         }
       );
     }
@@ -903,6 +903,59 @@ async function installNavi(page, options = {}) {
 // src/mcp/sse.js
 import { createServer as createServer2 } from "node:http";
 import { randomUUID as randomUUID2, timingSafeEqual } from "node:crypto";
+
+// server/store.js
+import { appendFile, mkdir, open, readFile as readFile2, rename, rm, stat } from "node:fs/promises";
+import { dirname as dirname2, resolve as resolve2 } from "node:path";
+async function beginProcessLifecycle(file, options = {}) {
+  const path = resolve2(file);
+  await mkdir(dirname2(path), { recursive: true });
+  const exists = async (target) => {
+    try {
+      await stat(target);
+      return true;
+    } catch (error) {
+      if (
+        /** @type {NodeJS.ErrnoException} */
+        error.code === "ENOENT"
+      ) return false;
+      throw error;
+    }
+  };
+  const existed = await exists(path);
+  const clean = await exists(`${path}.clean`);
+  await rm(`${path}.clean`, { force: true });
+  if (options.createState) {
+    const handle = await open(path, "a", 384);
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  }
+  return {
+    uncleanShutdowns: existed && !clean ? 1 : 0,
+    async markClean() {
+      const temporary = `${path}.clean.tmp`;
+      const handle = await open(temporary, "w", 384);
+      try {
+        try {
+          await handle.writeFile("clean\n");
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        await rename(temporary, `${path}.clean`);
+      } catch (error) {
+        await rm(temporary, { force: true });
+        throw error;
+      }
+    }
+  };
+}
+
+// src/mcp/sse.js
+var START_TIME_SECONDS = Math.floor(Date.now() / 1e3);
 var DEFAULT_SSE_PORT = 3001;
 var SHUTDOWN_DEADLINE_MS = 5e3;
 var MAX_MESSAGE_BYTES = 1024 * 1024;
@@ -921,10 +974,16 @@ function sendText(res, status, text, contentType) {
   res.writeHead(status, { "Content-Type": contentType, "Content-Length": Buffer.byteLength(text), "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" });
   res.end(text);
 }
-function prometheusMetrics(sessionCount, sessionCeiling) {
+function prometheusMetrics(sessionCount, sessionCeiling, uncleanShutdowns) {
   const { containment } = containmentMetrics();
   const forwarding = containmentForwardingMetrics();
   const lines = [
+    "# HELP process_start_time_seconds Process start time in Unix seconds.",
+    "# TYPE process_start_time_seconds gauge",
+    `process_start_time_seconds ${START_TIME_SECONDS}`,
+    "# HELP navi_mcp_unclean_shutdowns_total Previous SSE owner did not complete graceful teardown (0 or 1 per boot).",
+    "# TYPE navi_mcp_unclean_shutdowns_total counter",
+    `navi_mcp_unclean_shutdowns_total ${uncleanShutdowns}`,
     "# HELP navi_containment_enforced 1 while the private-network policy is active, 0 when NAVI_ALLOW_LOCAL_NETWORK=1 disabled it.",
     "# TYPE navi_containment_enforced gauge",
     `navi_containment_enforced ${containment.enforced ? 1 : 0}`,
@@ -981,15 +1040,15 @@ function seconds(ms) {
   return value >= 1 ? String(Math.round(value)) : value.toFixed(1);
 }
 function readBody(req, limit) {
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     const timer = setTimeout(() => {
       req.destroy();
-      resolve2({ text: "" });
+      resolve3({ text: "" });
     }, 1e4);
     timer.unref();
     req.once("close", () => {
       clearTimeout(timer);
-      resolve2({ text: "" });
+      resolve3({ text: "" });
     });
     const chunks = [];
     let size = 0;
@@ -997,16 +1056,16 @@ function readBody(req, limit) {
       size += chunk.length;
       if (size > limit) {
         req.destroy();
-        resolve2({ tooLarge: true });
+        resolve3({ tooLarge: true });
         return;
       }
       chunks.push(chunk);
     });
     req.on("end", () => {
       clearTimeout(timer);
-      resolve2({ text: Buffer.concat(chunks).toString("utf8") });
+      resolve3({ text: Buffer.concat(chunks).toString("utf8") });
     });
-    req.on("error", () => resolve2({ text: "" }));
+    req.on("error", () => resolve3({ text: "" }));
   });
 }
 async function createSseServer(options) {
@@ -1021,7 +1080,14 @@ async function createSseServer(options) {
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const sessionMaxTtlMs = options.sessionMaxTtlMs ?? SESSION_MAX_TTL_MS;
   if (!Number.isInteger(sessionMaxTtlMs) || sessionMaxTtlMs < 1 || sessionMaxTtlMs > SESSION_MAX_TTL_MS) throw new Error("Session TTL must be between 1 and 1800000ms");
+  const shutdownDeadlineMs = Math.min(SHUTDOWN_DEADLINE_MS, Math.max(1, options.shutdownDeadlineMs ?? SHUTDOWN_DEADLINE_MS));
+  const lifecycle = await beginProcessLifecycle(options.stateFile ?? process.env.NAVI_MCP_STATE_FILE ?? "/tmp/navi-mcp-state", { createState: true });
   const cleanupTasks = /* @__PURE__ */ new Set();
+  let cleanupFailure = (
+    /** @type {unknown} */
+    null
+  );
+  let closePromise = null;
   let stopping = false;
   const sessions = /* @__PURE__ */ new Map();
   const release = (entry, reason) => {
@@ -1038,6 +1104,7 @@ async function createSseServer(options) {
     }
     entry.cleanup = Promise.resolve(closing).catch((error) => {
       log(`sse session cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      cleanupFailure ??= error;
       throw error;
     }).finally(() => {
       sessions.delete(entry.id);
@@ -1209,7 +1276,7 @@ data: /message?sessionId=${id}
       return;
     }
     if (req.method === "GET" && url.pathname === "/metrics") {
-      sendText(res, 200, prometheusMetrics(sessions.size, maxSessions), "text/plain; version=0.0.4; charset=utf-8");
+      sendText(res, 200, prometheusMetrics(sessions.size, maxSessions, lifecycle.uncleanShutdowns), "text/plain; version=0.0.4; charset=utf-8");
       return;
     }
     if (req.method === "GET" && url.pathname === "/healthz") {
@@ -1226,9 +1293,9 @@ data: /message?sessionId=${id}
   server.headersTimeout = 1e4;
   await new Promise(
     /** @param {(value?: void) => void} resolve @param {(error: Error) => void} reject */
-    (resolve2, reject) => {
+    (resolve3, reject) => {
       server.once("error", reject);
-      server.listen(port, host, () => resolve2());
+      server.listen(port, host, () => resolve3());
     }
   );
   const address = server.address();
@@ -1238,30 +1305,39 @@ data: /message?sessionId=${id}
     port: boundPort,
     host,
     sessions,
-    close: async () => {
-      stopping = true;
-      for (const entry of [...sessions.values()]) release(entry, "server shutdown");
-      const results = await Promise.race([
-        Promise.allSettled([...cleanupTasks]),
-        new Promise(
-          /** @param {(value: null) => void} resolve */
-          (resolve2) => {
-            const timer = setTimeout(() => resolve2(null), SHUTDOWN_DEADLINE_MS);
-            timer.unref?.();
-          }
-        )
-      ]);
-      server.closeAllConnections();
-      await new Promise(
-        /** @param {(value?: void) => void} resolve */
-        (resolve2) => server.close(() => resolve2())
-      );
-      if (!Array.isArray(results)) {
-        log(`browser cleanup did not finish within ${SHUTDOWN_DEADLINE_MS}ms; shutting the transport down anyway`);
-        return;
-      }
-      const failed2 = results.find((result) => result.status === "rejected");
-      if (failed2?.status === "rejected") throw failed2.reason;
+    close: () => {
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
+        stopping = true;
+        for (const entry of [...sessions.values()]) release(entry, "server shutdown");
+        let timer = (
+          /** @type {ReturnType<typeof setTimeout> | null} */
+          null
+        );
+        const results = await Promise.race([
+          Promise.allSettled([...cleanupTasks]),
+          new Promise(
+            /** @param {(value: null) => void} resolve */
+            (resolve3) => {
+              timer = setTimeout(() => resolve3(null), shutdownDeadlineMs);
+            }
+          )
+        ]);
+        if (timer) clearTimeout(timer);
+        server.closeAllConnections();
+        await new Promise(
+          /** @param {(value?: void) => void} resolve */
+          (resolve3) => server.close(() => resolve3())
+        );
+        if (!Array.isArray(results)) {
+          throw new Error(`browser cleanup did not finish within ${shutdownDeadlineMs}ms; transport stopped without a clean marker`);
+        }
+        const failed2 = results.find((result) => result.status === "rejected");
+        if (failed2?.status === "rejected") throw failed2.reason;
+        if (cleanupFailure !== null) throw cleanupFailure;
+        await lifecycle.markClean();
+      })();
+      return closePromise;
     }
   };
 }
@@ -2106,7 +2182,7 @@ var NaviSession = class {
         try {
           if (proxy) await proxy.close();
         } finally {
-          if (directory) await rm(directory, { recursive: true, force: true });
+          if (directory) await rm2(directory, { recursive: true, force: true });
         }
       }
     }
@@ -2210,8 +2286,8 @@ async function runStdioServer(options = {}) {
   let signalled = null;
   await new Promise(
     /** @param {(value?: void) => void} resolve */
-    (resolve2) => {
-      const finish = () => resolve2();
+    (resolve3) => {
+      const finish = () => resolve3();
       reader.on("close", finish);
       input.on?.("end", finish);
       const handlers = {};
@@ -2236,8 +2312,8 @@ async function runStdioServer(options = {}) {
     queue.then(() => true),
     new Promise(
       /** @param {(value: boolean) => void} resolve */
-      (resolve2) => {
-        const timer = setTimeout(() => resolve2(false), SHUTDOWN_DEADLINE_MS);
+      (resolve3) => {
+        const timer = setTimeout(() => resolve3(false), SHUTDOWN_DEADLINE_MS);
         timer.unref?.();
       }
     )
@@ -2359,8 +2435,8 @@ Environment
 `);
     await new Promise(
       /** @param {(value?: void) => void} resolve */
-      (resolve2) => {
-        const stop = () => resolve2();
+      (resolve3) => {
+        const stop = () => resolve3();
         for (
           const signal of
           /** @type {const} */
