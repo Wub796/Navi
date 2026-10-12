@@ -1,11 +1,11 @@
 {
-  "recordedAt": "2026-10-12T01:52:44.148Z",
+  "recordedAt": "2026-10-12T02:15:19.765Z",
   "ok": true,
   "checks": [
     {
       "check": "image",
       "ok": true,
-      "detail": "sha256:872ba0fa7df710c8c20ed0beec179367278d5831a5181ca2b9c12f92f17372e9; linux/arm64; user pwuser:pwuser"
+      "detail": "sha256:1932e8f975e0a0638f934ecdd4a341ba3c3d8f1bb6af2848fdfd46265fa79b79; linux/arm64; user pwuser:pwuser"
     },
     {
       "check": "compose-health",
@@ -58,9 +58,14 @@
       "detail": "a violation filed with the tenant key reads back through security-audit (log store) and is refused without one"
     },
     {
+      "check": "retention-maintenance",
+      "ok": true,
+      "detail": "a log-backed prune kept the in-window record with id 1, refused anonymous and cross-tenant callers, and reported a 30-day window"
+    },
+    {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-12T01:52:43.773Z\",\"session_id\":\"d4be729c-3e30-4da3-85f6-fc14da51b0dc\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-12T02:15:19.395Z\",\"session_id\":\"5f70e985-e2ca-4af3-ac67-1427aa8c7194\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }
