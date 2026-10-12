@@ -263,9 +263,10 @@ function isIntegrityHash(value) {
  * @param {string} pageUrl
  * @param {string | null} link the manifest URL the page advertised, if any
  * @param {boolean} allowLocalNetwork
+ * @param {string | null} [sessionId] attributes a refused fetch to its session
  * @returns {Promise<{ok: true, document: Record<string, any>, url: string} | {ok: false, code: string, detail: string}>}
  */
-async function fetchHostManifest(pageUrl, link, allowLocalNetwork) {
+async function fetchHostManifest(pageUrl, link, allowLocalNetwork, sessionId = null) {
   const origin = new URL(pageUrl).origin;
   /** @type {URL} */
   let target;
@@ -279,7 +280,7 @@ async function fetchHostManifest(pageUrl, link, allowLocalNetwork) {
     return { ok: false, code: 'MANIFEST_CROSS_ORIGIN', detail: `${target.origin} is not the page origin ${origin}` };
   }
   try {
-    const response = await containedGet(target.href, allowLocalNetwork, { timeoutMs: MANIFEST_TIMEOUT_MS, maxBytes: MAX_MANIFEST_BYTES, sameOrigin: origin });
+    const response = await containedGet(target.href, allowLocalNetwork, { timeoutMs: MANIFEST_TIMEOUT_MS, maxBytes: MAX_MANIFEST_BYTES, sameOrigin: origin, sessionId });
     if (response.status < 200 || response.status >= 300) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `GET ${redactUrl(target.href)} answered HTTP ${response.status}` };
     const declaredLength = Number(response.headers['content-length'] ?? '');
     if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `the document declares ${declaredLength} bytes` };
@@ -301,12 +302,13 @@ async function fetchHostManifest(pageUrl, link, allowLocalNetwork) {
  * @param {URL} url
  * @param {string} integrity
  * @param {boolean} allowLocalNetwork
+ * @param {string | null} [sessionId] attributes a refused fetch to its session
  * @returns {Promise<{ok: true, text: string} | {ok: false, code: string, detail: string}>}
  */
-async function fetchHostAsset(url, integrity, allowLocalNetwork) {
+async function fetchHostAsset(url, integrity, allowLocalNetwork, sessionId = null) {
   const algorithm = integrity.slice(0, integrity.indexOf('-'));
   try {
-    const response = await containedGet(url.href, allowLocalNetwork, { timeoutMs: HOST_ASSET_TIMEOUT_MS });
+    const response = await containedGet(url.href, allowLocalNetwork, { timeoutMs: HOST_ASSET_TIMEOUT_MS, sessionId });
     if (response.status < 200 || response.status >= 300) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `GET ${redactUrl(url.href)} answered HTTP ${response.status}` };
     const bytes = response.bytes;
     const digest = `${algorithm}-${createHash(algorithm).update(bytes).digest('base64')}`;
@@ -332,9 +334,10 @@ async function fetchHostAsset(url, integrity, allowLocalNetwork) {
  * @param {any} page
  * @param {Discovery} discovery
  * @param {boolean} allowLocalNetwork
+ * @param {string | null} [sessionId] attributes a refused fetch to its session
  * @returns {Promise<RuntimeResolution>}
  */
-async function negotiateHostRuntime(page, discovery, allowLocalNetwork) {
+async function negotiateHostRuntime(page, discovery, allowLocalNetwork, sessionId = null) {
   /** @type {RuntimeResolution} */
   const resolution = { source: 'bundled_fallback', manifest: null, script: null, integrity: 'not_declared', warning: null, detail: null };
   /** @param {string} code @param {string} detail @returns {RuntimeResolution} */
@@ -343,7 +346,7 @@ async function negotiateHostRuntime(page, discovery, allowLocalNetwork) {
     resolution.detail = detail;
     return resolution;
   };
-  const fetched = await fetchHostManifest(page.url(), discovery.manifest, allowLocalNetwork);
+  const fetched = await fetchHostManifest(page.url(), discovery.manifest, allowLocalNetwork, sessionId);
   if (!fetched.ok) return fallback(fetched.code, fetched.detail);
   resolution.manifest = redactUrl(fetched.url);
   const declaredVersion = fetched.document.version;
@@ -642,7 +645,7 @@ export class NaviSession {
     try {
       const chromium = await resolveChromium();
       this.downloadDirectory = await mkdtemp(join(tmpdir(), `navi-downloads-${this.sessionId}-`));
-      this.proxy = await createContainmentProxy(this.allowLocalNetwork, () => { this.blockedRequests++; });
+      this.proxy = await createContainmentProxy(this.allowLocalNetwork, () => { this.blockedRequests++; }, { sessionId: this.sessionId });
       const browser = await chromium.launch({
         headless: this.headless, chromiumSandbox: true, downloadsPath: this.downloadDirectory,
         proxy: { server: this.proxy.url },
@@ -661,7 +664,7 @@ export class NaviSession {
       await this.#active(context.route('**/*', async (/** @type {any} */ route) => {
         try {
           if (this.closed) throw containmentError('Session closed');
-          await resolveDestination(route.request().url(), this.allowLocalNetwork);
+          await resolveDestination(route.request().url(), this.allowLocalNetwork, { sessionId: this.sessionId });
           await route.continue();
         } catch {
           this.blockedRequests++;
@@ -719,7 +722,7 @@ export class NaviSession {
     if (width < 1 || width > 4096 || height < 1 || height > 4096 || timeout < 1 || timeout > 30000) return toolError('INVALID_PAYLOAD', 'Viewport must be 1–4096 pixels and timeoutMs 1–30000.');
     try {
       if (this.closed) throw Object.assign(new Error('Session closed'), { code: 'SESSION_CLOSED' });
-      await resolveDestination(safe, this.allowLocalNetwork);
+      await resolveDestination(safe, this.allowLocalNetwork, { sessionId: this.sessionId });
       const beforeBlocked = this.blockedRequests;
       const page = await this.#ensurePage();
       await page.setViewportSize({ width, height });
@@ -730,7 +733,7 @@ export class NaviSession {
         if (this.blockedRequests > beforeBlocked) throw containmentError('Navigation or redirect reached a blocked destination');
         throw error;
       }
-      await resolveDestination(page.url(), this.allowLocalNetwork);
+      await resolveDestination(page.url(), this.allowLocalNetwork, { sessionId: this.sessionId });
       const status = response ? response.status() : null;
       /** @type {Discovery} */
       let discovery = await probeAgentBridge(page, response);
@@ -782,7 +785,7 @@ export class NaviSession {
       } else if (discovery.instrumented) {
         // The page declares instrumentation, so the host is asked for its runtime
         // before the packaged build is used at all.
-        const negotiated = await negotiateHostRuntime(page, discovery, this.allowLocalNetwork);
+        const negotiated = await negotiateHostRuntime(page, discovery, this.allowLocalNetwork, this.sessionId);
         negotiatedManifest = negotiated.manifest;
         discovery = { ...discovery, manifest: negotiated.manifest ?? discovery.manifest, script: negotiated.script, integrity: negotiated.integrity };
         if (negotiated.source === 'host_manifest') {

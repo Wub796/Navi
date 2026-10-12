@@ -266,7 +266,8 @@ npx navi-mcp --transport sse --port 3001 --host 127.0.0.1
 |---|---|
 | `GET /sse` | Event stream. The first frame is `event: endpoint`, the POST URL for that connection. |
 | `POST /message?sessionId=<id>` | One JSON-RPC message, answered `202`; the reply arrives on the stream. |
-| `GET /healthz` | Liveness, open-session count, the ceiling and the auth mode. |
+| `GET /healthz` | Liveness, open-session count, the ceiling, the auth mode and the live containment counters. |
+| `GET /metrics` | Those counters in Prometheus text format, for a scraper. |
 
 Implemented on `node:http` alone, with one browser session per SSE connection so two clients never share a page. Session ids are anonymous, exactly as the binding specifies, so the transport exposes no *caller identity* — but it is not unguarded, because an open SSE port is an open browser. `--auth-token <token>` (or `NAVI_MCP_TOKEN`) requires `Authorization: Bearer <token>` on both `/sse` and `/message`, compared in constant time and never echoed back; `--max-sessions` (default 10) answers a stream past the ceiling with `503`; `--idle-timeout` (default 300s) reaps a silent session and closes its browser, though idle reaping waits for calls in flight. A separate hard 30-minute TTL cancels busy sessions too, and queued messages are capped at 16; and a non-loopback `--host` **without** a token is refused rather than warned about. One shared credential is a gate, not an account system, and there is still no TLS: bind it to loopback, or put an authenticating proxy in front of it. Diagnostics stay on stderr and stdout stays a clean protocol surface, which is what makes it safe to run under a supervisor either way.
 
@@ -275,6 +276,10 @@ Implemented on `node:http` alone, with one browser session per SSE connection so
 Private, loopback and link-local destinations are rejected before navigation and for page resource requests. DNS answers must all be public; a per-session proxy connects to the exact validated address, so redirects and DNS rebinding cannot use a browser-side check/resolve race. Runtime negotiation fetches use the same policy. Service workers and WebSockets are blocked; sensitive permissions are explicitly denied through Chromium. Sessions retain at most three pages, an independent ephemeral context and a private temporary download directory purged at disposal. Hard TTL/disconnection cancels setup and closes the browser, including during launch.
 
 `NAVI_ALLOW_LOCAL_NETWORK=1` is an explicit trust downgrade for fixture browsing, and is never enabled in production configuration. Without it, `navi_set_session` accepts inline state only, not paths to server files. Keep container CPU/memory/filesystem quotas and network firewall rules: browser-level interception and proxy settings are not an OS sandbox. Playwright Chromium >=1.48 is required for WebSocket interception.
+
+#### Refusals are observable
+
+Every blocked destination increments process-lifetime counters (`enforced`, `violations_total`, `violations_by_category` across `metadata_endpoint`, `private_ipv4`, `loopback_or_local`, `cgnat_or_multicast`, `ipv6_special` and `dns_rebinding_rejected`). `GET /healthz` carries them as `containment`; `GET /metrics` serves the same numbers as `navi_containment_violations{category="..."}`, `navi_containment_violations_total`, `navi_containment_enforced` and the `navi_mcp_sessions*` gauges, so an existing Prometheus deployment needs no new exporter. Both endpoints are unauthenticated like the liveness probe and carry aggregate counts only. Each refusal also writes one structured stderr line — `level`, `type: SECURITY_CONTAINMENT_VIOLATION`, `timestamp`, `session_id`, `target_url`, `resolved_ip`, `category`, `action: BLOCKED` — with the URL stripped to origin and path so credentials and query values cannot be logged. With the fixture override the policy is off, so `enforced` is `0` and nothing is counted.
 
 #### Pre-authenticated sessions
 

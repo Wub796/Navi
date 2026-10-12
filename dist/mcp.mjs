@@ -428,26 +428,92 @@ var CONTAINMENT_CODE = "ERR_BLOCKED_BY_CONTAINMENT";
 var MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 var MAX_CONNECTIONS = 64;
 var NETWORK_TIMEOUT_MS = 2e4;
+var MAX_LOGGED_TARGET_CHARS = 512;
 function containmentError(detail) {
   return Object.assign(new Error(`${CONTAINMENT_CODE}: ${detail}`), { code: CONTAINMENT_CODE });
 }
-function isPrivateAddress(address) {
-  const bare = address.toLowerCase().replace(/^\[|\]$/g, "");
-  if (isIP(bare) === 4) {
-    const [a, b] = bare.split(".").map(Number);
-    return a === 0 || a === 10 || a === 127 || a >= 224 || a === 100 && b >= 64 && b <= 127 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && (b === 168 || b === 0) || a === 198 && (b === 18 || b === 19);
-  }
-  if (isIP(bare) === 6) {
-    const canonical = new URL(`http://[${bare}]/`).hostname.slice(1, -1);
-    if (canonical.startsWith("::ffff:")) {
-      const words = canonical.slice(7).split(":");
-      const value = parseInt(words[0], 16) * 65536 + parseInt(words[1], 16);
-      return isPrivateAddress([value >>> 24, value >>> 16 & 255, value >>> 8 & 255, value & 255].join("."));
+var VIOLATION_CATEGORIES = Object.freeze([
+  "metadata_endpoint",
+  "private_ipv4",
+  "loopback_or_local",
+  "cgnat_or_multicast",
+  "ipv6_special",
+  "dns_rebinding_rejected"
+]);
+var violationsByCategory = { metadata_endpoint: 0, private_ipv4: 0, loopback_or_local: 0, cgnat_or_multicast: 0, ipv6_special: 0, dns_rebinding_rejected: 0 };
+var violationsTotal = 0;
+function containmentEnforced() {
+  return process.env.NAVI_ALLOW_LOCAL_NETWORK !== "1";
+}
+function containmentMetrics() {
+  return {
+    containment: {
+      enforced: containmentEnforced(),
+      violations_total: violationsTotal,
+      violations_by_category: { ...violationsByCategory }
     }
-    const first = parseInt(canonical.split(":")[0], 16);
-    return !Number.isFinite(first) || first < 8192 || first > 16383 || canonical.startsWith("2001:0:") || canonical.startsWith("2002:");
+  };
+}
+function sanitizeTarget(value) {
+  const text = String(value ?? "");
+  let sanitized;
+  try {
+    const url = new URL(text);
+    sanitized = ["http:", "https:"].includes(url.protocol) ? `${url.origin}${url.pathname}` : stripUserInfo(text);
+  } catch {
+    sanitized = stripUserInfo(text);
   }
-  return true;
+  return sanitized.length > MAX_LOGGED_TARGET_CHARS ? `${sanitized.slice(0, MAX_LOGGED_TARGET_CHARS)}...` : sanitized;
+}
+function stripUserInfo(text) {
+  return text.split("#")[0].split("?")[0].replace(/\/\/[^/@]*@/, "//");
+}
+function recordContainmentViolation(violation) {
+  violationsTotal++;
+  const category = violation.category && VIOLATION_CATEGORIES.includes(violation.category) ? violation.category : null;
+  if (category) violationsByCategory[category]++;
+  const record = {
+    level: "WARN",
+    type: "SECURITY_CONTAINMENT_VIOLATION",
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    session_id: violation.sessionId ?? null,
+    target_url: sanitizeTarget(violation.target),
+    resolved_ip: violation.resolvedIp ?? null,
+    category: category ?? "unclassified",
+    action: "BLOCKED"
+  };
+  process.stderr.write(`${JSON.stringify(record)}
+`);
+}
+function classifyAddress(address) {
+  const bare = String(address).toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const version = isIP(bare);
+  if (version === 4) {
+    const [a, b] = bare.split(".").map(Number);
+    if (a === 127) return "loopback_or_local";
+    if (a === 169 && b === 254) return "metadata_endpoint";
+    if (a === 10 || a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168) return "private_ipv4";
+    if (a === 100 && b >= 64 && b <= 127 || a >= 224) return "cgnat_or_multicast";
+    if (a === 0 || a === 192 && b === 0 || a === 198 && (b === 18 || b === 19)) return "private_ipv4";
+    return null;
+  }
+  if (version === 6) {
+    const canonical = new URL(`http://[${bare}]/`).hostname.slice(1, -1);
+    if (canonical === "::" || canonical === "::1") return "loopback_or_local";
+    if (canonical.startsWith("::ffff:")) return "ipv6_special";
+    const first = parseInt(canonical.split(":")[0] || "", 16);
+    if (first >= 65152 && first <= 65215) return "metadata_endpoint";
+    if (first >= 64512 && first <= 65023) return "ipv6_special";
+    if (first >= 65280 && first <= 65535) return "cgnat_or_multicast";
+    if (first >= 8192 && first <= 16383 && !canonical.startsWith("2001:0:") && !canonical.startsWith("2002:")) return null;
+    return "ipv6_special";
+  }
+  return null;
+}
+function isPrivateAddress(address) {
+  const category = classifyAddress(address);
+  if (category) return true;
+  return isIP(String(address).toLowerCase().replace(/^\[|\]$/g, "")) === 0;
 }
 async function resolveHost(host) {
   let timer = (
@@ -471,20 +537,36 @@ async function resolveHost(host) {
     if (timer) clearTimeout(timer);
   }
 }
-async function resolveDestination(value, allowLocalNetwork) {
+async function resolveDestination(value, allowLocalNetwork, context = {}) {
+  const refuse = (category, resolvedIp, detail) => {
+    if (!allowLocalNetwork) recordContainmentViolation({ category, target: value, resolvedIp, sessionId: context.sessionId ?? null });
+    return containmentError(detail);
+  };
   let url;
   try {
     url = new URL(value);
   } catch {
-    throw containmentError("Invalid destination URL");
+    throw refuse(null, null, "Invalid destination URL");
   }
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw containmentError("Only credential-free HTTP(S) destinations are permitted");
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw refuse(null, null, "Only credential-free HTTP(S) destinations are permitted");
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
-  if (!allowLocalNetwork && (host === "localhost" || host.endsWith(".localhost") || isIP(host) && isPrivateAddress(host))) {
-    throw containmentError("Private, loopback or link-local destination refused");
+  if (!allowLocalNetwork && (host === "localhost" || host.endsWith(".localhost"))) throw refuse("loopback_or_local", null, "Private, loopback or link-local destination refused");
+  if (!allowLocalNetwork && isIP(host)) {
+    const category = classifyAddress(host);
+    if (category) throw refuse(category, host, "Private, loopback or link-local destination refused");
   }
-  const addresses = isIP(host) ? [{ address: host, family: isIP(host) }] : await resolveHost(host);
-  if (!addresses.length || !allowLocalNetwork && addresses.some((entry) => isPrivateAddress(entry.address))) throw containmentError("DNS resolves to a non-public address");
+  let addresses;
+  if (isIP(host)) addresses = [{ address: host, family: isIP(host) }];
+  else {
+    try {
+      addresses = await resolveHost(host);
+    } catch {
+      throw refuse(null, null, "Destination DNS could not be validated");
+    }
+  }
+  if (!addresses.length) throw refuse("dns_rebinding_rejected", null, "DNS resolves to a non-public address");
+  const offending = allowLocalNetwork ? void 0 : addresses.find((entry) => isPrivateAddress(entry.address));
+  if (offending) throw refuse("dns_rebinding_rejected", offending.address, "DNS resolves to a non-public address");
   return { url, ...addresses[0] };
 }
 async function containedGet(value, allowLocalNetwork, options = {}) {
@@ -492,7 +574,7 @@ async function containedGet(value, allowLocalNetwork, options = {}) {
   const deadline = Date.now() + (options.timeoutMs ?? NETWORK_TIMEOUT_MS);
   for (let hop = 0; hop <= 5; hop++) {
     if (options.sameOrigin && new URL(target).origin !== options.sameOrigin) throw containmentError("Cross-origin runtime redirect refused");
-    const { url, address, family } = await resolveDestination(target, allowLocalNetwork);
+    const { url, address, family } = await resolveDestination(target, allowLocalNetwork, { sessionId: options.sessionId ?? null });
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw containmentError("Runtime request timed out");
     const response = await new Promise(
@@ -529,7 +611,7 @@ async function containedGet(value, allowLocalNetwork, options = {}) {
   }
   throw containmentError("Too many runtime redirects");
 }
-async function createContainmentProxy(allowLocalNetwork, onBlocked) {
+async function createContainmentProxy(allowLocalNetwork, onBlocked, context = {}) {
   const sockets = (
     /** @type {Set<import('node:net').Socket>} */
     /* @__PURE__ */ new Set()
@@ -544,7 +626,7 @@ async function createContainmentProxy(allowLocalNetwork, onBlocked) {
   };
   const server = createServer((req, res) => {
     void (async () => {
-      const { url, address: address2, family } = await resolveDestination(req.url ?? "", allowLocalNetwork);
+      const { url, address: address2, family } = await resolveDestination(req.url ?? "", allowLocalNetwork, { sessionId: context.sessionId ?? null });
       if (closed) throw containmentError("Session closed");
       const headers = (
         /** @type {import('node:http').IncomingHttpHeaders} */
@@ -595,7 +677,7 @@ async function createContainmentProxy(allowLocalNetwork, onBlocked) {
   });
   server.on("connect", (req, client, head) => {
     void (async () => {
-      const { url, address: address2 } = await resolveDestination(`https://${req.url ?? ""}/`, allowLocalNetwork);
+      const { url, address: address2 } = await resolveDestination(`https://${req.url ?? ""}/`, allowLocalNetwork, { sessionId: context.sessionId ?? null });
       if (closed) throw containmentError("Session closed");
       const upstream = track(connect({ host: address2, port: Number(url.port || 443) }));
       upstream.setTimeout(NETWORK_TIMEOUT_MS, () => upstream.destroy());
@@ -762,6 +844,34 @@ function sendJson(res, status, body, extraHeaders = {}) {
   const text = JSON.stringify(body, null, 2);
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(text), "X-Content-Type-Options": "nosniff", ...extraHeaders });
   res.end(text);
+}
+function sendText(res, status, text, contentType) {
+  res.writeHead(status, { "Content-Type": contentType, "Content-Length": Buffer.byteLength(text), "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" });
+  res.end(text);
+}
+function prometheusMetrics(sessionCount, sessionCeiling) {
+  const { containment } = containmentMetrics();
+  const lines = [
+    "# HELP navi_containment_enforced 1 while the private-network policy is active, 0 when NAVI_ALLOW_LOCAL_NETWORK=1 disabled it.",
+    "# TYPE navi_containment_enforced gauge",
+    `navi_containment_enforced ${containment.enforced ? 1 : 0}`,
+    "# HELP navi_containment_violations_total Destinations refused by the containment policy since process start.",
+    "# TYPE navi_containment_violations_total counter",
+    `navi_containment_violations_total ${containment.violations_total}`,
+    "# HELP navi_containment_violations Destinations refused by the containment policy, by category.",
+    "# TYPE navi_containment_violations counter"
+  ];
+  for (const category of Object.keys(containment.violations_by_category).sort()) lines.push(`navi_containment_violations{category="${category}"} ${containment.violations_by_category[category]}`);
+  lines.push(
+    "# HELP navi_mcp_sessions Open SSE sessions.",
+    "# TYPE navi_mcp_sessions gauge",
+    `navi_mcp_sessions ${sessionCount}`,
+    "# HELP navi_mcp_sessions_max Configured SSE session ceiling.",
+    "# TYPE navi_mcp_sessions_max gauge",
+    `navi_mcp_sessions_max ${sessionCeiling}`
+  );
+  return `${lines.join("\n")}
+`;
 }
 function isAuthorized(req, token) {
   const header = req.headers.authorization;
@@ -1011,12 +1121,16 @@ data: /message?sessionId=${id}
       });
       return;
     }
+    if (req.method === "GET" && url.pathname === "/metrics") {
+      sendText(res, 200, prometheusMetrics(sessions.size, maxSessions), "text/plain; version=0.0.4; charset=utf-8");
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/healthz") {
-      sendJson(res, 200, { ok: true, transport: "sse", sessions: sessions.size, maxSessions, auth: authToken ? "bearer" : "none", idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES });
+      sendJson(res, 200, { ok: true, transport: "sse", sessions: sessions.size, maxSessions, auth: authToken ? "bearer" : "none", idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES, containment: containmentMetrics().containment });
       return;
     }
     if (req.method === "GET" && url.pathname === "/") {
-      sendJson(res, 200, { ok: true, transport: "sse", endpoints: { stream: "GET /sse", messages: "POST /message?sessionId=<id>", health: "GET /healthz" } });
+      sendJson(res, 200, { ok: true, transport: "sse", endpoints: { stream: "GET /sse", messages: "POST /message?sessionId=<id>", health: "GET /healthz", metrics: "GET /metrics" } });
       return;
     }
     sendJson(res, 404, { ok: false, error: { code: "NOT_FOUND", message: `No route for ${req.method} ${url.pathname}.` } });
@@ -1185,7 +1299,7 @@ async function probeAgentBridge(page, response) {
 function isIntegrityHash(value) {
   return /^sha(256|384|512)-[A-Za-z0-9+/=]{16,}$/.test(value);
 }
-async function fetchHostManifest(pageUrl, link, allowLocalNetwork) {
+async function fetchHostManifest(pageUrl, link, allowLocalNetwork, sessionId = null) {
   const origin = new URL(pageUrl).origin;
   let target;
   try {
@@ -1198,7 +1312,7 @@ async function fetchHostManifest(pageUrl, link, allowLocalNetwork) {
     return { ok: false, code: "MANIFEST_CROSS_ORIGIN", detail: `${target.origin} is not the page origin ${origin}` };
   }
   try {
-    const response = await containedGet(target.href, allowLocalNetwork, { timeoutMs: MANIFEST_TIMEOUT_MS, maxBytes: MAX_MANIFEST_BYTES, sameOrigin: origin });
+    const response = await containedGet(target.href, allowLocalNetwork, { timeoutMs: MANIFEST_TIMEOUT_MS, maxBytes: MAX_MANIFEST_BYTES, sameOrigin: origin, sessionId });
     if (response.status < 200 || response.status >= 300) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `GET ${redactUrl(target.href)} answered HTTP ${response.status}` };
     const declaredLength = Number(response.headers["content-length"] ?? "");
     if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `the document declares ${declaredLength} bytes` };
@@ -1215,10 +1329,10 @@ async function fetchHostManifest(pageUrl, link, allowLocalNetwork) {
     return { ok: false, code: "MANIFEST_UNREACHABLE", detail: timedOut ? `no answer within ${MANIFEST_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
   }
 }
-async function fetchHostAsset(url, integrity, allowLocalNetwork) {
+async function fetchHostAsset(url, integrity, allowLocalNetwork, sessionId = null) {
   const algorithm = integrity.slice(0, integrity.indexOf("-"));
   try {
-    const response = await containedGet(url.href, allowLocalNetwork, { timeoutMs: HOST_ASSET_TIMEOUT_MS });
+    const response = await containedGet(url.href, allowLocalNetwork, { timeoutMs: HOST_ASSET_TIMEOUT_MS, sessionId });
     if (response.status < 200 || response.status >= 300) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `GET ${redactUrl(url.href)} answered HTTP ${response.status}` };
     const bytes = response.bytes;
     const digest = `${algorithm}-${createHash(algorithm).update(bytes).digest("base64")}`;
@@ -1232,14 +1346,14 @@ async function fetchHostAsset(url, integrity, allowLocalNetwork) {
     return { ok: false, code: "MANIFEST_UNREACHABLE", detail: timedOut ? `${redactUrl(url.href)} did not answer within ${HOST_ASSET_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
   }
 }
-async function negotiateHostRuntime(page, discovery, allowLocalNetwork) {
+async function negotiateHostRuntime(page, discovery, allowLocalNetwork, sessionId = null) {
   const resolution = { source: "bundled_fallback", manifest: null, script: null, integrity: "not_declared", warning: null, detail: null };
   const fallback = (code, detail) => {
     resolution.warning = code;
     resolution.detail = detail;
     return resolution;
   };
-  const fetched = await fetchHostManifest(page.url(), discovery.manifest, allowLocalNetwork);
+  const fetched = await fetchHostManifest(page.url(), discovery.manifest, allowLocalNetwork, sessionId);
   if (!fetched.ok) return fallback(fetched.code, fetched.detail);
   resolution.manifest = redactUrl(fetched.url);
   const declaredVersion = fetched.document.version;
@@ -1541,7 +1655,7 @@ var NaviSession = class {
       this.downloadDirectory = await mkdtemp(join(tmpdir(), `navi-downloads-${this.sessionId}-`));
       this.proxy = await createContainmentProxy(this.allowLocalNetwork, () => {
         this.blockedRequests++;
-      });
+      }, { sessionId: this.sessionId });
       const browser = await chromium.launch({
         headless: this.headless,
         chromiumSandbox: true,
@@ -1567,7 +1681,7 @@ var NaviSession = class {
       await this.#active(context.route("**/*", async (route) => {
         try {
           if (this.closed) throw containmentError("Session closed");
-          await resolveDestination(route.request().url(), this.allowLocalNetwork);
+          await resolveDestination(route.request().url(), this.allowLocalNetwork, { sessionId: this.sessionId });
           await route.continue();
         } catch {
           this.blockedRequests++;
@@ -1621,7 +1735,7 @@ var NaviSession = class {
     if (width < 1 || width > 4096 || height < 1 || height > 4096 || timeout < 1 || timeout > 3e4) return toolError("INVALID_PAYLOAD", "Viewport must be 1\u20134096 pixels and timeoutMs 1\u201330000.");
     try {
       if (this.closed) throw Object.assign(new Error("Session closed"), { code: "SESSION_CLOSED" });
-      await resolveDestination(safe, this.allowLocalNetwork);
+      await resolveDestination(safe, this.allowLocalNetwork, { sessionId: this.sessionId });
       const beforeBlocked = this.blockedRequests;
       const page = await this.#ensurePage();
       await page.setViewportSize({ width, height });
@@ -1633,7 +1747,7 @@ var NaviSession = class {
         if (this.blockedRequests > beforeBlocked) throw containmentError("Navigation or redirect reached a blocked destination");
         throw error;
       }
-      await resolveDestination(page.url(), this.allowLocalNetwork);
+      await resolveDestination(page.url(), this.allowLocalNetwork, { sessionId: this.sessionId });
       const status = response ? response.status() : null;
       let discovery = await probeAgentBridge(page, response);
       const installed = await page.evaluate(() => Boolean(
@@ -1661,7 +1775,7 @@ var NaviSession = class {
         source = "host_inline";
         if (!discovery.instrumented) warning = warningFor("UNINSTRUMENTED_HOST");
       } else if (discovery.instrumented) {
-        const negotiated = await negotiateHostRuntime(page, discovery, this.allowLocalNetwork);
+        const negotiated = await negotiateHostRuntime(page, discovery, this.allowLocalNetwork, this.sessionId);
         negotiatedManifest = negotiated.manifest;
         discovery = { ...discovery, manifest: negotiated.manifest ?? discovery.manifest, script: negotiated.script, integrity: negotiated.integrity };
         if (negotiated.source === "host_manifest") {

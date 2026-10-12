@@ -163,7 +163,8 @@ NAVI_MCP_TOKEN="$TOKEN" npx navi-mcp --transport sse --max-sessions 4 --idle-tim
 |---|---|
 | `GET /sse` | Event stream. The first frame is `event: endpoint` carrying the POST URL for this connection. |
 | `POST /message?sessionId=<id>` | One JSON-RPC message per request, answered `202` immediately; the reply arrives on the stream. |
-| `GET /healthz` | Liveness, open-session count, the ceiling and the auth mode. |
+| `GET /healthz` | Liveness, open-session count, the ceiling, the auth mode and the live containment counters. |
+| `GET /metrics` | The same counters in Prometheus text format, for a scraper. |
 
 It is implemented on `node:http` alone — no Express, Hono or SSE library — and each SSE connection gets its **own browser session**, so two clients cannot drive each other's pages.
 
@@ -176,7 +177,9 @@ An open SSE port is an open browser: whoever reaches it can steer a real Chromiu
 | `--idle-timeout <seconds>` | 300 | A session that receives nothing for this long is reaped and its browser closed. Idle reaping waits for in-flight calls. The independent 30-minute hard TTL still closes busy sessions. `0` disables only idle reaping. |
 | `--host` that is not loopback | — | **Refused** unless a token is set: the server exits `2` instead of exposing a browser driver. |
 
-`GET /healthz` reports the posture — `{ ok, transport, sessions, maxSessions, auth, idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages }` — so an operator can see which mode is live. Anonymous session ids remain what the MCP SSE binding specifies, so a token is a **gate, not an identity**: it is one shared credential rather than an account system. stdout stays empty while diagnostics go to stderr.
+`GET /healthz` reports the posture — `{ ok, transport, sessions, maxSessions, auth, idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages, containment }` — so an operator can see which mode is live. Anonymous session ids remain what the MCP SSE binding specifies, so a token is a **gate, not an identity**: it is one shared credential rather than an account system. stdout stays empty while diagnostics go to stderr.
+
+Neither `/healthz` nor `/metrics` requires the bearer token, exactly like any other liveness probe, so both carry **aggregate counters only** — never a refused URL or a session identifier.
 
 #### Browser-session containment
 
@@ -185,6 +188,37 @@ MCP defaults to public HTTP(S) destinations only. Navigation and subresources re
 Each session owns an ephemeral context and private `navi-downloads-<sessionId>-<random>` directory beneath the OS temporary directory (`/tmp` in the container). Context/session disposal deletes downloads and closes Chromium. Camera, microphone, geolocation, notifications and clipboard permissions are explicitly denied. Popups beyond **3 pages** are closed; SSE has a non-disableable **30-minute TTL**, **16 pending messages** maximum and cleanup-aware session slots. State-file paths are accepted only with the trusted local override; otherwise hydration accepts inline state.
 
 These are browser-driver controls, not an OS network sandbox or disk/CPU quota. Keep the Chromium sandbox, container limits and outbound firewall; disable direct UDP/non-proxy egress at the deployment boundary. See [containment tests](tests/session-containment.spec.mjs).
+
+#### Containment observability
+
+A refusal is never silent. Every blocked destination increments process-lifetime counters, published as `containment` on `GET /healthz` and in Prometheus text on `GET /metrics`:
+
+```jsonc
+// GET /healthz (truncated)
+{ "ok": true, "sessions": 0, "containment": {
+  "enforced": true,
+  "violations_total": 3,
+  "violations_by_category": { "metadata_endpoint": 1, "private_ipv4": 0, "loopback_or_local": 2,
+    "cgnat_or_multicast": 0, "ipv6_special": 0, "dns_rebinding_rejected": 0 } } }
+```
+
+```text
+# TYPE navi_containment_violations counter
+navi_containment_violations{category="metadata_endpoint"} 1
+navi_containment_violations_total 3
+navi_containment_enforced 1
+navi_mcp_sessions 0
+```
+
+The same refusal is written to stderr as one JSON line, so a log pipeline can alert on `SECURITY_CONTAINMENT_VIOLATION` without scraping the process:
+
+```jsonc
+{ "level": "WARN", "type": "SECURITY_CONTAINMENT_VIOLATION", "timestamp": "2026-10-11T20:31:07.482Z",
+  "session_id": "4e1c...", "target_url": "http://169.254.169.254/latest/meta-data/", "resolved_ip": "169.254.169.254",
+  "category": "metadata_endpoint", "action": "BLOCKED" }
+```
+
+`target_url` is stripped to `origin + pathname`, so credentials, query strings and fragments never reach a log. `violations_total` counts every refusal while `violations_by_category` covers the classified ones, so a malformed or credentialed URL is counted in the total and logged as `unclassified` rather than forced into a bucket. With `NAVI_ALLOW_LOCAL_NETWORK=1` the policy is off: `enforced` reports `0` and nothing is counted.
 
 #### Authenticated sessions
 

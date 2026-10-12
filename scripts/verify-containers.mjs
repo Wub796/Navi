@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -130,6 +130,20 @@ try {
   }
   assert(refused, 'MCP image must fail closed without token');
   record('fail-closed-startup', 'MCP mode refuses missing token before listening');
+  // The scrape surface an operator's monitoring uses must work in the shipped
+  // image, not only in-process: /metrics is unauthenticated like the liveness
+  // probe and carries aggregate counters, never URLs or session identifiers.
+  const metrics = await request(`${mcp}/metrics`);
+  assert(metrics.status === 200, 'the metrics endpoint is unavailable');
+  assert(String(metrics.headers.get('content-type')).includes('text/plain'), 'the metrics endpoint did not serve text');
+  const exposition = await metrics.text();
+  const series = exposition.split('\n').filter(line => line.startsWith('navi_containment'));
+  assert(exposition.includes('navi_containment_violations_total') && exposition.includes('navi_mcp_sessions'), 'the exposition is missing containment or session series');
+  const health = await (await request(`${mcp}/healthz`)).json();
+  assert(health.containment && typeof health.containment.violations_total === 'number' && typeof health.containment.enforced === 'boolean', 'healthz does not report the containment counters');
+  assert(Object.keys(health.containment.violations_by_category).length === 6, 'healthz is missing violation categories');
+  assert(!exposition.includes('http'), 'the exposition must not carry a destination URL');
+  record('containment-observability', `healthz containment ${JSON.stringify(health.containment)}; ${series.length} containment series on /metrics`);
   // The containment guard is the shipped default, independent of the fixture
   // override this deployment adds: drive stdio MCP in a container that carries
   // no NAVI_ALLOW_LOCAL_NETWORK and require the metadata endpoint to be refused
@@ -141,10 +155,17 @@ try {
     { jsonrpc: '2.0', method: 'notifications/initialized' },
     { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'navi_navigate', arguments: { url: 'http://169.254.169.254/latest/meta-data/' } } }
   ].map(message => JSON.stringify(message)).join('\n') + '\n';
-  const guarded = execFileSync('docker', ['run', '--rm', '-i', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m', production ? image : 'navi:local', 'node', 'bin/navi-mcp.js'], { env: guardedEnv, input: stdioInput, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 90000 });
-  assert(guarded.includes('ERR_BLOCKED_BY_CONTAINMENT'), 'a metadata destination was not refused by default');
-  assert(!guarded.includes('"ok": true'), 'the metadata destination was navigated to');
-  record('containment-default-deny', 'metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT without any local-network override');
+  const guarded = spawnSync('docker', ['run', '--rm', '-i', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m', production ? image : 'navi:local', 'node', 'bin/navi-mcp.js'], { env: guardedEnv, input: stdioInput, encoding: 'utf8', timeout: 90000 });
+  assert(!guarded.error && guarded.status === 0, `the guarded run failed: ${guarded.error?.message ?? guarded.stderr}`);
+  const guardedOut = String(guarded.stdout);
+  assert(guardedOut.includes('ERR_BLOCKED_BY_CONTAINMENT'), 'a metadata destination was not refused by default');
+  assert(!guardedOut.includes('"ok": true'), 'the metadata destination was navigated to');
+  // The refusal must also be auditable from the container: one structured line on
+  // stderr, with the destination sanitized. stdout stays a protocol surface.
+  const audited = String(guarded.stderr).split('\n').filter(Boolean).map(line => JSON.parse(line)).find(record_ => record_.type === 'SECURITY_CONTAINMENT_VIOLATION');
+  assert(audited && audited.level === 'WARN' && audited.action === 'BLOCKED', 'the refusal was not audit-logged');
+  assert(audited.category === 'metadata_endpoint' && audited.target_url === 'http://169.254.169.254/latest/meta-data/' && audited.resolved_ip === '169.254.169.254', `the audit line is incomplete: ${JSON.stringify(audited)}`);
+  record('containment-default-deny', `metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as ${JSON.stringify(audited)}, without any local-network override`);
 } catch (error) {
   checks.push({ check: 'container-validation', ok: false, detail: error instanceof Error ? error.message : String(error) });
   process.exitCode = 1;

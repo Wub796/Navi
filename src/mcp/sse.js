@@ -19,8 +19,15 @@
 //   * an idle timeout reaps abandoned sessions and closes their browsers.
 // Idle eviction waits for active calls, but the hard 30-minute TTL never does.
 // Disconnection/TTL closes the session immediately, cancelling browser work.
+//
+// Containment refusals are visible from outside the process: `GET /healthz`
+// carries the live counters and `GET /metrics` serves them in Prometheus text,
+// so an operator can alert on blocked egress without reading the audit lines on
+// stderr. Both are unauthenticated like `/healthz` and carry aggregate counts
+// only — never a refused URL or a session identifier.
 import { createServer } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { containmentMetrics } from './containment.js';
 
 /** Default port for the remote transport. */
 export const DEFAULT_SSE_PORT = 3001;
@@ -49,6 +56,43 @@ function sendJson(res, status, body, extraHeaders = {}) {
   const text = JSON.stringify(body, null, 2);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(text), 'X-Content-Type-Options': 'nosniff', ...extraHeaders });
   res.end(text);
+}
+
+/**
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} status
+ * @param {string} text
+ * @param {string} contentType
+ */
+function sendText(res, status, text, contentType) {
+  res.writeHead(status, { 'Content-Type': contentType, 'Content-Length': Buffer.byteLength(text), 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' });
+  res.end(text);
+}
+
+/**
+ * Containment counters and the session gauge in the Prometheus text format. The
+ * categories are sorted so a scrape diff shows real movement rather than a
+ * reordered exposition.
+ * @param {number} sessionCount @param {number} sessionCeiling @returns {string}
+ */
+function prometheusMetrics(sessionCount, sessionCeiling) {
+  const { containment } = containmentMetrics();
+  const lines = [
+    '# HELP navi_containment_enforced 1 while the private-network policy is active, 0 when NAVI_ALLOW_LOCAL_NETWORK=1 disabled it.',
+    '# TYPE navi_containment_enforced gauge',
+    `navi_containment_enforced ${containment.enforced ? 1 : 0}`,
+    '# HELP navi_containment_violations_total Destinations refused by the containment policy since process start.',
+    '# TYPE navi_containment_violations_total counter',
+    `navi_containment_violations_total ${containment.violations_total}`,
+    '# HELP navi_containment_violations Destinations refused by the containment policy, by category.',
+    '# TYPE navi_containment_violations counter'
+  ];
+  for (const category of Object.keys(containment.violations_by_category).sort()) lines.push(`navi_containment_violations{category="${category}"} ${containment.violations_by_category[category]}`);
+  lines.push(
+    '# HELP navi_mcp_sessions Open SSE sessions.', '# TYPE navi_mcp_sessions gauge', `navi_mcp_sessions ${sessionCount}`,
+    '# HELP navi_mcp_sessions_max Configured SSE session ceiling.', '# TYPE navi_mcp_sessions_max gauge', `navi_mcp_sessions_max ${sessionCeiling}`
+  );
+  return `${lines.join('\n')}\n`;
 }
 
 /**
@@ -340,13 +384,20 @@ export async function createSseServer(options) {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/metrics') {
+      // A scraper asking for OpenMetrics text gets the same body: the counters it
+      // reads are identical, and the version parameter names the format served.
+      sendText(res, 200, prometheusMetrics(sessions.size, maxSessions), 'text/plain; version=0.0.4; charset=utf-8');
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      sendJson(res, 200, { ok: true, transport: 'sse', sessions: sessions.size, maxSessions, auth: authToken ? 'bearer' : 'none', idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES });
+      sendJson(res, 200, { ok: true, transport: 'sse', sessions: sessions.size, maxSessions, auth: authToken ? 'bearer' : 'none', idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES, containment: containmentMetrics().containment });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/') {
-      sendJson(res, 200, { ok: true, transport: 'sse', endpoints: { stream: 'GET /sse', messages: 'POST /message?sessionId=<id>', health: 'GET /healthz' } });
+      sendJson(res, 200, { ok: true, transport: 'sse', endpoints: { stream: 'GET /sse', messages: 'POST /message?sessionId=<id>', health: 'GET /healthz', metrics: 'GET /metrics' } });
       return;
     }
 
