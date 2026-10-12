@@ -12,9 +12,11 @@ This document is both a record of what was built and a plan for what was not. Ev
 | Tenant key registry | implemented | `server/tenants.js` |
 | Remote MCP transport (SSE) and session hydration | implemented | `src/mcp/sse.js`, `src/mcp/server.js` |
 | Verified per-request service tests | implemented | `tests/backend-ingest.spec.mjs`, `tests/mcp-sse.spec.mjs`, `tests/session-hydration.spec.mjs` |
+| Per-tenant ingest rate limiting | implemented | `server/index.js`, `POST /v1/telemetry`, `POST /v1/telemetry/violations` |
+| Violation retention and log compaction | implemented | `server/store.js`, `POST /v1/tenants/:id/maintenance/prune` |
 | Account/session identity, ownership verification, dashboards | planned | not implemented |
-| Rate limiting, quotas, billing, TLS termination | planned | not implemented |
-| Warehouse/ETL, alerting, retention and purge jobs | planned | not implemented |
+| Quotas, billing, shared limiter across replicas, TLS termination | planned | not implemented |
+| Warehouse/ETL and alerting | planned | not implemented |
 | On-prem/edge deployment story | planned | not implemented |
 
 Run the service with `npm run serve` (defaults to `127.0.0.1:8790`, store `server/telemetry.db`) or embed it with `createNaviHostServer(options)`, which listens and resolves `{ server, port, host, store, tenants, close }`.
@@ -126,9 +128,27 @@ A containment refusal is the one event this service must be able to show a tenan
 
 `GET /v1/tenants/<tenant_id>/security-audit` returns `{ ok, tenant_id, count, limit, since, violations }`, newest first, with `?limit=` (default 50, hard maximum 200) and `?since=` (ISO-8601, inclusive). It is `no-store, private` and authenticated with a **Bearer** key only: a key in a query string is one that ends up in URLs, referrers and proxy logs. A key that resolves to a different tenant than the path names is `403 FORBIDDEN`, decided after the key is checked so an anonymous caller cannot probe which tenants exist.
 
-**Trust model, stated plainly:** as with the beacon route, a caller who can reach this host and knows a tenant id can file a record for it — the key is the stronger form of the two, and a key presented with a disagreeing body is refused. There is no per-user auth, no TLS, no retention policy and no rate limiting; treat these records as operator-visible audit evidence, not as a compliance system.
+**Trust model, stated plainly:** as with the beacon route, a caller who can reach this host and knows a tenant id can file a record for it — the key is the stronger form of the two, and a key presented with a disagreeing body is refused. There is no per-user auth and no TLS; treat these records as operator-visible audit evidence, not as a compliance system.
 
 What is *not* there: no batch id, no deduplication, no SDK-version dimension, no day buckets, no per-route keys, and no Origin/CORS enforcement on ingestion (a non-browser client can post). The counts are honest aggregates for a dashboard experiment, not billable usage — see the warning below.
+
+### Implemented: retention, compaction and ingestion ceilings
+
+An audit trail that grows forever stops being readable and starts being a liability, so the store prunes what it keeps:
+
+- **Window.** `pruneViolations({ max_age_days, tenant_id })` deletes violations older than the window, for one tenant or for all. The window is validated rather than trusted: zero, negative, `NaN` and anything above `MAX_RETENTION_DAYS` (36,500) are refused, because SQLite's date modifier returns `NULL` for a value it cannot parse and a `NULL` comparison deletes nothing at all — a silent no-op is worse than an error.
+- **SQLite.** One bound `DELETE` per scope. The comparison is `julianday(created_at) < julianday('now', '-' || ? || ' days')` and not a text comparison against `datetime('now', …)`: `created_at` is ISO-8601 with a `T` separator and a `Z`, `datetime()` renders a space and no zone, and `T` sorts above the space — so the text form would spare every row on the day the cutoff falls in. A database this code creates is opened `PRAGMA auto_vacuum = INCREMENTAL`, and a prune that removed rows runs `PRAGMA incremental_vacuum`; on an older file that pragma is a no-op and `VACUUM` is the operator's tool.
+- **JSONL.** The log is compacted, not rewritten in place: it is streamed line by line to a temporary file that is then renamed over the original, so a reader sees the old file or the new one and never a mixture, and a failed rewrite leaves the original untouched. Aggregate lines are copied verbatim. Surviving violation lines gain an explicit `id` — the id a reader already holds for them — so a prune cannot renumber an audit trail, and a final `navi_store_meta` line records the highest id ever issued so the next append continues past it across a restart. Mutations are serialized within the process, so an append lands either before the rewrite or after it; the backend remains single-writer by design.
+- **Scheduling.** `NAVI_RETENTION_DAYS` (default **30**, `0` disables) sweeps at startup and every six hours (`RETENTION_SWEEP_INTERVAL_MS`), off the request path. A sweep that fails is logged and retried on the next tick rather than thrown: ingestion is unaffected by a prune that did not happen. `GET /healthz` reports `retention_days`, so a disabled sweep is visible rather than silent.
+- **On demand.** `POST /v1/tenants/<tenant_id>/maintenance/prune` deletes the authenticated tenant's expired records and answers `{ ok, tenant_id, max_age_days, pruned_count, remaining_count }`. Bearer only (a query-string key is refused here for the same reason the audit read refuses one), `403` for another tenant's path, an optional `{ "max_age_days": n }` body of an integer `1…36,500`, and the configured retention as its default — never `0`, which would read as "prune nothing" while looking like "prune everything". Only violations are deleted; aggregates and other tenants are untouched.
+
+Ingestion is bounded per tenant from the other side, on `POST /v1/telemetry` and `POST /v1/telemetry/violations` alike:
+
+- **A token bucket per tenant:** `NAVI_RATE_LIMIT_PER_MINUTE` (default **120**) refilled continuously, with a burst allowance of `NAVI_RATE_LIMIT_BURST` (default **30**); either set to `0` disables limiting. Tenants are keyed independently, so one noisy page cannot silence another.
+- **A refusal that costs nothing:** over the ceiling the answer is `429 RATE_LIMITED` with `Retry-After` (whole seconds, floor 1), `X-RateLimit-Limit` and `X-RateLimit-Remaining: 0`. Nothing is parsed or stored for it. Accepted responses carry `X-RateLimit-Limit` and `X-RateLimit-Remaining` so a client can pace itself.
+- **When the charge happens:** a request that presents a tenant key is charged before its body is read, so a caller over its ceiling cannot make this service parse anything; an unauthenticated beacon is charged once its payload names a tenant, after validation, so a malformed body is still a `400` rather than a quota answer. Both routes share one bucket per tenant, so switching routes is not an escape.
+- **Bounded memory:** a bucket is forgotten after ten idle minutes (`RATE_LIMIT_IDLE_MS`), swept on a timer and again on demand when the map passes `RATE_LIMIT_SWEEP_THRESHOLD`, so the map tracks active tenants rather than every tenant ever seen. Being per process, two replicas each allow the full rate — this is a bound on one process, not a global quota, and the shared edge is where a fleet-wide limit belongs.
+- **The audit consequence:** the MCP forwarder posts violations through this same route, so a tenant whose refusals exceed its ceiling has those forwards answered `429`, which the forwarder counts as `failed` rather than retrying. Raise the ceiling for such a tenant or alert on that counter; the alternative — an unbounded retry — is exactly what the fail-safe boundary exists to prevent.
 
 ### Planned: the richer versioned event contract
 
@@ -156,6 +176,7 @@ Planned endpoints:
 | `GET /v1/telemetry?key=…` | tenant aggregate | tenant key; private, no-store | implemented |
 | `POST /v1/telemetry/violations` | one containment violation | tenant key; six categories; sanitized origin+path; 2048-byte cap | implemented |
 | `GET /v1/tenants/:id/security-audit` | that tenant's blocked destinations | Bearer key; own tenant only; limit/since | implemented |
+| `POST /v1/tenants/:id/maintenance/prune` | delete that tenant's expired violations | Bearer key; own tenant only; `max_age_days` 1…36500 | implemented |
 | `POST /v1/events` | versioned batched metrics with dedup | verified exact Origin + site match + limits | planned |
 | `GET /v1/sites/:id/daily?from=…&to=…` | tenant metrics | session + membership; capped range | planned |
 | `POST /v1/sites` | register website | session + CSRF/origin + ownership proof | planned |
@@ -213,14 +234,14 @@ Provision account/membership tables through the selected auth design; the schema
 
 Store raw dedup ids for 24 hours, aggregate daily buckets for an initially documented 90-day window. Retry only inside the dedup window; very old retries must be discarded by the client or can double count after expiry. Purge in bounded indexed batches, not unbounded locks during peak traffic. `scan_ms_sum/batches` gives a mean, **not p95**; add bounded histograms only if users need latency percentiles.
 
-## 5. Cost and abuse controls — planned
+## 5. Cost and abuse controls — partly implemented
 
-None of this is implemented. The service has no rate limiting, no quotas, no IP or per-key token buckets, no request deadlines beyond the body cap, and no operational counters beyond its log lines. Anyone with the tenant key can read that tenant's aggregate, and anyone at all can post telemetry for a registered tenant id.
+Implemented: a per-tenant token bucket on both ingest routes, with `429` and `Retry-After` once a tenant exceeds `120` requests a minute and a burst of `30`. Not implemented: quotas and billing, an IP-level bucket for unauthenticated beacons, a budget shared across replicas, request deadlines beyond the body cap, and operational counters beyond the log lines. Anyone with the tenant key can read that tenant's aggregate, and anyone at all can post telemetry for a registered tenant id.
 
 Planned controls:
 
 - Browser integration batches counts (for example once per minute with randomized jitter); do not emit one request per DOM mutation or tagged node. Initial/manual instrumentation and a best-effort unload beacon can lose events; do not promise exactly-once client delivery.
-- Apply IP and per-tenant token buckets, a shared budget, body limits, connection/request deadlines and bounded dedup cardinality. Trust proxy IP headers only from your actual reverse proxy. On `429`, honor `Retry-After`; bounded exponential backoff with jitter and no indefinitely growing browser queue.
+- The per-tenant bucket ships; what remains is an IP-level bucket for the unauthenticated beacon route, a shared budget across replicas, body limits per tenant, connection/request deadlines and bounded dedup cardinality. Trust proxy IP headers only from your actual reverse proxy. On `429`, honor `Retry-After`; bounded exponential backoff with jitter and no indefinitely growing browser queue.
 - In a one-process MVP, in-memory token buckets are bounded and reset on restart. Before running multiple replicas, enforce limits at the shared edge or introduce a shared limiter; independent counters do not provide a global limit.
 - Record operational counters: accepted/rejected events, queue/write latency, DB busy errors, event loss estimate, asset cache-hit ratio, script failure rate. Logs must redact payloads, credentials and full request URLs. Minimize IP retention and explain analytics data handling in the privacy policy.
 - Expose liveness separately from store readiness (`GET /healthz` reports only the store mode and tenant count today). Graceful shutdown must drain accepted writes; backups must use SQLite's backup mechanism or a safe snapshot, not a blind copy of an active WAL database. Encrypt disks/backups, test restores, and cap aggregate queries.

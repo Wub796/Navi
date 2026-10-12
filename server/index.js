@@ -10,6 +10,7 @@
 //   GET  /v1/telemetry?key=<tenant_key> read that tenant's aggregate
 //   POST /v1/telemetry/violations       ingest one containment violation
 //   GET  /v1/tenants/<id>/security-audit read that tenant's blocked destinations
+//   POST /v1/tenants/<id>/maintenance/prune  prune that tenant's expired records
 //   GET  /healthz                       liveness, store mode and tenant count
 //   GET  /.well-known/navi.json         public agent discovery document
 //   GET  /v1/source                     offer of the Corresponding Source (AGPL-3.0 §13)
@@ -26,6 +27,13 @@
 // Ingestion stores aggregates only. A payload is exactly the five documented
 // fields, is capped at 2 KB, and its `url_origin` must be a canonical origin, so
 // page URLs, query strings, credentials and raw DOM text cannot be recorded.
+//
+// Two bounds keep that intake from becoming the operator's problem. Each tenant
+// gets an in-memory token bucket on the two ingest routes, so one page or one
+// misconfigured forwarder cannot saturate the store; and expired violations are
+// pruned on a schedule, so the audit trail does not grow without bound. Neither
+// touches distribution: serving the bundle never consults the limiter or the
+// store.
 
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -33,7 +41,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createStore, DEFAULT_VIOLATION_LIMIT, MAX_VIOLATION_LIMIT } from './store.js';
+import { createStore, DEFAULT_RETENTION_DAYS, DEFAULT_VIOLATION_LIMIT, MAX_RETENTION_DAYS, MAX_VIOLATION_LIMIT } from './store.js';
 import { loadTenants, tenantFor, tenantIds } from './tenants.js';
 
 /** Hard cap for one telemetry beacon body. */
@@ -112,6 +120,109 @@ export const VIOLATION_CATEGORIES = ['metadata_endpoint', 'private_ipv4', 'loopb
 export const MAX_VIOLATION_URL_CHARS = 512;
 /** Longest session identifier accepted. */
 export const MAX_SESSION_ID_CHARS = 128;
+/** Ingestion ceiling per tenant: requests per minute, replenished continuously. */
+export const RATE_LIMIT_PER_MINUTE = 120;
+/** How many requests a tenant may send back to back before that ceiling applies. */
+export const RATE_LIMIT_BURST = 30;
+/** How long an untouched tenant bucket is remembered, in milliseconds. */
+export const RATE_LIMIT_IDLE_MS = 10 * 60 * 1000;
+/** Sweep cadence for idle buckets, in milliseconds. */
+export const RATE_LIMIT_SWEEP_MS = 60 * 1000;
+/**
+ * Bucket count that triggers a sweep on the next request. The timer alone is not
+ * enough: a flood of distinct tenant ids would otherwise grow the map for a full
+ * sweep interval before anything removed the entries.
+ */
+export const RATE_LIMIT_SWEEP_THRESHOLD = 1000;
+/** How often the automatic retention sweep runs, in milliseconds. */
+export const RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * @typedef {{allowed: boolean, remaining: number, retryAfterSeconds: number}} RateVerdict
+ * @typedef {{enabled: boolean, perMinute: number, burst: number, size: number, take(key: string): RateVerdict, sweep(at?: number): number, reset(): void, close(): void}} RateLimiter
+ */
+
+/**
+ * A token bucket per tenant, held in this process and nowhere else.
+ *
+ * Bounded memory is the whole reason this is a class of its own: a bucket is
+ * created on first use, refilled continuously at `perMinute`, and forgotten once
+ * it has been untouched for `idleMs`, so the map is a function of how many
+ * tenants are active right now rather than of how many have ever been seen.
+ * `perMinute` or `burst` of `0` disables limiting entirely.
+ * @param {{perMinute?: number, burst?: number, idleMs?: number, sweepIntervalMs?: number, now?: () => number, timer?: boolean}} [options]
+ * @returns {RateLimiter}
+ */
+export function createRateLimiter(options = {}) {
+  const perMinute = options.perMinute ?? RATE_LIMIT_PER_MINUTE;
+  const burst = options.burst ?? RATE_LIMIT_BURST;
+  const idleMs = options.idleMs ?? RATE_LIMIT_IDLE_MS;
+  const enabled = perMinute > 0 && burst > 0;
+  const now = options.now ?? (() => Date.now());
+  /** Tokens added per millisecond: a minute's allowance spread across the minute. */
+  const refillPerMs = perMinute / 60000;
+  /** @type {Map<string, {tokens: number, at: number}>} */
+  const buckets = new Map();
+  /** @param {number} [at] @returns {number} buckets removed */
+  const sweep = (at = now()) => {
+    let removed = 0;
+    for (const [key, bucket] of buckets) {
+      if (at - bucket.at >= idleMs) {
+        buckets.delete(key);
+        removed += 1;
+      }
+    }
+    return removed;
+  };
+  let timer = /** @type {ReturnType<typeof setInterval> | null} */ (null);
+  if (enabled && options.timer !== false) {
+    timer = setInterval(() => sweep(), options.sweepIntervalMs ?? RATE_LIMIT_SWEEP_MS);
+    // Never hold the process open, and never a reason for a test to hang.
+    timer.unref?.();
+  }
+  return {
+    enabled,
+    perMinute,
+    burst,
+    get size() { return buckets.size; },
+    /** @param {string} key @returns {RateVerdict} */
+    take(key) {
+      if (!enabled) return { allowed: true, remaining: 0, retryAfterSeconds: 0 };
+      const at = now();
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        if (buckets.size >= RATE_LIMIT_SWEEP_THRESHOLD) sweep(at);
+        bucket = { tokens: burst, at };
+        buckets.set(key, bucket);
+      } else {
+        // Refill by elapsed time, capped at the burst allowance, so an idle tenant
+        // banks nothing beyond it.
+        bucket.tokens = Math.min(burst, bucket.tokens + (at - bucket.at) * refillPerMs);
+        bucket.at = at;
+      }
+      if (bucket.tokens < 1) {
+        const missing = 1 - bucket.tokens;
+        return { allowed: false, remaining: 0, retryAfterSeconds: Math.max(1, Math.ceil(missing / refillPerMs / 1000)) };
+      }
+      bucket.tokens -= 1;
+      return { allowed: true, remaining: Math.floor(bucket.tokens), retryAfterSeconds: 0 };
+    },
+    sweep,
+    reset() { buckets.clear(); },
+    close() { if (timer) clearInterval(timer); timer = null; }
+  };
+}
+
+/**
+ * Read a non-negative integer from the environment, falling back when it is
+ * absent or unparseable. `0` is a value, not an absence: it means "off".
+ * @param {string | undefined} value @param {number} fallback @returns {number}
+ */
+function countFromEnv(value, fallback) {
+  if (value === undefined || value === '') return fallback;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.trunc(number) : fallback;
+}
 
 const USAGE = `navi-host · script distribution and telemetry ingestion
 
@@ -125,6 +236,7 @@ Endpoints
   GET  /v1/telemetry?key=<tenant_key>
   POST /v1/telemetry/violations
   GET  /v1/tenants/<tenant_id>/security-audit
+  POST /v1/tenants/<tenant_id>/maintenance/prune
   GET  /healthz
   GET  /.well-known/navi.json
   GET  /v1/source
@@ -142,6 +254,17 @@ Environment
                    https://github.com/Wub796/Navi. Set it to your own repository
                    when serving a modified version: AGPL-3.0 section 13 requires
                    the source of the version that is actually running.
+  NAVI_RETENTION_DAYS      Days of containment violations to keep. Default 30;
+                           0 disables the automatic sweep, and the maintenance
+                           route keeps working with an explicit max_age_days.
+  NAVI_RATE_LIMIT_PER_MINUTE
+                           Ingestion requests per minute per tenant. Default 120;
+                           0 disables limiting. Raise it for a tenant whose
+                           refusal rate exceeds the default, because a rate-limited
+                           forward is an audit record the MCP server counts as
+                           failed rather than retrying.
+  NAVI_RATE_LIMIT_BURST    Burst allowance above that rate. Default 30; 0 disables
+                           limiting.
 `;
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -385,9 +508,9 @@ function validateViolation(payload, allowedTenantIds, keyTenantId) {
 /**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
- * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void}} HostOptions
- * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: Map<string, string>, close(): Promise<void>}} NaviHost
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
+ * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter}} HostOptions
+ * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: Map<string, string>, limiter: RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
  */
 
 /**
@@ -407,6 +530,15 @@ export async function createNaviHostServer(options = {}) {
   const log = options.log ?? (() => {});
   const allowedTenantIds = tenantIds(tenants);
   const sourceUrl = options.sourceUrl ?? process.env.NAVI_SOURCE_URL ?? SOURCE_REPOSITORY_URL;
+  const retentionDays = options.retentionDays ?? countFromEnv(process.env.NAVI_RETENTION_DAYS, DEFAULT_RETENTION_DAYS);
+  const retentionIntervalMs = Math.max(50, options.retentionIntervalMs ?? RETENTION_SWEEP_INTERVAL_MS);
+  // The limiter is per process, exactly like the store it protects: two replicas
+  // behind one address each allow the full rate, so enforcement belongs at the
+  // shared edge once there is more than one.
+  const limiter = options.rateLimiter ?? createRateLimiter({
+    perMinute: countFromEnv(process.env.NAVI_RATE_LIMIT_PER_MINUTE, RATE_LIMIT_PER_MINUTE),
+    burst: countFromEnv(process.env.NAVI_RATE_LIMIT_BURST, RATE_LIMIT_BURST)
+  });
   /**
    * Both relations in one header value, on every response this service emits: the
    * discovery document and the Corresponding Source. RFC 8288 allows several
@@ -465,6 +597,50 @@ export async function createNaviHostServer(options = {}) {
     Vary: 'Accept-Encoding'
   });
 
+  /**
+   * Charge one ingest request against its tenant's bucket. Returns the verdict the
+   * request proceeds under, or null after answering `429` — in which case the
+   * caller must send nothing further. `Retry-After` is whole seconds with a floor
+   * of one, because a header asking a client to retry in zero seconds is a loop.
+   * @param {import('node:http').ServerResponse} res
+   * @param {string} tenantId
+   * @returns {RateVerdict | null}
+   */
+  function chargeIngest(res, tenantId) {
+    if (!limiter.enabled) return { allowed: true, remaining: 0, retryAfterSeconds: 0 };
+    const verdict = limiter.take(tenantId);
+    if (verdict.allowed) return verdict;
+    sendError(res, 429, 'RATE_LIMITED', `Tenant "${tenantId}" has used its ${limiter.perMinute} ingestion requests per minute (burst ${limiter.burst}). Retry after ${verdict.retryAfterSeconds}s; raise NAVI_RATE_LIMIT_PER_MINUTE if this tenant legitimately reports more.`, {
+      'Retry-After': String(verdict.retryAfterSeconds),
+      'X-RateLimit-Limit': String(limiter.perMinute),
+      'X-RateLimit-Remaining': '0'
+    });
+    return null;
+  }
+
+  /** The same counters on an accepted response, so a client can pace itself.
+   * @param {RateVerdict} verdict @returns {Record<string, string>} */
+  function rateLimitHeaders(verdict) {
+    return limiter.enabled ? { 'X-RateLimit-Limit': String(limiter.perMinute), 'X-RateLimit-Remaining': String(verdict.remaining) } : {};
+  }
+
+  /**
+   * Drop violations past the retention window, for every tenant at once, off the
+   * request path. A sweep that fails is reported and retried on the next tick
+   * rather than thrown: ingestion is unaffected by a prune that did not happen,
+   * and a background timer that can crash the process is worse than a late prune.
+   * @returns {Promise<void>}
+   */
+  async function sweepRetention() {
+    if (!(retentionDays > 0) || typeof store.pruneViolations !== 'function') return;
+    try {
+      const result = await store.pruneViolations({ max_age_days: retentionDays });
+      if (result.pruned_count > 0) log(`retention: pruned ${result.pruned_count} violation(s) older than ${retentionDays} day(s)`);
+    } catch (error) {
+      log(`retention sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   const server = createServer((req, res) => {
     // Every response, including errors, 304s and redirects, advertises both
     // relations. Setting it here rather than inside each route is what makes
@@ -519,7 +695,10 @@ export async function createNaviHostServer(options = {}) {
 
     if (path === '/healthz') {
       if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /healthz.');
-      return sendJson(res, 200, { ok: true, mode: store.mode, tenants: tenants.size });
+      // `retention_days` is configuration rather than health, and it is published
+      // here because 0 means "nothing is being pruned": an operator should be able
+      // to see that from the same endpoint they use to check the store is up.
+      return sendJson(res, 200, { ok: true, mode: store.mode, tenants: tenants.size, retention_days: retentionDays });
     }
 
     if (path === '/v1/navi.js') {
@@ -592,6 +771,12 @@ export async function createNaviHostServer(options = {}) {
       }
       const keyTenantId = presented ? tenantFor(tenants, presented) : null;
       if (presented && !keyTenantId) return sendError(res, 401, 'UNKNOWN_TENANT', 'The presented tenant key is not registered.');
+      // A presented key names the tenant before the body is read, so the quota is
+      // charged now: a caller over its ceiling cannot make this service parse or
+      // store anything at all. Without a key the tenant arrives in the payload, and
+      // the charge waits for validation so a malformed body is still a 400.
+      const keyCharge = keyTenantId ? chargeIngest(res, keyTenantId) : null;
+      if (keyTenantId && !keyCharge) return;
 
       await new Promise(/** @param {(value?: void) => void} resolveBody */ resolveBody => {
         readBody(req, MAX_PAYLOAD_BYTES, result => {
@@ -620,9 +805,14 @@ export async function createNaviHostServer(options = {}) {
             resolveBody();
             return;
           }
+          const charge = keyCharge ?? chargeIngest(res, verdict.record.tenant_id);
+          if (!charge) {
+            resolveBody();
+            return;
+          }
           void store
             .recordViolation(verdict.record)
-            .then(record => sendJson(res, 202, { ok: true, accepted: true, tenant_id: record.tenant_id, id: record.id }))
+            .then(record => sendJson(res, 202, { ok: true, accepted: true, tenant_id: record.tenant_id, id: record.id }, rateLimitHeaders(charge)))
             .catch(error => sendError(res, 500, 'STORE_FAILED', `The violation could not be stored: ${error instanceof Error ? error.message : String(error)}`))
             .finally(() => resolveBody());
         });
@@ -663,6 +853,94 @@ export async function createNaviHostServer(options = {}) {
       }
       const violations = await store.queryViolations(since === null ? { tenant_id: tenantId, limit } : { tenant_id: tenantId, limit, since });
       return sendJson(res, 200, { ok: true, tenant_id: tenantId, count: violations.length, limit, since, violations }, { 'Cache-Control': 'no-store, private' });
+    }
+
+    // Maintenance is a tenant-scoped write, so it is authenticated exactly as the
+    // audit read is: a Bearer key, never a query string, and never another tenant's
+    // records. Deleting by tenant is the one thing this route can do, and the
+    // tenant it deletes for is the key's, not the path's.
+    const pruneMatch = /^\/v1\/tenants\/([^/]+)\/maintenance\/prune$/.exec(path);
+    if (pruneMatch) {
+      if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/tenants/<tenant_id>/maintenance/prune.');
+      const authorization = req.headers.authorization;
+      const token = typeof authorization === 'string' && authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '';
+      const tenantId = tenantFor(tenants, token);
+      if (!tenantId) {
+        return sendError(res, 401, 'UNAUTHORIZED', 'A prune requires "Authorization: Bearer <tenant_key>"; query-string keys are not accepted on this route.');
+      }
+      let requested = '';
+      try {
+        requested = decodeURIComponent(String(pruneMatch[1] ?? ''));
+      } catch {
+        return sendError(res, 400, 'INVALID_PAYLOAD', 'The tenant id in the path is not valid percent-encoding.');
+      }
+      if (requested !== tenantId) {
+        return sendError(res, 403, 'FORBIDDEN', `The presented key resolves to "${tenantId}", not "${requested}". A prune is confined to its own tenant.`);
+      }
+      // A disabled sweep is not a disabled route: an explicit window still works,
+      // and its default is the configured retention — never the value that means
+      // "do not sweep", which would read as "prune nothing" and delete nothing.
+      const defaultDays = retentionDays > 0 ? retentionDays : DEFAULT_RETENTION_DAYS;
+      const pruneType = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+      const pruneLength = Number(req.headers['content-length'] ?? '');
+      if (Number.isFinite(pruneLength) && pruneLength > MAX_PAYLOAD_BYTES) {
+        req.resume();
+        return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Prune bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
+      }
+      await new Promise(/** @param {(value?: void) => void} resolvePrune */ resolvePrune => {
+        readBody(req, MAX_PAYLOAD_BYTES, result => {
+          if (result.tooLarge) {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Prune bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
+            resolvePrune();
+            return;
+          }
+          const raw = (result.raw ?? '').trim();
+          /** @type {Record<string, unknown>} */
+          let payload = {};
+          if (raw) {
+            if (pruneType !== 'application/json') {
+              sendError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Send a prune window as application/json, or omit the body to use the configured retention.');
+              resolvePrune();
+              return;
+            }
+            /** @type {unknown} */
+            let parsed;
+            try {
+              parsed = JSON.parse(raw);
+            } catch {
+              sendError(res, 400, 'INVALID_PAYLOAD', 'The body must be valid JSON.');
+              resolvePrune();
+              return;
+            }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+              sendError(res, 400, 'INVALID_PAYLOAD', 'The body must be a JSON object such as {"max_age_days": 30}, or absent.');
+              resolvePrune();
+              return;
+            }
+            payload = /** @type {Record<string, unknown>} */ (parsed);
+          }
+          const unknown = Object.keys(payload).filter(key => key !== 'max_age_days');
+          if (unknown.length) {
+            sendError(res, 400, 'INVALID_PAYLOAD', `Unknown field(s): ${unknown.join(', ')}. The only accepted field is max_age_days.`);
+            resolvePrune();
+            return;
+          }
+          const days = payload.max_age_days === undefined ? defaultDays : payload.max_age_days;
+          // Strictly a number: a numeric string is a different client contract, and
+          // accepting one here would quietly make `"0"` mean something.
+          if (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > MAX_RETENTION_DAYS) {
+            sendError(res, 400, 'INVALID_PAYLOAD', `max_age_days must be an integer between 1 and ${MAX_RETENTION_DAYS}.`);
+            resolvePrune();
+            return;
+          }
+          void store
+            .pruneViolations({ max_age_days: days, tenant_id: tenantId })
+            .then(result => sendJson(res, 200, { ok: true, tenant_id: tenantId, max_age_days: days, pruned_count: result.pruned_count, remaining_count: result.remaining_count }))
+            .catch(error => sendError(res, 500, 'STORE_FAILED', `The prune failed: ${error instanceof Error ? error.message : String(error)}`))
+            .finally(() => resolvePrune());
+        });
+      });
+      return;
     }
 
     if (path === '/v1/telemetry') {
@@ -712,10 +990,19 @@ export async function createNaviHostServer(options = {}) {
             resolveBody();
             return;
           }
+          // The beacon route is unauthenticated by design, so the tenant is only
+          // known from the payload: the charge follows validation and precedes the
+          // write, which is the only ordering that both refuses a flood and tells a
+          // malformed request apart from a rate-limited one.
+          const charge = chargeIngest(res, verdict.record.tenant_id);
+          if (!charge) {
+            resolveBody();
+            return;
+          }
           const record = { ...verdict.record, received_at: new Date().toISOString() };
           void store
             .append(record)
-            .then(() => sendJson(res, 202, { ok: true, accepted: true, tenant_id: record.tenant_id, url_origin: record.url_origin }))
+            .then(() => sendJson(res, 202, { ok: true, accepted: true, tenant_id: record.tenant_id, url_origin: record.url_origin }, rateLimitHeaders(charge)))
             .catch(error => sendError(res, 500, 'STORE_FAILED', `The aggregate could not be stored: ${error instanceof Error ? error.message : String(error)}`))
             .finally(() => resolveBody());
         });
@@ -735,7 +1022,18 @@ export async function createNaviHostServer(options = {}) {
   });
   const address = server.address();
   const boundPort = typeof address === 'object' && address ? address.port : requestedPort;
-  log(`listening on http://${host}:${boundPort} (store: ${store.mode}, tenants: ${tenants.size})`);
+  // A restart is exactly when an unattended store needs a sweep, so the first one
+  // runs now and the interval only has to cover a process that stays up. The timer
+  // is unref'd: it must never be the reason a process is still alive.
+  const retentionTimer = retentionDays > 0 && typeof store.pruneViolations === 'function'
+    ? (() => {
+      const timer = setInterval(() => { void sweepRetention(); }, retentionIntervalMs);
+      timer.unref?.();
+      return timer;
+    })()
+    : null;
+  void sweepRetention();
+  log(`listening on http://${host}:${boundPort} (store: ${store.mode}, tenants: ${tenants.size}, retention: ${retentionDays > 0 ? `${retentionDays}d` : 'off'}, rate limit: ${limiter.enabled ? `${limiter.perMinute}/min burst ${limiter.burst}` : 'off'})`);
 
   let closed = false;
   return {
@@ -744,9 +1042,13 @@ export async function createNaviHostServer(options = {}) {
     host,
     store,
     tenants,
+    limiter,
+    retention: { days: retentionDays, intervalMs: retentionIntervalMs },
     async close() {
       if (closed) return;
       closed = true;
+      if (retentionTimer) clearInterval(retentionTimer);
+      limiter.close();
       await new Promise(/** @param {(value?: void) => void} resolveClose */ resolveClose => server.close(() => resolveClose()));
       await store.close();
     }
