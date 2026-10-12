@@ -31,6 +31,13 @@ import { containmentForwardingMetrics, containmentMetrics } from './containment.
 
 /** Default port for the remote transport. */
 export const DEFAULT_SSE_PORT = 3001;
+/**
+ * Hard deadline for a graceful stop, in milliseconds. A browser that will not
+ * close must not hold the process open forever: past this the HTTP side is shut
+ * down anyway and the remaining cleanup is reported rather than joined. The host
+ * service declares the same number, and a test asserts the two agree.
+ */
+export const SHUTDOWN_DEADLINE_MS = 5000;
 /** Largest accepted JSON-RPC POST body. Requests are messages, not documents. */
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
 /** Comment-frame interval; keeps intermediaries from reaping an idle stream. */
@@ -436,9 +443,23 @@ export async function createSseServer(options) {
     close: async () => {
       stopping = true;
       for (const entry of [...sessions.values()]) release(entry, 'server shutdown');
-      const results = await Promise.allSettled([...cleanupTasks]);
+      // Every session has been asked to close, which is what terminates its browser
+      // and removes its download directory. The join is bounded: a cleanup that does
+      // not finish in time is reported and abandoned, because a stop that one wedged
+      // browser can hold open is not a stop.
+      const results = await Promise.race([
+        Promise.allSettled([...cleanupTasks]),
+        new Promise(/** @param {(value: null) => void} resolve */ resolve => {
+          const timer = setTimeout(() => resolve(null), SHUTDOWN_DEADLINE_MS);
+          timer.unref?.();
+        })
+      ]);
       server.closeAllConnections();
       await new Promise(/** @param {(value?: void) => void} resolve */ resolve => server.close(() => resolve()));
+      if (!Array.isArray(results)) {
+        log(`browser cleanup did not finish within ${SHUTDOWN_DEADLINE_MS}ms; shutting the transport down anyway`);
+        return;
+      }
       const failed = results.find(result => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
     }

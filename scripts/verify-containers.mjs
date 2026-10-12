@@ -183,6 +183,23 @@ try {
   assert(afterPrune.count === 1 && afterPrune.violations[0].id === audit.violations[0].id, 'compaction lost or renumbered a record inside the retention window');
   assert(hostHealth.retention_days === 30, `unexpected default retention window ${hostHealth.retention_days}`);
   record('retention-maintenance', `a ${hostHealth.mode}-backed prune kept the in-window record with id ${afterPrune.violations[0].id}, refused anonymous and cross-tenant callers, and reported a ${hostHealth.retention_days}-day window`);
+  // The host's own scrape surface, in the shipped image rather than only in
+  // process: unauthenticated and aggregate-only like the MCP exposition, with the
+  // route label drawn from the closed set rather than from the requested path.
+  await request(`${host}/metrics`);
+  const hostMetrics = await request(`${host}/metrics`);
+  assert(hostMetrics.status === 200, 'the host metrics endpoint is unavailable');
+  assert(String(hostMetrics.headers.get('content-type')).includes('version=0.0.4'), 'the host metrics endpoint did not declare the Prometheus text format');
+  assert(String(hostMetrics.headers.get('cache-control')).includes('no-store'), 'a scrape must not be cacheable');
+  const hostExposition = await hostMetrics.text();
+  for (const name of ['navi_host_requests_total', 'navi_host_rate_limited_total', 'navi_host_prune_events_total', 'navi_host_pruned_records_total', 'navi_host_active_tenants', 'navi_host_store_bytes']) {
+    assert(hostExposition.includes(`# TYPE ${name} `), `the host exposition is missing ${name}`);
+  }
+  const hostRouted = hostExposition.split('\n').filter(line => line.startsWith('navi_host_requests_total{'));
+  assert(hostRouted.length > 0 && hostRouted.every(line => /^navi_host_requests_total\{route="[a-z_.]+",status="\d{3}"\} \d+$/.test(line)), `unexpected host request series: ${hostRouted.join(' | ')}`);
+  assert(hostExposition.includes('navi_host_requests_total{route="metrics",status="200"} 1'), 'the host did not count a scrape it answered');
+  assert(!hostExposition.includes('http') && !hostExposition.includes(tenantKey) && !hostExposition.includes('container-check'), 'the host exposition must carry no URL, key or tenant identifier');
+  record('host-metrics', `${hostRouted.length} request series in ${hostExposition.trim().split('\n').length} lines scraped from the shipped host service`);
   // The containment guard is the shipped default, independent of the fixture
   // override this deployment adds: drive stdio MCP in a container that carries
   // no NAVI_ALLOW_LOCAL_NETWORK and require the metadata endpoint to be refused

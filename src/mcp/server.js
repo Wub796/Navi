@@ -18,7 +18,7 @@ import { ensureNavi, isAllowedUrl, resolveChromium, resolveSdkPath } from '../br
 import { installNavi } from '../index.js';
 // sse.js deliberately does not import this module back: the message handler is
 // passed in, so there is no import cycle between the transports.
-import { createSseServer, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_MAX_SESSIONS, DEFAULT_SSE_PORT } from './sse.js';
+import { createSseServer, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_MAX_SESSIONS, DEFAULT_SSE_PORT, SHUTDOWN_DEADLINE_MS } from './sse.js';
 
 export const SERVER_NAME = 'navi-mcp-server';
 // Read the version from the package manifest so the advertised server version can
@@ -169,6 +169,20 @@ function redactUrl(value) {
 function errorCode(error) {
   const code = /** @type {{code?: unknown}} */ (error)?.code;
   return typeof code === 'string' && code ? code : 'EXECUTION_ERROR';
+}
+
+/**
+ * Does this Playwright error say the thing being closed was already gone?
+ *
+ * Playwright's launcher installs its own SIGTERM/SIGINT handler that calls
+ * `gracefullyCloseAll()`, so a signal-driven teardown disposes launched browsers
+ * while the session is closing them too. Losing that race is the expected result
+ * of a shutdown, not a failure: the state teardown asks for already holds.
+ * @param {unknown} error
+ */
+function alreadyDisposed(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /has been closed|Failed to find context|No target with given id|Target closed|Protocol error \(Target\.closeTarget\)/i.test(message);
 }
 
 /**
@@ -1009,9 +1023,22 @@ export class NaviSession {
     this.context = null;
     this.page = null;
     this.adapter = null;
-    try { if (context) await context.close(); }
+    const dispose = async (/** @type {any} */ target, /** @type {string} */ label) => {
+      if (!target) return;
+      try { await target.close(); }
+      catch (error) {
+        // Playwright's own launch-time SIGTERM/SIGINT handler calls
+        // gracefullyCloseAll(), so a signal-driven teardown races it and finds a
+        // context or browser that is already disposed. The state this asks for
+        // already holds, so it is reported and stepped over; anything else still
+        // propagates, because a failed close of a live browser is a real leak.
+        if (!alreadyDisposed(error)) throw error;
+        this.log(`${label} was already closed when the session ended`);
+      }
+    };
+    try { await dispose(context, 'browser context'); }
     finally {
-      try { if (browser) await browser.close(); }
+      try { await dispose(browser, 'browser'); }
       finally {
         try { if (proxy) await proxy.close(); }
         finally { if (directory) await rm(directory, { recursive: true, force: true }); }
@@ -1122,14 +1149,46 @@ export async function runStdioServer(options = {}) {
     });
   });
 
+  /** Set when a termination signal, rather than a closed stdin, ended the run. */
+  let signalled = null;
   await new Promise(/** @param {(value?: void) => void} resolve */ resolve => {
     const finish = () => resolve();
     reader.on('close', finish);
     input.on?.('end', finish);
+    /** @type {Record<string, () => void>} */
+    const handlers = {};
+    for (const signal of ['SIGTERM', 'SIGINT']) {
+      handlers[signal] = () => {
+        signalled = signal;
+        // Both listeners go, so a second signal reaches the default action and an
+        // operator who insists stops the process rather than waiting out a teardown.
+        for (const [name, handler] of Object.entries(handlers)) process.removeListener(name, handler);
+        finish();
+      };
+      process.on(signal, handlers[signal]);
+    }
   });
-  await queue;
+  // A signal means the host is stopping, and the default action for one would kill
+  // this process without unwinding anything: a launched Chromium and its
+  // navi-downloads-* directory would be left behind. So stdin is released, the
+  // in-flight call is joined within the deadline the other transports share, and the
+  // session is closed, which terminates the browser and removes that directory.
+  reader.close();
+  // A plain ReadableStream offers neither, so both are asked for before they are
+  // used: this path runs for process.stdin and for a caller's own stream.
+  const stream = /** @type {{pause?: () => void, unref?: () => void}} */ (input);
+  stream.pause?.();
+  stream.unref?.();
+  const joined = await Promise.race([
+    queue.then(() => true),
+    new Promise(/** @param {(value: boolean) => void} resolve */ resolve => {
+      const timer = setTimeout(() => resolve(false), SHUTDOWN_DEADLINE_MS);
+      timer.unref?.();
+    })
+  ]);
+  if (!joined) log(`a tool call was still running after ${SHUTDOWN_DEADLINE_MS}ms; closing the session anyway`);
   await session.close();
-  log('stdin closed, session closed');
+  log(signalled ? `${signalled} received, session closed` : 'stdin closed, session closed');
 }
 
 /** Read `--flag value` from argv, falling back when absent. @param {string[]} argv @param {string} flag @param {string} fallback */

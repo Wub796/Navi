@@ -12,6 +12,7 @@
 //   GET  /v1/tenants/<id>/security-audit read that tenant's blocked destinations
 //   POST /v1/tenants/<id>/maintenance/prune  prune that tenant's expired records
 //   GET  /healthz                       liveness, store mode and tenant count
+//   GET  /metrics                       Prometheus counters for a scraper
 //   GET  /.well-known/navi.json         public agent discovery document
 //   GET  /v1/source                     offer of the Corresponding Source (AGPL-3.0 §13)
 //
@@ -81,6 +82,14 @@ export const SOURCE_REPOSITORY_URL = 'https://github.com/Wub796/Navi';
 export const SOURCE_ENDPOINT_PATH = '/v1/source';
 /** Public path this host distributes the browser bundle on, as advertised to agents. */
 export const SCRIPT_ENDPOINT_PATH = '/v1/navi.js';
+/**
+ * Tenant-scoped routes whose tenant id is a path segment, so the route itself
+ * cannot be a fixed string. Declared once and used both for routing and for the
+ * metric label: two literals would be two chances to disagree about which path
+ * was answered.
+ */
+export const AUDIT_ENDPOINT_PATTERN = /^\/v1\/tenants\/([^/]+)\/security-audit$/;
+export const PRUNE_ENDPOINT_PATTERN = /^\/v1\/tenants\/([^/]+)\/maintenance\/prune$/;
 /** Everything the browser bundle can be asked to do, advertised verbatim. */
 export const AGENT_CAPABILITIES = ['viewport_indexing', 'differential_actions', 'settlement_receipts'];
 /**
@@ -136,6 +145,14 @@ export const RATE_LIMIT_SWEEP_MS = 60 * 1000;
 export const RATE_LIMIT_SWEEP_THRESHOLD = 1000;
 /** How often the automatic retention sweep runs, in milliseconds. */
 export const RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/**
+ * Hard deadline for a graceful stop, in milliseconds: the point after which open
+ * connections are cut off rather than waited for. The MCP transport declares the
+ * same number for its own teardown, because a container's stop timeout is sized
+ * against one number rather than two; `tests/host-metrics-lifecycle.spec.mjs`
+ * asserts the two agree so they cannot drift apart.
+ */
+export const SHUTDOWN_DEADLINE_MS = 5000;
 
 /**
  * @typedef {{allowed: boolean, remaining: number, retryAfterSeconds: number}} RateVerdict
@@ -238,8 +255,13 @@ Endpoints
   GET  /v1/tenants/<tenant_id>/security-audit
   POST /v1/tenants/<tenant_id>/maintenance/prune
   GET  /healthz
+  GET  /metrics
   GET  /.well-known/navi.json
   GET  /v1/source
+
+Shutdown
+  SIGTERM/SIGINT stop accepting, drain in-flight requests for up to 5 seconds,
+  checkpoint the store and exit 0.
 
 Environment
   NAVI_TENANTS     Comma-separated key:tenantId pairs. Defaults to the local
@@ -321,6 +343,43 @@ function sendJson(res, status, body, extraHeaders = {}) {
  */
 function sendError(res, status, code, message, extraHeaders = {}) {
   sendJson(res, status, { ok: false, error: { code, message } }, extraHeaders);
+}
+
+/**
+ * Prometheus text. Unauthenticated like `/healthz`, and aggregate-only: a scrape
+ * carries counters and one `tenant_id` per throttled tenant, never a URL, a
+ * session identifier or a key. `/metrics` never consults the limiter.
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} text
+ */
+function sendMetrics(res, text) {
+  res.writeHead(200, {
+    'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+    'Content-Length': Buffer.byteLength(text),
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store'
+  });
+  res.end(text);
+}
+
+/**
+ * The closed set of route labels the host metrics expose. Anything unmatched is
+ * `other`: a label that came from the request path would let a scanner mint a
+ * series per path it tried.
+ * @param {string} path @returns {string}
+ */
+function routeLabel(path) {
+  if (path === SCRIPT_ENDPOINT_PATH) return 'navi.js';
+  if (path === '/v1/loader.js') return 'loader.js';
+  if (path === '/v1/telemetry') return 'telemetry';
+  if (path === '/v1/telemetry/violations') return 'telemetry_violations';
+  if (path === '/healthz') return 'healthz';
+  if (path === '/metrics') return 'metrics';
+  if (path === '/.well-known/navi.json') return 'discovery';
+  if (path === SOURCE_ENDPOINT_PATH) return 'source';
+  if (AUDIT_ENDPOINT_PATTERN.test(path)) return 'security_audit';
+  if (PRUNE_ENDPOINT_PATTERN.test(path)) return 'maintenance_prune';
+  return 'other';
 }
 
 /**
@@ -508,7 +567,7 @@ function validateViolation(payload, allowedTenantIds, keyTenantId) {
 /**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
  * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: Map<string, string>, limiter: RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
  */
@@ -539,6 +598,18 @@ export async function createNaviHostServer(options = {}) {
     perMinute: countFromEnv(process.env.NAVI_RATE_LIMIT_PER_MINUTE, RATE_LIMIT_PER_MINUTE),
     burst: countFromEnv(process.env.NAVI_RATE_LIMIT_BURST, RATE_LIMIT_BURST)
   });
+  /**
+   * Metrics state, held per host rather than per process: two hosts in one process
+   * must not report each other's traffic, and a test that starts a second host
+   * should see a fresh scrape. Request keys are `route|status`, built only from the
+   * closed route set, so no label can come from a request path.
+   * @type {Map<string, number>}
+   */
+  const requestCounts = new Map();
+  /** @type {Map<string, number>} */
+  const rateLimitedByTenant = new Map();
+  let pruneEvents = 0;
+  let prunedRecords = 0;
   /**
    * Both relations in one header value, on every response this service emits: the
    * discovery document and the Corresponding Source. RFC 8288 allows several
@@ -597,6 +668,66 @@ export async function createNaviHostServer(options = {}) {
     Vary: 'Accept-Encoding'
   });
 
+  /** A Prometheus label value escapes backslash, quote and newline: a tenant id is
+   * operator-supplied text, and one unescaped quote would corrupt the exposition.
+   * @param {string} value @returns {string} */
+  function escapeLabel(value) {
+    const backslash = String.fromCharCode(92);
+    return String(value).split(backslash).join(backslash + backslash).split('"').join(backslash + '"').split('\n').join(backslash + 'n');
+  }
+
+  /**
+   * Size of the active store file. A missing file is zero rather than an error:
+   * nothing has been written yet, which is a state and not a fault.
+   * @returns {Promise<number>}
+   */
+  async function storeBytes() {
+    try {
+      return (await stat(store.file)).size;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * The Prometheus exposition. Labeled series appear once they have been observed,
+   * while the label-free aggregates and the gauges are always present, so a scrape
+   * of a freshly started host is a valid document rather than an empty one.
+   * @returns {Promise<string>}
+   */
+  async function renderMetrics() {
+    const lines = [
+      '# HELP navi_host_requests_total HTTP requests answered, by route and status.',
+      '# TYPE navi_host_requests_total counter'
+    ];
+    for (const key of [...requestCounts.keys()].sort()) {
+      const [route, status] = key.split('|');
+      lines.push(`navi_host_requests_total{route="${route}",status="${status}"} ${requestCounts.get(key)}`);
+    }
+    lines.push(
+      '# HELP navi_host_rate_limited_total Ingest requests refused by the per-tenant token bucket.',
+      '# TYPE navi_host_rate_limited_total counter'
+    );
+    for (const tenant of [...rateLimitedByTenant.keys()].sort()) {
+      lines.push(`navi_host_rate_limited_total{tenant_id="${escapeLabel(tenant)}"} ${rateLimitedByTenant.get(tenant)}`);
+    }
+    lines.push(
+      '# HELP navi_host_prune_events_total Retention prunes executed, scheduled and on demand.',
+      '# TYPE navi_host_prune_events_total counter',
+      `navi_host_prune_events_total ${pruneEvents}`,
+      '# HELP navi_host_pruned_records_total Expired violation records removed by those prunes.',
+      '# TYPE navi_host_pruned_records_total counter',
+      `navi_host_pruned_records_total ${prunedRecords}`,
+      '# HELP navi_host_active_tenants Tenants currently holding a rate-limit bucket.',
+      '# TYPE navi_host_active_tenants gauge',
+      `navi_host_active_tenants ${limiter.size}`,
+      '# HELP navi_host_store_bytes Size of the active store file on disk, in bytes.',
+      '# TYPE navi_host_store_bytes gauge',
+      `navi_host_store_bytes ${await storeBytes()}`
+    );
+    return `${lines.join('\n')}\n`;
+  }
+
   /**
    * Charge one ingest request against its tenant's bucket. Returns the verdict the
    * request proceeds under, or null after answering `429` — in which case the
@@ -610,6 +741,7 @@ export async function createNaviHostServer(options = {}) {
     if (!limiter.enabled) return { allowed: true, remaining: 0, retryAfterSeconds: 0 };
     const verdict = limiter.take(tenantId);
     if (verdict.allowed) return verdict;
+    rateLimitedByTenant.set(tenantId, (rateLimitedByTenant.get(tenantId) ?? 0) + 1);
     sendError(res, 429, 'RATE_LIMITED', `Tenant "${tenantId}" has used its ${limiter.perMinute} ingestion requests per minute (burst ${limiter.burst}). Retry after ${verdict.retryAfterSeconds}s; raise NAVI_RATE_LIMIT_PER_MINUTE if this tenant legitimately reports more.`, {
       'Retry-After': String(verdict.retryAfterSeconds),
       'X-RateLimit-Limit': String(limiter.perMinute),
@@ -634,11 +766,32 @@ export async function createNaviHostServer(options = {}) {
   async function sweepRetention() {
     if (!(retentionDays > 0) || typeof store.pruneViolations !== 'function') return;
     try {
-      const result = await store.pruneViolations({ max_age_days: retentionDays });
+      const result = await runPrune({ max_age_days: retentionDays });
       if (result.pruned_count > 0) log(`retention: pruned ${result.pruned_count} violation(s) older than ${retentionDays} day(s)`);
     } catch (error) {
       log(`retention sweep failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * One prune, counted once. The scheduled sweep and the maintenance route both
+   * come through here so the counters cannot report two different numbers for the
+   * same work, and a prune that removed something checkpoints the write-ahead log
+   * so the file an operator measures is the file that actually shrank. The
+   * checkpoint is best effort: the delete is already durable, and a checkpoint that
+   * cannot run must not turn a successful prune into a failure.
+   * @param {{max_age_days: number, tenant_id?: string}} options
+   * @returns {Promise<{pruned_count: number, remaining_count: number}>}
+   */
+  async function runPrune(options) {
+    pruneEvents += 1;
+    const result = await store.pruneViolations(options);
+    prunedRecords += result.pruned_count;
+    if (result.pruned_count > 0 && typeof store.checkpoint === 'function') {
+      try { await store.checkpoint({ truncate: true }); }
+      catch (error) { log(`checkpoint after prune failed: ${error instanceof Error ? error.message : String(error)}`); }
+    }
+    return result;
   }
 
   const server = createServer((req, res) => {
@@ -647,6 +800,14 @@ export async function createNaviHostServer(options = {}) {
     // "every response" true by construction instead of by review - including for
     // a route a fork adds later.
     res.setHeader('Link', linkHeader);
+    // Every answered request is counted, refusals included: a metric that only
+    // counts what the service liked is the one an operator cannot use. The label
+    // comes from the closed route set, never from the path that was requested.
+    const route = routeLabel(new URL(req.url ?? '/', 'http://localhost').pathname);
+    res.on('finish', () => {
+      const key = `${route}|${res.statusCode}`;
+      requestCounts.set(key, (requestCounts.get(key) ?? 0) + 1);
+    });
     void handle(req, res).catch(error => {
       log(`request failed: ${error instanceof Error ? error.message : String(error)}`);
       if (!res.headersSent) sendError(res, 500, 'INTERNAL_ERROR', 'The host service failed to handle this request.');
@@ -699,6 +860,11 @@ export async function createNaviHostServer(options = {}) {
       // here because 0 means "nothing is being pruned": an operator should be able
       // to see that from the same endpoint they use to check the store is up.
       return sendJson(res, 200, { ok: true, mode: store.mode, tenants: tenants.size, retention_days: retentionDays });
+    }
+
+    if (path === '/metrics') {
+      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /metrics.');
+      return sendMetrics(res, await renderMetrics());
     }
 
     if (path === '/v1/navi.js') {
@@ -824,7 +990,7 @@ export async function createNaviHostServer(options = {}) {
     // because a query string is the one part of a request that lands in URLs,
     // referrers and proxy logs. A key is checked before the tenant in the path is
     // compared, so an unauthenticated caller cannot probe which tenants exist.
-    const auditMatch = /^\/v1\/tenants\/([^/]+)\/security-audit$/.exec(path);
+    const auditMatch = AUDIT_ENDPOINT_PATTERN.exec(path);
     if (auditMatch) {
       if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /v1/tenants/<tenant_id>/security-audit.');
       const authorization = req.headers.authorization;
@@ -859,7 +1025,7 @@ export async function createNaviHostServer(options = {}) {
     // audit read is: a Bearer key, never a query string, and never another tenant's
     // records. Deleting by tenant is the one thing this route can do, and the
     // tenant it deletes for is the key's, not the path's.
-    const pruneMatch = /^\/v1\/tenants\/([^/]+)\/maintenance\/prune$/.exec(path);
+    const pruneMatch = PRUNE_ENDPOINT_PATTERN.exec(path);
     if (pruneMatch) {
       if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/tenants/<tenant_id>/maintenance/prune.');
       const authorization = req.headers.authorization;
@@ -933,8 +1099,7 @@ export async function createNaviHostServer(options = {}) {
             resolvePrune();
             return;
           }
-          void store
-            .pruneViolations({ max_age_days: days, tenant_id: tenantId })
+          void runPrune({ max_age_days: days, tenant_id: tenantId })
             .then(result => sendJson(res, 200, { ok: true, tenant_id: tenantId, max_age_days: days, pruned_count: result.pruned_count, remaining_count: result.remaining_count }))
             .catch(error => sendError(res, 500, 'STORE_FAILED', `The prune failed: ${error instanceof Error ? error.message : String(error)}`))
             .finally(() => resolvePrune());
@@ -1049,7 +1214,28 @@ export async function createNaviHostServer(options = {}) {
       closed = true;
       if (retentionTimer) clearInterval(retentionTimer);
       limiter.close();
-      await new Promise(/** @param {(value?: void) => void} resolveClose */ resolveClose => server.close(() => resolveClose()));
+      // Stop accepting, then give in-flight requests a bounded chance to finish. A
+      // connection that is neither idle nor finished - a client that opened a
+      // socket and stopped mid-request - is destroyed when the deadline passes: a
+      // shutdown one peer can hold open forever is not a shutdown.
+      let timer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+      const deadline = new Promise(/** @param {(value: string) => void} resolveDeadline */ resolveDeadline => {
+        timer = setTimeout(() => {
+          server.closeAllConnections();
+          resolveDeadline('deadline');
+        }, SHUTDOWN_DEADLINE_MS);
+        timer.unref?.();
+      });
+      const drained = new Promise(/** @param {(value: string) => void} resolveDrained */ resolveDrained => server.close(() => resolveDrained('drained')));
+      const outcome = await Promise.race([drained, deadline]);
+      if (timer) clearTimeout(timer);
+      if (outcome === 'deadline') log(`shutdown deadline of ${SHUTDOWN_DEADLINE_MS}ms passed with connections still open; they were closed`);
+      // The store is flushed last, so no request can append behind the checkpoint.
+      try {
+        if (typeof store.checkpoint === 'function') await store.checkpoint({ truncate: true });
+      } catch (error) {
+        log(`final checkpoint failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
       await store.close();
     }
   };
@@ -1075,11 +1261,29 @@ export async function main(argv = []) {
   const portFlag = Number(option(argv, '--port') ?? DEFAULT_PORT);
   const port = Number.isInteger(portFlag) && portFlag >= 0 ? portFlag : DEFAULT_PORT;
   const storeFile = option(argv, '--store') ?? resolve(DEFAULT_STORE_FILE);
-  const naviHost = await createNaviHostServer({ host, port, storeFile });
+  // Diagnostics go to stderr through the host's own logger rather than nowhere:
+  // a drained shutdown, a failed request and a retention sweep are exactly the
+  // events an operator reads the log for, and stdout stays the readiness line.
+  const naviHost = await createNaviHostServer({ host, port, storeFile, log: line => process.stderr.write(`navi-host: ${line}\n`) });
   process.stdout.write(`navi-host: http://${host}:${naviHost.port} (tenants: ${naviHost.tenants.size}, store: ${naviHost.store.mode})\n`);
+  /** @type {string | null} */
+  let signalled = null;
   await new Promise(/** @param {(value?: void) => void} resolveSignal */ resolveSignal => {
-    for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => resolveSignal());
+    /** @type {Record<string, () => void>} */
+    const handlers = {};
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+      handlers[signal] = () => {
+        signalled = signal;
+        // Both listeners are removed, so a second signal reaches the default
+        // action: an operator who insists stops the process instead of waiting out
+        // a drain that is already stuck.
+        for (const [name, handler] of Object.entries(handlers)) process.removeListener(name, handler);
+        resolveSignal();
+      };
+      process.on(signal, handlers[signal]);
+    }
   });
+  process.stderr.write(`navi-host: ${signalled} received, draining for up to ${SHUTDOWN_DEADLINE_MS / 1000}s\n`);
   await naviHost.close();
   return 0;
 }

@@ -38,7 +38,10 @@ import { createInterface } from 'node:readline';
  * @typedef {{tenant_id: string, limit?: number, since?: string}} ViolationFilter
  * @typedef {{max_age_days: number, tenant_id?: string}} RetentionOptions
  * @typedef {{pruned_count: number, remaining_count: number}} PruneResult
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
+ * @typedef {{busy: number, log: number, checkpointed: number}} CheckpointResult
+ * @typedef {{truncate?: boolean}} CheckpointOptions
+ * @typedef {{journal_mode: string, synchronous: number, auto_vacuum: number}} StorePragmas
+ * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
  */
 
 /** Default number of violation rows one query returns. */
@@ -179,10 +182,30 @@ function asNumber(value) {
 /** @param {string} path @param {any} sqlite @returns {TelemetryStore} */
 function createSqliteStore(path, sqlite) {
   const db = new sqlite.DatabaseSync(path);
-  // Incremental auto-vacuum has to be chosen before the first table exists, so a
-  // database this code creates reclaims the pages a prune frees; a file created
-  // earlier keeps its own mode, and an operator reclaims it with VACUUM.
+  // Write-ahead logging is the mode this store is built around: an append, a
+  // prune and a checkpoint stop serializing behind a rollback journal, and a
+  // reader never blocks the writer. `synchronous = NORMAL` is the documented
+  // pairing for it - a process crash is still survivable without paying for a
+  // file sync on every commit, which is what an ingestion route cannot afford.
+  // Incremental auto-vacuum has to be chosen before the first table exists, and it
+  // has to be chosen before the journal switches to WAL as well: with WAL already
+  // on, this pragma is accepted and ignored, and a store that quietly stopped
+  // reclaiming the pages a prune frees is a leak no operator can see. The order of
+  // the two statements is the difference, so `tests/host-metrics-lifecycle.spec.mjs`
+  // reads the mode back rather than trusting it. A file created by an earlier
+  // version keeps the mode it was created with; VACUUM is the operator's tool.
   db.exec('PRAGMA auto_vacuum = INCREMENTAL');
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA synchronous = NORMAL');
+  // Read back rather than restated, because the two pragmas have different
+  // scopes: `journal_mode` is recorded in the file, while `synchronous` is a
+  // property of *this* connection and cannot be observed from any other one. An
+  // operator asking a store how durable its writes are has to ask here.
+  const pragmas = Object.freeze({
+    journal_mode: String(db.prepare('PRAGMA journal_mode').get()?.journal_mode ?? '').toLowerCase(),
+    synchronous: asNumber(db.prepare('PRAGMA synchronous').get()?.synchronous),
+    auto_vacuum: asNumber(db.prepare('PRAGMA auto_vacuum').get()?.auto_vacuum)
+  });
   db.exec(`CREATE TABLE IF NOT EXISTS telemetry (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id TEXT NOT NULL,
@@ -219,9 +242,11 @@ function createSqliteStore(path, sqlite) {
   const deleteExpiredForTenant = db.prepare("DELETE FROM containment_violations WHERE tenant_id = ? AND julianday(created_at) < julianday('now', '-' || ? || ' days')");
   const countViolations = db.prepare('SELECT COUNT(*) AS count FROM containment_violations');
   const countTenantViolations = db.prepare('SELECT COUNT(*) AS count FROM containment_violations WHERE tenant_id = ?');
+  let closed = false;
   return {
     mode: 'sqlite',
     file: path,
+    pragmas,
     async append(record) {
       insert.run(record.tenant_id, record.url_origin, record.actions_indexed, record.actions_executed, record.execution_failures, record.received_at);
     },
@@ -270,11 +295,24 @@ function createSqliteStore(path, sqlite) {
       const row = /** @type {{count?: unknown}} */ ((tenant_id ? countTenantViolations.get(tenant_id) : countViolations.get()));
       return { pruned_count: pruned, remaining_count: asNumber(row?.count) };
     },
+    async checkpoint(options = {}) {
+      // The mode is chosen by a switch rather than interpolated from the caller: a
+      // PRAGMA argument cannot be bound, so anything caller-supplied would be SQL.
+      const statement = db.prepare(options?.truncate === false ? 'PRAGMA wal_checkpoint(PASSIVE)' : 'PRAGMA wal_checkpoint(TRUNCATE)');
+      const row = /** @type {{busy?: unknown, log?: unknown, checkpointed?: unknown} | undefined} */ (statement.get()) ?? {};
+      return { busy: asNumber(row.busy), log: asNumber(row.log), checkpointed: asNumber(row.checkpointed) };
+    },
     async reset() {
       db.exec('DELETE FROM telemetry');
       db.exec('DELETE FROM containment_violations');
     },
     async close() {
+      if (closed) return;
+      closed = true;
+      // A clean stop checkpoints the write-ahead log and lets SQLite remove its
+      // sidecars. Best effort on purpose: a store that cannot checkpoint must
+      // still close, and the sidecars are recovered from on the next open.
+      try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* recovery on the next open */ }
       db.close();
     }
   };
@@ -379,6 +417,9 @@ function createLogStore(path) {
   return {
     mode: 'log',
     file: path,
+    // A log has no connection and no journal, so there is no durability posture to
+    // report; the field is present so a caller never has to branch on the backend.
+    pragmas: null,
     async append(record) {
       await serial(() => appendFile(path, `${JSON.stringify(record)}\n`, 'utf8'));
     },
@@ -491,6 +532,11 @@ function createLogStore(path) {
         violationSequence = sequence;
         return { pruned_count: pruned, remaining_count: tenant_id === null ? kept : keptForTenant };
       });
+    },
+    async checkpoint() {
+      // A log has no journal to checkpoint. The shape is answered with zeros so a
+      // caller never has to branch on which backend resolved.
+      return { busy: 0, log: 0, checkpointed: 0 };
     },
     async reset() {
       await serial(async () => {
