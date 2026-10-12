@@ -11,6 +11,8 @@ RUN npm ci --no-audit --no-fund
 # and produces different SDK/SRI bytes from the same sources.
 COPY jsconfig.json ./
 COPY src ./src
+# MCP lifecycle helpers are bundled from the host store module.
+COPY server/store.js ./server/store.js
 COPY types ./types
 COPY scripts/build.mjs ./scripts/build.mjs
 RUN npm run build
@@ -36,8 +38,9 @@ RUN node node_modules/playwright-core/cli.js install-deps chromium \
     && rm -rf /var/lib/apt/lists/* /root/.npm /tmp/* \
     && usermod --login pwuser --home /tmp/pwuser node \
     && groupmod --new-name pwuser node \
-    && mkdir -p /data \
-    && chown pwuser:pwuser /data
+    && mkdir -p /data /var/lib/navi/mcp \
+    && chown pwuser:pwuser /data /var/lib/navi/mcp \
+    && chmod 0700 /var/lib/navi/mcp
 COPY --from=build /opt/playwright /opt/playwright
 COPY --from=build /app/dist ./dist
 COPY package.json ./

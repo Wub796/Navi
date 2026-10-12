@@ -42,14 +42,17 @@ services:
       NAVI_MCP_TOKEN: ${NAVI_MCP_TOKEN:?Set a strong NAVI_MCP_TOKEN}
       NAVI_MCP_MAX_SESSIONS: ${NAVI_MCP_MAX_SESSIONS:-2}
       NAVI_MCP_IDLE_TIMEOUT: ${NAVI_MCP_IDLE_TIMEOUT:-300}
+      NAVI_MCP_STATE_FILE: "/var/lib/navi/mcp/state.clean"
       NODE_OPTIONS: "--experimental-sqlite"
     ports: ['127.0.0.1:3001:3001']
     security_opt:
       - no-new-privileges:true
       - seccomp=./security/chromium-seccomp.json
+    volumes: [mcp-state:/var/lib/navi/mcp]
     shm_size: 512m
     mem_limit: 2g
     cpus: 2
 
 volumes:
   telemetry:
+  mcp-state:

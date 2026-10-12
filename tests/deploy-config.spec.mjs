@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
 
 /**
  * Production deployment checks.
@@ -76,6 +77,9 @@ test('the production compose file keeps least privilege, persistence and both he
   expect(compose).toMatch(/NAVI_STORE: \/data\/telemetry\.db/);
   expect(compose).toMatch(/telemetry:\/data/);
   expect(compose).toMatch(/^\s+telemetry:$/m);
+  expect(compose).toMatch(/NAVI_MCP_STATE_FILE: "\/var\/lib\/navi\/mcp\/state\.clean"/);
+  expect(compose).toMatch(/mcp-state:\/var\/lib\/navi\/mcp/);
+  expect(compose).toMatch(/^\s+mcp-state:$/m);
   // Each service probes its own listener, and the probe names the port rather than
   // deriving it, so a service redeployed onto another port fails instead of passing.
   expect(compose).toMatch(/127\.0\.0\.1:3000\/healthz/);
@@ -99,6 +103,17 @@ test('the production compose file keeps least privilege, persistence and both he
     ['host IPC namespace', /ipc:\s*host/]
   ]) {
     expect(compose, `${name} must not appear in a production deployment`).not.toMatch(forbidden);
+  }
+});
+
+test('local and production MCP state volumes match and stay isolated from host telemetry', async () => {
+  for (const path of ['docker-compose.yml', 'deploy/docker-compose.prod.yml']) {
+    const config = parse(await readFile(join(root, path), 'utf8'));
+    const mcp = config.services['navi-mcp'];
+    expect(mcp.environment.NAVI_MCP_STATE_FILE).toBe('/var/lib/navi/mcp/state.clean');
+    expect(mcp.volumes).toContain('mcp-state:/var/lib/navi/mcp');
+    expect(config.volumes).toHaveProperty('mcp-state');
+    expect(config.services['navi-host'].volumes).not.toContain('mcp-state:/var/lib/navi/mcp');
   }
 });
 
@@ -146,6 +161,12 @@ test('the deployment files agree on the store path, and every path they referenc
   expect(services[0]).toMatch(/\[\[services\.ports\]\]/);
   const image = await readFile(join(root, 'Dockerfile'), 'utf8');
   expect(image).toMatch(/^USER pwuser:pwuser$/m);
+  const buildStage = image.split('FROM base AS build')[1].split('FROM base AS runtime')[0];
+  expect(buildStage).toMatch(/COPY server\/store\.js \.\/server\/store\.js/);
+  expect(buildStage.indexOf('COPY server/store.js')).toBeLessThan(buildStage.indexOf('RUN npm run build'));
+  expect(image).toMatch(/mkdir -p \/data \/var\/lib\/navi\/mcp/);
+  expect(image).toMatch(/chown pwuser:pwuser \/data \/var\/lib\/navi\/mcp/);
+  expect(image).toMatch(/chmod 0700 \/var\/lib\/navi\/mcp/);
   for (const [name, forbidden] of [['a sandbox-disable flag', /--no-sandbox|--disable-[a-z-]*sandbox/], ['privileged mode', /privileged/], ['a published Docker socket', /docker\.sock/]]) {
     expect(fly, `${name} must not appear in a deployment config`).not.toMatch(forbidden);
   }
@@ -156,7 +177,8 @@ test('release collateral names the exact SRI, byte budgets and runnable desktop 
   const core = await readFile(join(root, 'dist/navi.min.js'));
   const loader = await readFile(join(root, 'dist/loader.min.js'));
   const sri = (await readFile(join(root, 'dist/sri.txt'), 'utf8')).trim();
-  expect(core.length).toBeLessThanOrEqual(14929);
+  expect(core.length).toBe(14929);
+  expect(core.length).toBeLessThan(15000);
   expect(loader.length).toBeLessThanOrEqual(700);
   expect(`sha384-${createHash('sha384').update(core).digest('base64')}`).toBe(sri);
   expect(release).toContain(sri);
@@ -198,7 +220,10 @@ test('docker resolves the production compose file to least privilege, not just t
   // Persistence resolves to a named volume mounted at the store's directory.
   expect(host.volumes.map((/** @type {any} */ volume) => volume.target)).toContain('/data');
   expect(host.volumes.every((/** @type {any} */ volume) => Boolean(volume.source))).toBe(true);
-  expect(Object.keys(config.volumes ?? {})).toEqual(['telemetry']);
+  expect(Object.keys(config.volumes ?? {}).sort()).toEqual(['mcp-state', 'telemetry']);
+  expect(mcp.environment.NAVI_MCP_STATE_FILE).toBe('/var/lib/navi/mcp/state.clean');
+  expect(mcp.volumes).toEqual([expect.objectContaining({ type: 'volume', source: 'mcp-state', target: '/var/lib/navi/mcp' })]);
+  expect(host.volumes.map((/** @type {any} */ volume) => volume.source)).not.toContain('mcp-state');
   // The credentials arrive as environment, and the required ones are present in the
   // resolved file rather than being interpolated to an empty string.
   expect(host.environment.NAVI_TENANTS).toBe('key:tenant-a');

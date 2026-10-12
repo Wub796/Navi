@@ -7,7 +7,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 // Isolated project/volume; never touches a user's normal Compose deployment.
 // --production exercises the shipped production file and writes a separate receipt.
 const production = process.argv.includes('--production');
-const image = process.env.NAVI_IMAGE || 'navi:local';
+const image = production ? (process.env.NAVI_IMAGE || 'navi:local') : 'navi:local';
 const project = `${production ? 'navi-prod-check' : 'navi-check'}-${process.pid}`;
 const token = randomBytes(32).toString('hex');
 const tenantKey = randomBytes(16).toString('hex');
@@ -25,6 +25,56 @@ function assert(condition, message) { if (!condition) throw new Error(message); 
 function record(check, detail) { checks.push({ check, ok: true, detail }); console.log(`ok ${check}: ${detail}`); }
 /** @param {string} path @param {RequestInit} [options] */
 const request = (path, options = {}) => fetch(path, { ...options, signal: AbortSignal.timeout(5000) });
+/** Wait for HTTP readiness, never treating a restart command as a ready service.
+ * @param {string} url @returns {Promise<void>} */
+async function waitReady(url) {
+  let last = 'no response';
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await request(`${url}/healthz`);
+      if (response.ok) return;
+      last = `HTTP ${response.status}`;
+    } catch (error) { last = error instanceof Error ? error.message : String(error); }
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error(`${url} never became ready: ${last}`);
+}
+/** @param {string} service @returns {any} */
+const inspectService = service => JSON.parse(docker(['inspect', compose(['ps', '-a', '-q', service]).trim()]))[0];
+/** @param {string} service @param {number} exitCode @returns {Promise<void>} */
+async function waitStopped(service, exitCode) {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const state = inspectService(service).State;
+    if (!state.Running) {
+      assert(state.ExitCode === exitCode, `${service} exit code ${state.ExitCode}, expected ${exitCode}`);
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`${service} did not stop`);
+}
+/** Read stopped-container state through only its isolated volume, as UID 1000.
+ * @param {string} volume @param {string} directory @param {string} baseFile @returns {any} */
+function lifecycleFiles(volume, directory, baseFile) {
+  return JSON.parse(docker(['run', '--rm', '--read-only', '--user', '1000:1000', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+    '--mount', `type=volume,source=${volume},target=${directory},readonly`, image, 'node', '-e', `
+      const fs = require('fs');
+      const directory = ${JSON.stringify(directory)}, base = ${JSON.stringify(baseFile)};
+      const st = fs.statSync(directory);
+      console.log(JSON.stringify({uid: st.uid, gid: st.gid, mode: st.mode & 0o777,
+        dirty: fs.existsSync(base), clean: fs.existsSync(base + '.clean')}));
+    `]));
+}
+/** @param {string} url @param {string} metric @param {number} expected */
+async function assertBootMetric(url, metric, expected) {
+  const response = await request(`${url}/metrics`);
+  assert(response.status === 200, `${url}/metrics answered ${response.status}`);
+  const body = await response.text();
+  assert(body.includes(`# TYPE ${metric} counter`) && body.split('\n').includes(`${metric} ${expected}`), `${metric} did not report ${expected}: ${body}`);
+  assert(body.includes('# TYPE process_start_time_seconds gauge'), 'startup gauge missing');
+}
 let started = false;
 /** @type {Client | undefined} */
 let client;
@@ -38,9 +88,11 @@ try {
   started = true;
   // Fail on occupied requested ports; do not stop or replace their owners.
   // Only the isolated verification deployment allows its private fixture hosts.
-  const override = '.freebuff/container-fixture.override.yml';
+  const override = `.freebuff/${project}.override.yml`;
   await mkdir('.freebuff', { recursive: true });
-  await writeFile(override, 'services:\n  navi-mcp:\n    environment:\n      NAVI_ALLOW_LOCAL_NETWORK: "1"\n');
+  // Disable automatic restart only in this disposable project so the verifier
+  // can witness exit 137 and inspect dirty files before an explicit restart.
+  await writeFile(override, 'services:\n  navi-host:\n    restart: "no"\n  navi-mcp:\n    restart: "no"\n    environment:\n      NAVI_ALLOW_LOCAL_NETWORK: "1"\n');
   composeArgs.push('-f', override);
   compose(['up', '-d', '--no-build', '--wait', '--wait-timeout', '90'], 120000);
   record('compose-health', 'both services healthy under read-only rootfs, dropped capabilities, no-new-privileges');
@@ -55,6 +107,20 @@ try {
   record('chromium-sandbox', JSON.stringify(sandbox));
   const host = 'http://127.0.0.1:3000';
   const mcp = 'http://127.0.0.1:3001';
+  const mcpDirectory = '/var/lib/navi/mcp';
+  const mcpState = `${mcpDirectory}/state.clean`;
+  const mcpMount = inspectService('navi-mcp').Mounts.find((/** @type {any} */ mount) => mount.Destination === mcpDirectory);
+  assert(mcpMount?.Type === 'volume' && mcpMount.RW, 'MCP lifecycle state must be a writable named volume');
+  const hostMount = inspectService('navi-host').Mounts.find((/** @type {any} */ mount) => mount.Destination === '/data');
+  assert(hostMount?.Type === 'volume' && hostMount.Name !== mcpMount.Name, 'host/MCP volumes must be separate');
+  const statePosture = lifecycleFiles(mcpMount.Name, mcpDirectory, mcpState);
+  assert(statePosture.uid === 1000 && statePosture.gid === 1000 && statePosture.mode === 0o700, `bad MCP volume ownership/permissions: ${JSON.stringify(statePosture)}`);
+  assert(statePosture.dirty && !statePosture.clean, 'MCP first boot must create dirty evidence and consume clean marker');
+  const configuredState = compose(['exec', '-T', 'navi-mcp', 'node', '-p', 'process.env.NAVI_MCP_STATE_FILE']).trim();
+  assert(configuredState === mcpState, `unexpected MCP state path: ${configuredState}`);
+  await assertBootMetric(host, 'navi_host_unclean_shutdowns_total', 0);
+  await assertBootMetric(mcp, 'navi_mcp_unclean_shutdowns_total', 0);
+  record('lifecycle-volume', `separate named MCP volume at ${mcpDirectory}, owner 1000:1000 mode 0700; base ${mcpState}, marker ${mcpState}.clean; first boot 0 on both roles`);
   const sdk = await request(`${host}/v1/navi.js?key=${tenantKey}`);
   assert(sdk.ok, 'keyed SDK unavailable');
   assert(Buffer.from(await sdk.arrayBuffer()).equals(await readFile('dist/navi.min.js')), 'container SDK differs from local artifact');
@@ -163,10 +229,8 @@ try {
   assert(anonymousAudit.status === 401, `an anonymous audit read answered ${anonymousAudit.status}`);
   const hostHealth = await (await request(`${host}/healthz`)).json();
   record('tenant-security-audit', `a violation filed with the tenant key reads back through security-audit (${hostHealth.mode} store) and is refused without one`);
-  // Retention: the route has to exist, be confined to its own tenant, and run the
-  // compaction this image actually uses. The pinned Node 22 runtime serves the log
-  // backend, so a prune with nothing to delete still rewrites the file - and the
-  // record inside the window has to come back with the same id afterwards.
+  // Retention runs through the live backend; an in-window record must retain
+  // its id whether the store is SQLite or an existing JSONL file.
   const anonymousPrune = await request(`${host}/v1/tenants/container-check/maintenance/prune`, { method: 'POST' });
   assert(anonymousPrune.status === 401, `an anonymous prune answered ${anonymousPrune.status}`);
   const crossTenantPrune = await request(`${host}/v1/tenants/other-tenant/maintenance/prune`, { method: 'POST', headers: { Authorization: `Bearer ${tenantKey}` } });
@@ -186,7 +250,8 @@ try {
   // The host's own scrape surface, in the shipped image rather than only in
   // process: unauthenticated and aggregate-only like the MCP exposition, with the
   // route label drawn from the closed set rather than from the requested path.
-  await request(`${host}/metrics`);
+  const previousExposition = await (await request(`${host}/metrics`)).text();
+  const scrapeCount = (/** @type {string} */ text) => Number(/^navi_host_requests_total\{route="metrics",status="200"\} (\d+)$/m.exec(text)?.[1] ?? 0);
   const hostMetrics = await request(`${host}/metrics`);
   assert(hostMetrics.status === 200, 'the host metrics endpoint is unavailable');
   assert(String(hostMetrics.headers.get('content-type')).includes('version=0.0.4'), 'the host metrics endpoint did not declare the Prometheus text format');
@@ -197,7 +262,7 @@ try {
   }
   const hostRouted = hostExposition.split('\n').filter(line => line.startsWith('navi_host_requests_total{'));
   assert(hostRouted.length > 0 && hostRouted.every(line => /^navi_host_requests_total\{route="[a-z_.]+",status="\d{3}"\} \d+$/.test(line)), `unexpected host request series: ${hostRouted.join(' | ')}`);
-  assert(hostExposition.includes('navi_host_requests_total{route="metrics",status="200"} 1'), 'the host did not count a scrape it answered');
+  assert(scrapeCount(hostExposition) === scrapeCount(previousExposition) + 1, 'the host did not count a scrape it answered');
   assert(!hostExposition.includes('http') && !hostExposition.includes(tenantKey) && !hostExposition.includes('container-check'), 'the host exposition must carry no URL, key or tenant identifier');
   record('host-metrics', `${hostRouted.length} request series in ${hostExposition.trim().split('\n').length} lines scraped from the shipped host service`);
   // The store backend is a runtime capability, not a config flag: node:sqlite has
@@ -221,6 +286,65 @@ try {
   assert(storeProbe.format === 'sqlite' && storeProbe.header, `the store file is not a SQLite database: ${JSON.stringify(storeProbe)}`);
   assert(storeProbe.files.includes('telemetry.db-wal'), `the write-ahead log sidecar is missing, so the store is not in WAL mode: ${JSON.stringify(storeProbe.files)}`);
   record('sqlite-store', `the host serves the ${storeHealth.mode} backend with the SQLite header and its -wal sidecar present (${storeProbe.files.join(', ')})`);
+  // Real Node SIGKILL, not a graceful Docker restart. The init process reaps the
+  // child and exits 137; the dirty evidence must survive both restart and removal
+  // of the container itself. Only this project's resources are ever targeted.
+  for (const [service, url, metric, volume, directory, base] of [
+    ['navi-host', host, 'navi_host_unclean_shutdowns_total', hostMount.Name, '/data', '/data/telemetry.db'],
+    ['navi-mcp', mcp, 'navi_mcp_unclean_shutdowns_total', mcpMount.Name, mcpDirectory, mcpState]
+  ]) {
+    const killNode = () => compose(['exec', '-T', service, 'node', '-e', `
+      const fs = require('fs');
+      const entry = ${JSON.stringify(service === 'navi-host' ? 'server/index.js' : 'bin/navi-mcp.js')};
+      const pid = fs.readdirSync('/proc').filter(p => /^\\d+$/.test(p)).find(p => {
+        try { return fs.readFileSync('/proc/' + p + '/cmdline', 'utf8').split('\\0').includes(entry); }
+        catch (e) { if (e.code === 'ENOENT' || e.code === 'ESRCH') return false; throw e; }
+      });
+      if (!pid) throw new Error('service Node process not found');
+      process.kill(Number(pid), 'SIGKILL');
+    `]);
+    killNode();
+    await waitStopped(service, 137);
+    let files = lifecycleFiles(volume, directory, base);
+    assert(files.dirty && !files.clean, `${service} SIGKILL left false clean evidence`);
+    compose(['start', service]);
+    await waitReady(url);
+    await assertBootMetric(url, metric, 1);
+    files = lifecycleFiles(volume, directory, base);
+    assert(!files.clean, `${service} did not consume clean marker on startup`);
+    // A second crash followed by force-recreation proves the files do not live
+    // in the disposable container layer or /tmp tmpfs.
+    const oldId = inspectService(service).Id;
+    killNode();
+    await waitStopped(service, 137);
+    compose(['up', '-d', '--no-build', '--force-recreate', '--no-deps', service], 60000);
+    await waitReady(url);
+    assert(inspectService(service).Id !== oldId, `${service} was not recreated`);
+    await assertBootMetric(url, metric, 1);
+    // MCP stops with a real browser still active, so marker publication proves
+    // graceful session teardown as well as an empty HTTP listener shutdown.
+    if (service === 'navi-mcp') {
+      client = new Client({ name: 'navi-lifecycle-check', version: '1.0.0' });
+      await client.connect(new SSEClientTransport(new URL(`${mcp}/sse`), { requestInit: { headers }, eventSourceInit: { fetch: (input, init) => fetch(input, { ...init, headers }) } }));
+      await call('navi_navigate', { url: 'http://navi-host:3000/healthz' });
+      assert((await (await request(`${mcp}/healthz`)).json()).sessions === 1, 'graceful MCP stop must tear down an active session');
+    }
+    compose(['stop', service], 45000);
+    await waitStopped(service, 0);
+    files = lifecycleFiles(volume, directory, base);
+    assert(files.dirty && files.clean, `${service} graceful stop did not publish clean marker`);
+    await client?.close(); client = undefined;
+    compose(['start', service]);
+    await waitReady(url);
+    await assertBootMetric(url, metric, 0);
+    assert(!lifecycleFiles(volume, directory, base).clean, `${service} clean marker was not consumed`);
+    if (service === 'navi-host') {
+      const recovered = await (await request(`${host}/v1/telemetry?key=${tenantKey}`)).json();
+      const recoveredAudit = await (await request(`${host}/v1/tenants/container-check/security-audit`, { headers: { Authorization: `Bearer ${tenantKey}` } })).json();
+      assert(recovered.summary.events === 1 && recoveredAudit.count === 1 && recoveredAudit.violations[0].id === audit.violations[0].id, 'host crash recovery lost telemetry or audit data');
+    }
+    record(`${service}-crash-recovery`, `SIGKILL exit 137: ${metric}=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot ${metric}=0 and consumes marker${service === 'navi-mcp' ? '; active Chromium session torn down' : '; telemetry and audit retained'}`);
+  }
   // The containment guard is the shipped default, independent of the fixture
   // override this deployment adds: drive stdio MCP in a container that carries
   // no NAVI_ALLOW_LOCAL_NETWORK and require the metadata endpoint to be refused

@@ -38,7 +38,7 @@ x-runtime: &runtime
   read_only: true
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
-  # The only writable filesystem either process gets, beyond the telemetry volume.
+  # Ephemeral browser workspace; durable telemetry/lifecycle state uses volumes.
   tmpfs:
     - /tmp:rw,nosuid,nodev,size=256m,mode=1777
   pids_limit: 256
@@ -97,6 +97,8 @@ services:
       NAVI_MCP_TOKEN: ${NAVI_MCP_TOKEN:?Set a strong NAVI_MCP_TOKEN}
       NAVI_MCP_MAX_SESSIONS: ${NAVI_MCP_MAX_SESSIONS:-2}
       NAVI_MCP_IDLE_TIMEOUT: ${NAVI_MCP_IDLE_TIMEOUT:-300}
+      # Base lifecycle file; the successful teardown marker appends .clean.
+      NAVI_MCP_STATE_FILE: "/var/lib/navi/mcp/state.clean"
       NODE_ENV: production
       # Same flag as the host for one image, one runtime story: the MCP bridge
       # never opens the store, so this is inert here rather than load-bearing.
@@ -109,6 +111,8 @@ services:
       # chroot permissions this profile adds in order to install the renderer filter.
       # Without it the alternative would be --no-sandbox, which this tree never uses.
       - seccomp=../security/chromium-seccomp.json
+    volumes:
+      - mcp-state:/var/lib/navi/mcp
     shm_size: 512m
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/healthz',{signal:AbortSignal.timeout(2000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
@@ -127,4 +131,7 @@ volumes:
   # keeps a backend switch, or a crash-recovery replay, from losing the sidecars the
   # committed records depend on.
   telemetry:
+    driver: local
+  # Exclusive MCP dirty evidence and successful teardown marker, retained on stop.
+  mcp-state:
     driver: local
