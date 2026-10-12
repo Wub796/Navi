@@ -904,6 +904,7 @@ async function installNavi(page, options = {}) {
 import { createServer as createServer2 } from "node:http";
 import { randomUUID as randomUUID2, timingSafeEqual } from "node:crypto";
 var DEFAULT_SSE_PORT = 3001;
+var SHUTDOWN_DEADLINE_MS = 5e3;
 var MAX_MESSAGE_BYTES = 1024 * 1024;
 var HEARTBEAT_MS = 15e3;
 var DEFAULT_MAX_SESSIONS = 10;
@@ -1240,12 +1241,25 @@ data: /message?sessionId=${id}
     close: async () => {
       stopping = true;
       for (const entry of [...sessions.values()]) release(entry, "server shutdown");
-      const results = await Promise.allSettled([...cleanupTasks]);
+      const results = await Promise.race([
+        Promise.allSettled([...cleanupTasks]),
+        new Promise(
+          /** @param {(value: null) => void} resolve */
+          (resolve2) => {
+            const timer = setTimeout(() => resolve2(null), SHUTDOWN_DEADLINE_MS);
+            timer.unref?.();
+          }
+        )
+      ]);
       server.closeAllConnections();
       await new Promise(
         /** @param {(value?: void) => void} resolve */
         (resolve2) => server.close(() => resolve2())
       );
+      if (!Array.isArray(results)) {
+        log(`browser cleanup did not finish within ${SHUTDOWN_DEADLINE_MS}ms; shutting the transport down anyway`);
+        return;
+      }
       const failed2 = results.find((result) => result.status === "rejected");
       if (failed2?.status === "rejected") throw failed2.reason;
     }
@@ -1343,6 +1357,10 @@ function errorCode(error) {
     error?.code
   );
   return typeof code === "string" && code ? code : "EXECUTION_ERROR";
+}
+function alreadyDisposed(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /has been closed|Failed to find context|No target with given id|Target closed|Protocol error \(Target\.closeTarget\)/i.test(message);
 }
 function warningFor(code, detail) {
   const message = GUIDANCE[code] ?? code;
@@ -2070,11 +2088,20 @@ var NaviSession = class {
     this.context = null;
     this.page = null;
     this.adapter = null;
+    const dispose = async (target, label) => {
+      if (!target) return;
+      try {
+        await target.close();
+      } catch (error) {
+        if (!alreadyDisposed(error)) throw error;
+        this.log(`${label} was already closed when the session ended`);
+      }
+    };
     try {
-      if (context) await context.close();
+      await dispose(context, "browser context");
     } finally {
       try {
-        if (browser) await browser.close();
+        await dispose(browser, "browser");
       } finally {
         try {
           if (proxy) await proxy.close();
@@ -2180,17 +2207,44 @@ async function runStdioServer(options = {}) {
       }
     });
   });
+  let signalled = null;
   await new Promise(
     /** @param {(value?: void) => void} resolve */
     (resolve2) => {
       const finish = () => resolve2();
       reader.on("close", finish);
       input.on?.("end", finish);
+      const handlers = {};
+      for (const signal of ["SIGTERM", "SIGINT"]) {
+        handlers[signal] = () => {
+          signalled = signal;
+          for (const [name, handler] of Object.entries(handlers)) process.removeListener(name, handler);
+          finish();
+        };
+        process.on(signal, handlers[signal]);
+      }
     }
   );
-  await queue;
+  reader.close();
+  const stream = (
+    /** @type {{pause?: () => void, unref?: () => void}} */
+    input
+  );
+  stream.pause?.();
+  stream.unref?.();
+  const joined = await Promise.race([
+    queue.then(() => true),
+    new Promise(
+      /** @param {(value: boolean) => void} resolve */
+      (resolve2) => {
+        const timer = setTimeout(() => resolve2(false), SHUTDOWN_DEADLINE_MS);
+        timer.unref?.();
+      }
+    )
+  ]);
+  if (!joined) log(`a tool call was still running after ${SHUTDOWN_DEADLINE_MS}ms; closing the session anyway`);
   await session.close();
-  log("stdin closed, session closed");
+  log(signalled ? `${signalled} received, session closed` : "stdin closed, session closed");
 }
 function option(argv, flag, fallback) {
   const index = argv.indexOf(flag);

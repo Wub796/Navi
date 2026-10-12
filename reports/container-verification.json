@@ -1,11 +1,11 @@
 {
-  "recordedAt": "2026-10-12T02:15:19.765Z",
+  "recordedAt": "2026-10-12T13:03:04.402Z",
   "ok": true,
   "checks": [
     {
       "check": "image",
       "ok": true,
-      "detail": "sha256:1932e8f975e0a0638f934ecdd4a341ba3c3d8f1bb6af2848fdfd46265fa79b79; linux/arm64; user pwuser:pwuser"
+      "detail": "sha256:6e2e00b43b5965dbb59ff979284333566d9a753fa5ace44ddb9957d84b9ac4ce; linux/arm64; user pwuser:pwuser"
     },
     {
       "check": "compose-health",
@@ -20,7 +20,7 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"124\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"122\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "distribution",
@@ -63,9 +63,14 @@
       "detail": "a log-backed prune kept the in-window record with id 1, refused anonymous and cross-tenant callers, and reported a 30-day window"
     },
     {
+      "check": "host-metrics",
+      "ok": true,
+      "detail": "9 request series in 25 lines scraped from the shipped host service"
+    },
+    {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-12T02:15:19.395Z\",\"session_id\":\"5f70e985-e2ca-4af3-ac67-1427aa8c7194\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-12T13:03:04.019Z\",\"session_id\":\"a527fd48-9f00-4762-91af-056049f663b4\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }
