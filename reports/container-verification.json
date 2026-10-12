@@ -1,11 +1,11 @@
 {
-  "recordedAt": "2026-10-12T01:38:01.332Z",
+  "recordedAt": "2026-10-12T01:42:01.358Z",
   "ok": true,
   "checks": [
     {
       "check": "image",
       "ok": true,
-      "detail": "sha256:e8c3b0b8d56f126e22d4c121802284b499382b4f81e5af690fee13c58bf71c52; linux/arm64; user pwuser:pwuser"
+      "detail": "sha256:aa4ae9eaea28b3c977b517de74597cf6872d1248594a02593e581c223f87e6ae; linux/arm64; user pwuser:pwuser"
     },
     {
       "check": "compose-health",
@@ -20,7 +20,7 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"123\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"125\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532960]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "distribution",
@@ -55,7 +55,7 @@
     {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-12T01:38:00.951Z\",\"session_id\":\"0cf0b1ca-f9ca-4a6c-aa4c-694dbf88b53e\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-12T01:42:00.984Z\",\"session_id\":\"19f8dfff-f90d-48a5-8915-0f25f3ada102\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }
