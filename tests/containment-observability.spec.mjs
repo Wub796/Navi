@@ -92,7 +92,12 @@ test('every refusal emits one structured audit line to stderr with the destinati
       try { await resolveDestination(target, false, { sessionId: 'session-abc' }); }
       catch (error) { if (error.code !== 'ERR_BLOCKED_BY_CONTAINMENT') throw error; }
     }
-    console.log(JSON.stringify(containmentMetrics()));
+    // A sink that has gone away must not change the decision it describes.
+    process.stderr.write = () => { throw new Error('audit sink unavailable'); };
+    let heldWithoutSink = false;
+    try { await resolveDestination('http://10.0.0.9/', false, { sessionId: 'session-abc' }); }
+    catch (error) { heldWithoutSink = error.code === 'ERR_BLOCKED_BY_CONTAINMENT'; }
+    console.log(JSON.stringify({ ...containmentMetrics(), heldWithoutSink }));
   `;
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: root, encoding: 'utf8' });
   expect(child.error).toBeUndefined();
@@ -120,8 +125,10 @@ test('every refusal emits one structured audit line to stderr with the destinati
   // The audit trail never contaminates stdout: the stdio transport speaks there.
   const stdout = String(child.stdout).trim().split('\n');
   expect(stdout).toHaveLength(1);
-  const metrics = JSON.parse(stdout[0]).containment;
-  expect(metrics).toMatchObject({ enforced: true, violations_total: 2, violations_by_category: { metadata_endpoint: 1 } });
+  const summary = JSON.parse(stdout[0]);
+  expect(summary.containment).toMatchObject({ enforced: true, violations_total: 3, violations_by_category: { metadata_endpoint: 1, private_ipv4: 1 } });
+  // The third refusal was counted but not logged, and it still failed closed.
+  expect(summary.heldWithoutSink).toBe(true);
 });
 
 test('the SSE server publishes live counters on /healthz and in Prometheus text on /metrics', async () => {

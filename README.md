@@ -218,7 +218,7 @@ The same refusal is written to stderr as one JSON line, so a log pipeline can al
   "category": "metadata_endpoint", "action": "BLOCKED" }
 ```
 
-`target_url` is stripped to `origin + pathname`, so credentials, query strings and fragments never reach a log. `violations_total` counts every refusal while `violations_by_category` covers the classified ones, so a malformed or credentialed URL is counted in the total and logged as `unclassified` rather than forced into a bucket. With `NAVI_ALLOW_LOCAL_NETWORK=1` the policy is off: `enforced` reports `0` and nothing is counted.
+`target_url` is stripped to `origin + pathname`, so credentials, query strings and fragments never reach a log. The counters are incremented before the line is written, and a log sink that has gone away cannot change the outcome: the refusal still fails closed, and the missing line shows up as a gap between `violations_total` and the lines a pipeline received. `violations_total` counts every refusal while `violations_by_category` covers the classified ones, so a malformed or credentialed URL is counted in the total and logged as `unclassified` rather than forced into a bucket. With `NAVI_ALLOW_LOCAL_NETWORK=1` the policy is off: `enforced` reports `0` and nothing is counted.
 
 #### Authenticated sessions
 

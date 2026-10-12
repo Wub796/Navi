@@ -482,8 +482,11 @@ function recordContainmentViolation(violation) {
     category: category ?? "unclassified",
     action: "BLOCKED"
   };
-  process.stderr.write(`${JSON.stringify(record)}
+  try {
+    process.stderr.write(`${JSON.stringify(record)}
 `);
+  } catch {
+  }
 }
 function classifyAddress(address) {
   const bare = String(address).toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");

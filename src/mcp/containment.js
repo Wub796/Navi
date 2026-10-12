@@ -94,7 +94,11 @@ export function recordContainmentViolation(violation) {
     category: category ?? 'unclassified',
     action: 'BLOCKED'
   };
-  process.stderr.write(`${JSON.stringify(record)}\n`);
+  // Counters are incremented before this write, and a sink that has gone away
+  // must not turn a refused destination into a crash or a different error: the
+  // enforcement decision never depends on being able to log it.
+  try { process.stderr.write(`${JSON.stringify(record)}\n`); }
+  catch { /* the refusal still stands; a lost audit line is reported by the counter gap */ }
 }
 
 /** Classify a non-public address into the bucket an audit reader triages by, or
