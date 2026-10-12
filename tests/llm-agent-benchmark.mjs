@@ -14,18 +14,76 @@ import { createMockLlmServer } from './fixtures/mock-llm-server.mjs';
 import { classifyFailure, summarizeFailures } from '../src/failure-classifier.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const reportPath = new URL('../reports/LLM-TCR-BENCHMARK.md', import.meta.url);
-/** Canonical machine-readable record of a run. */
-const rawPath = new URL('../reports/llm-benchmark.json', import.meta.url);
+
 /**
- * The same payload under the name the phase verification records already link to.
- * Written from the same serialization, in the same place, as the canonical file, so
- * the two cannot disagree; it exists so that naming the canonical artifact could not
- * break a record that was written before the rename.
+ * The deterministic fixture baseline: the files the phase verification records and
+ * the README link to, and the evidence about this harness rather than about a model.
+ * A live run must never write here - see `artifactPaths`.
  */
-const rawAliasPath = new URL('../reports/llm-tcr-benchmark.json', import.meta.url);
-/** @typedef {{baseUrl: string, model: string, apiKey?: string, iterations: number, maxTurns: number, inputPrice?: number, outputPrice?: number, fixture?: string}} Config */
-/** @typedef {{path: string, iteration: number, success: boolean, steps: number, requests: number, inputTokens: number, outputTokens: number, cachedTokens: number, usageComplete: boolean, cachedComplete: boolean, wallMs: number, failures: {category: string, detail: string}[]}} Trial */
+const FIXTURE_ARTIFACTS = {
+  report: new URL('../reports/LLM-TCR-BENCHMARK.md', import.meta.url),
+  /** Canonical machine-readable record of a fixture run. */
+  raw: new URL('../reports/llm-benchmark.json', import.meta.url),
+  /**
+   * The same payload under the name the phase verification records already link to.
+   * Written from the same serialization, in the same place, as the canonical file, so
+   * the two cannot disagree; it exists so that naming the canonical artifact could not
+   * break a record that was written before the rename.
+   */
+  alias: new URL('../reports/llm-tcr-benchmark.json', import.meta.url)
+};
+/**
+ * Empirical model results live in their own files, and never in the baseline above.
+ *
+ * The two are different kinds of evidence: the baseline measures the harness with a
+ * scripted fixture, these measure a model, and a reader has to be able to tell which
+ * one they are holding without reading a timestamp. Sharing one path is what would
+ * make that impossible - a single live run would silently overwrite the published
+ * fixture baseline - so the split is structural rather than a naming convention.
+ */
+const LIVE_ARTIFACTS = {
+  report: new URL('../reports/LLM-TCR-BENCHMARK-LIVE.md', import.meta.url),
+  raw: new URL('../reports/llm-benchmark-live.json', import.meta.url),
+  /** A live run has no alias: the pre-rename name belongs to the baseline record. */
+  alias: null
+};
+
+/**
+ * Which files a run writes. Exported because "a live run cannot touch the fixture
+ * baseline" is an invariant that has to be checkable without a model endpoint.
+ * @param {boolean} fixture
+ * @returns {{report: URL, raw: URL, alias: URL | null}}
+ */
+export function artifactPaths(fixture) {
+  return fixture ? FIXTURE_ARTIFACTS : LIVE_ARTIFACTS;
+}
+
+/**
+ * Local OpenAI-compatible daemons, so that a zero-billing run needs one variable
+ * rather than a memorised port. Every entry is reached through the same OpenAI
+ * surface (`GET /models`, `POST /chat/completions`), which is why naming one is the
+ * whole configuration: `LLM_ENDPOINT=ollama` plus `LLM_MODEL` is a complete setup.
+ * The URLs are the documented defaults; a daemon on another port is configured by
+ * passing its full base URL instead of the name.
+ * @type {Readonly<Record<string, {baseUrl: string, start: string, models: string}>>}
+ */
+export const LOCAL_INFERENCE_PRESETS = Object.freeze({
+  ollama: { baseUrl: 'http://127.0.0.1:11434/v1', start: 'ollama serve', models: 'ollama list' },
+  vllm: { baseUrl: 'http://127.0.0.1:8000/v1', start: 'vllm serve <model>', models: 'curl -s http://127.0.0.1:8000/v1/models' },
+  lmstudio: { baseUrl: 'http://127.0.0.1:1234/v1', start: 'lms server start', models: 'lms ls' }
+});
+/** Budget for reading the endpoint's model list; it is a local metadata call. */
+const PREFLIGHT_MODELS_TIMEOUT_MS = 5000;
+/**
+ * Budget for the tool-calling probe. It is a real inference, and a local daemon may
+ * have to load the weights into memory first, so this is generous on purpose.
+ */
+const PREFLIGHT_PROBE_TIMEOUT_MS = 120000;
+/** The one tool the capability probe offers, so a reply that calls something else is visible. */
+const PROBE_TOOL_NAME = 'navi_preflight_probe';
+/** @typedef {{baseUrl: string, model: string, apiKey?: string, iterations: number, maxTurns: number, inputPrice?: number, outputPrice?: number, fixture?: string, preset?: string}} Config */
+/** @typedef {{path: string, iteration: number, success: boolean, steps: number, requests: number, inputTokens: number, outputTokens: number, cachedTokens: number, usageComplete: boolean, cachedComplete: boolean, wallMs: number, turnLatenciesMs: number[], failures: {category: string, detail: string}[]}} Trial */
+/** @typedef {{ok: true, endpoint: string, models: string[], probeMs: number} | {ok: false, code: string, detail: string, instructions: string[]}} Preflight */
 /** @param {unknown} condition @param {string} message */
 function assert(condition, message) { if (!condition) throw new Error(message); }
 /** Throw an Error carrying a taxonomy code, so classification reads a structured
@@ -89,19 +147,154 @@ export function resolveConfig(env = process.env) {
     }
     return { error: 'LLM_ENDPOINT=mock was set, so the local fixture runs and no model is called.', reason: 'mock' };
   }
-  if (!endpoint && !model) return { error: 'LLM_ENDPOINT and LLM_MODEL are unset. Set both to benchmark a live model, or unset NAVI_LLM_FIXTURE (LLM_ITERATIONS/LLM_MAX_TURNS still apply) to run the local fixture instead.', reason: 'unconfigured' };
-  if (!endpoint) return { error: 'LLM_ENDPOINT is unset. Set the OpenAI-compatible base URL (for example http://127.0.0.1:11434/v1).', reason: 'invalid' };
-  if (!model) return { error: 'LLM_MODEL is unset. Set the exact tool-calling model name the endpoint serves.', reason: 'invalid' };
+  // A local daemon can be named instead of addressed: `LLM_ENDPOINT=ollama` is the
+  // whole configuration for a zero-billing run against the documented default port.
+  // The name resolves to a base URL here and nowhere else, so the rest of this
+  // function - and the preflight, and the run - sees an ordinary endpoint.
+  const presetName = Object.keys(LOCAL_INFERENCE_PRESETS).find(name => name === endpoint.toLowerCase());
+  const preset = presetName ? LOCAL_INFERENCE_PRESETS[presetName] : undefined;
+  const target = preset ? preset.baseUrl : endpoint;
+  if (!target && !model) return { error: 'LLM_ENDPOINT and LLM_MODEL are unset. Set both to benchmark a live model, or unset NAVI_LLM_FIXTURE (LLM_ITERATIONS/LLM_MAX_TURNS still apply) to run the local fixture instead.', reason: 'unconfigured' };
+  if (!target) return { error: `LLM_ENDPOINT is unset. Set the OpenAI-compatible base URL (for example http://127.0.0.1:11434/v1), or name a local daemon: ${Object.keys(LOCAL_INFERENCE_PRESETS).join(', ')}.`, reason: 'invalid' };
+  if (!model) {
+    // The model stays required even when the daemon is named: a local server may
+    // serve several, and silently picking one would make a measurement depend on
+    // whatever happened to be installed. Name it; the preflight lists what is
+    // actually served when the name is wrong.
+    return {
+      error: preset
+        ? `LLM_MODEL is unset. Name the tool-calling model to benchmark; the ${presetName} daemon serves whatever is installed, so run "${preset.models}" to list them.`
+        : 'LLM_MODEL is unset. Set the exact tool-calling model name the endpoint serves.',
+      reason: 'invalid'
+    };
+  }
   /** @type {URL} */
   let url;
-  try { url = new URL(endpoint); } catch { return { error: 'LLM_ENDPOINT is not an absolute URL.', reason: 'invalid' }; }
+  try { url = new URL(target); } catch { return { error: 'LLM_ENDPOINT is not an absolute URL.', reason: 'invalid' }; }
   const loopback = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname);
   if (url.username || url.password) return { error: 'LLM_ENDPOINT must not embed credentials; use LLM_API_KEY.', reason: 'invalid' };
   if (url.protocol === 'http:' && !loopback) return { error: 'LLM_ENDPOINT must use HTTPS unless it is loopback.', reason: 'invalid' };
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return { error: 'LLM_ENDPOINT must be http(s).', reason: 'invalid' };
   if (!loopback && !apiKey) return { error: 'LLM_API_KEY is required for a remote LLM_ENDPOINT.', reason: 'invalid' };
-  return { config: { baseUrl: endpoint, model, apiKey, iterations, maxTurns, inputPrice, outputPrice } };
+  return { config: { baseUrl: target, model, apiKey, iterations, maxTurns, inputPrice, outputPrice, ...(presetName ? { preset: presetName } : {}) } };
 }
+
+/**
+ * The p-th percentile of a sample, by nearest-rank. Null for an empty sample, which
+ * is how "no turn was measured" stays distinguishable from "a turn took 0ms".
+ * @param {number[]} values @param {number} p
+ * @returns {number | null}
+ */
+export function percentile(values, p) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, rank))];
+}
+
+/** @param {number[]} values @returns {number | null} */
+function mean(values) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
+/**
+ * Prove the endpoint can do the two things a benchmark needs before spending a
+ * browser session on it: serve the named model, and actually emit a tool call.
+ *
+ * Both checks are requests the harness would make anyway (`GET /models` is what the
+ * OpenAI surface offers for discovery, and one prepared chat completion is the only
+ * honest way to test tool calling - a model list does not say whether a model can
+ * call tools). Neither writes anything, so a failed preflight leaves every report
+ * exactly as it was, and `main` exits 2 with the instructions below.
+ * @param {Config} config
+ * @returns {Promise<Preflight>}
+ */
+export async function preflightEndpoint(config) {
+  const base = config.baseUrl.replace(/\/$/, '');
+  /** @type {Record<string, string>} */
+  const headers = { 'Content-Type': 'application/json', ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}) };
+  const preset = config.preset ? LOCAL_INFERENCE_PRESETS[config.preset] : undefined;
+  /** @param {string} code @param {string} detail @param {string[]} instructions @returns {Preflight} */
+  const refuse = (code, detail, instructions) => ({ ok: false, code, detail, instructions });
+  /** The setup lines an operator needs, tailored to a named daemon when there is one. */
+  const setup = () => (preset
+    ? [`Start the ${config.preset} daemon: ${preset.start}`, `Confirm it answers: curl ${base}/models`]
+    : [`Start the OpenAI-compatible server that serves ${base} and confirm it answers: curl ${base}/models`]);
+
+  /** @type {string[]} */
+  let models = [];
+  try {
+    const response = await fetch(`${base}/models`, { headers, redirect: 'error', signal: AbortSignal.timeout(PREFLIGHT_MODELS_TIMEOUT_MS) });
+    // A status is not a credential and not a body, so it is safe to report verbatim.
+    if (!response.ok) {
+      return refuse('ENDPOINT_MODELS_FAILED', `${base}/models answered HTTP ${response.status}`, [
+        ...setup(),
+        'The model list is how the harness checks that the endpoint speaks the OpenAI surface before any task runs.'
+      ]);
+    }
+    const body = await response.json();
+    models = Array.isArray(body?.data) ? body.data.map((/** @type {any} */ entry) => String(entry?.id ?? '')).filter(Boolean) : [];
+    if (!models.length) {
+      return refuse('ENDPOINT_NOT_OPENAI_COMPATIBLE', `${base}/models answered 200 without a non-empty data[] array of model ids`, [
+        ...setup(),
+        'A compatible server answers GET /models with {"data":[{"id":"..."}]}.'
+      ]);
+    }
+  } catch (error) {
+    const timedOut = /** @type {{name?: unknown}} */ (error)?.name === 'TimeoutError';
+    return refuse('ENDPOINT_UNREACHABLE', timedOut
+      ? `${base}/models did not answer within ${PREFLIGHT_MODELS_TIMEOUT_MS}ms`
+      : `${base} could not be reached (${error instanceof Error ? error.message : String(error)})`, [
+      ...setup(),
+      'Pass the daemon name directly to use its documented port: LLM_ENDPOINT=' + Object.keys(LOCAL_INFERENCE_PRESETS).join('|')
+    ]);
+  }
+  if (!models.includes(config.model)) {
+    return refuse('MODEL_NOT_SERVED', `${JSON.stringify(config.model)} is not among the ${models.length} model(s) ${base} serves: ${models.slice(0, 20).join(', ')}`, [
+      preset ? `Install it, then re-run: ${preset.models}` : `Confirm the model name ${base} serves, then set LLM_MODEL to it.`,
+      `Then re-run with LLM_MODEL=<one of: ${models.slice(0, 5).join(', ')}>`
+    ]);
+  }
+
+  // The capability probe: one prepared turn that can only succeed by calling a tool.
+  const probeStart = performance.now();
+  try {
+    const response = await fetch(`${base}/chat/completions`, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(PREFLIGHT_PROBE_TIMEOUT_MS), headers,
+      body: JSON.stringify({
+        model: config.model,
+        messages: [{ role: 'user', content: `Call the ${PROBE_TOOL_NAME} tool with value "ok" and nothing else.` }],
+        tools: [tool(PROBE_TOOL_NAME, 'Report readiness. Call this exactly once.', { value: { type: 'string' } }, ['value'])],
+        tool_choice: 'auto',
+        max_tokens: 64
+      })
+    });
+    if (!response.ok) {
+      return refuse('PROBE_FAILED', `${base}/chat/completions answered HTTP ${response.status}`, [
+        ...setup(),
+        'The preflight sends one small tool-calling request; a server that rejects it cannot run a task trial.'
+      ]);
+    }
+    const body = await response.json();
+    const call = body?.choices?.[0]?.message?.tool_calls?.[0];
+    const called = call?.function?.name;
+    let argumentsValid = false;
+    try { argumentsValid = JSON.parse(call?.function?.arguments)?.value === 'ok'; } catch { /* Invalid tool arguments fail the capability check. */ }
+    if (called !== PROBE_TOOL_NAME || !argumentsValid) {
+      return refuse('TOOL_CALLING_UNSUPPORTED', `${config.model} did not return a valid ${PROBE_TOOL_NAME} call with value "ok"${called ? ` (tool name: ${JSON.stringify(called)})` : ''}`, [
+        `Use a tool-calling model. A local daemon needs one that supports tools: qwen3, qwen2.5, llama3.1+, mistral-nemo or firefunction are the usual Ollama choices; ` + 'llama3 (without tools) and most embedding models cannot.',
+        `Check the model by hand: curl ${base}/chat/completions -d '{"model":"' + config.model + '","messages":[{"role":"user","content":"call a tool"}],"tools":[{"type":"function","function":{"name":"probe","parameters":{"type":"object"}}}]}'`
+      ]);
+    }
+  } catch (error) {
+    const timedOut = /** @type {{name?: unknown}} */ (error)?.name === 'TimeoutError';
+    return refuse('PROBE_UNREACHABLE', timedOut
+      ? `${base}/chat/completions did not answer within ${PREFLIGHT_PROBE_TIMEOUT_MS}ms`
+      : `${base}/chat/completions could not be reached (${error instanceof Error ? error.message : String(error)})`, setup());
+  }
+  return { ok: true, endpoint: base, models, probeMs: performance.now() - probeStart };
+}
+
 
 /** Submit exactly one live model request. Never log credentials or request headers.
  * @param {Config} config @param {any[]} messages @param {any[]} tools
@@ -154,7 +347,7 @@ const rawTools = [
 
 /** @param {string} path @param {number} iteration @param {string} origin @param {Config} config @returns {Promise<Trial>} */
 async function runTrial(path, iteration, origin, config) {
-  const trial = /** @type {Trial} */ ({ path, iteration, success: false, steps: 0, requests: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, usageComplete: true, cachedComplete: true, wallMs: 0, failures: [] });
+  const trial = /** @type {Trial} */ ({ path, iteration, success: false, steps: 0, requests: 0, inputTokens: 0, outputTokens: 0, cachedTokens: 0, usageComplete: true, cachedComplete: true, wallMs: 0, turnLatenciesMs: [], failures: [] });
   const start = performance.now();
   /** @type {import('playwright').Browser | undefined} */
   let browser;
@@ -200,8 +393,15 @@ async function runTrial(path, iteration, origin, config) {
     ];
     let finished = false;
     for (let turn = 0; turn < config.maxTurns && !finished; turn++) {
-      const result = await modelTurn(config, messages, tools);
-      trial.requests++; countUsage(trial, result.usage);
+      // Time the model call itself. The wall clock per trial includes the browser
+      // and every tool round trip, so a latency figure has to be taken here to be
+      // about the model rather than about this harness.
+      const turnStart = performance.now();
+      trial.requests++;
+      let result;
+      try { result = await modelTurn(config, messages, tools); }
+      finally { trial.turnLatenciesMs.push(performance.now() - turnStart); }
+      countUsage(trial, result.usage);
       messages.push(result.message);
       const calls = result.message.tool_calls ?? [];
       if (!calls.length) { trial.failures.push({ category: 'PLANNER_STOPPED', detail: 'Model returned no tool call before finish_task' }); break; }
@@ -284,16 +484,13 @@ async function runTrial(path, iteration, origin, config) {
   return trial;
 }
 
-/** @param {Config | null} config */
-export async function runBenchmark(config) {
-  if (!config) {
-    const blocked = { status: 'blocked', reason: 'LLM_ENDPOINT/LLM_MODEL were not both set and the local fixture was disabled, so no model was called. This file records a blocked harness, not a model result.', recordedAt: new Date().toISOString(), trials: [] };
-    const serialized = JSON.stringify(blocked, null, 2) + '\n';
-    await writeFile(rawPath, serialized);
-    await writeFile(rawAliasPath, serialized);
-    await writeFile(reportPath, '# Autonomous LLM task benchmark\n\n**Status: blocked — no live model configured.** LLM_ENDPOINT and LLM_MODEL were not both set and the local fixture was switched off with `NAVI_LLM_FIXTURE=0`, so no model request was made. No LLM success, step-count or billing results are claimed.\n\n## Run with a configured model\n\n```sh\n# A local OpenAI-compatible tool-capable endpoint (no key needed for most local servers):\nexport LLM_ENDPOINT=http://127.0.0.1:11434/v1\nexport LLM_MODEL=YOUR_TOOL_CAPABLE_MODEL\nnpm run benchmark:llm\n# Hosted: an HTTPS LLM_ENDPOINT plus LLM_API_KEY in this shell only. The key is\n# never written to a report and is stripped from every child process it spawns.\n# Fixture only, no model and no key: leave LLM_ENDPOINT/LLM_MODEL unset.\n```\n\nOptional: LLM_ITERATIONS=10 (default), LLM_MAX_TURNS=25 (default), LLM_INPUT_USD_PER_MILLION and LLM_OUTPUT_USD_PER_MILLION for explicitly supplied prices. Hosted runs incur charges.\n\nThe harness compares actual model-driven Playwright ARIA/locator tools with actual Navi MCP differential maps and required settlement receipts. Both receive the same task and independent server-side order oracle. It records first-attempt TCR, tool steps, request count, wall time, provider-reported prompt, cached-input and completion tokens, and failures classified with the five-bucket taxonomy in [failure-classifier.js](../src/failure-classifier.js) — selector hallucination, deterministic refusal, untrusted-gesture-required, timeout-unsettled and schema violation — plus an explicit UNCLASSIFIED sink. A bucket is assigned only from a structured code or receipt field, so an unresolved identifier is observable evidence while model intent is never claimed. Missing usage stays unknown, never estimated as billed.\n\nNo mock execution is presented as a model benchmark. Contract tests exercise the transport/accounting separately. [Harness](../tests/llm-agent-benchmark.mjs) · [Raw status/results](llm-benchmark.json)\n');
-    return blocked;
-  }
+/**
+ * Run the benchmark and write its artifacts. A fixture run writes the deterministic
+ * baseline, a live run writes the live pair, and neither can write the other's files.
+ * @param {Config} config @param {Preflight | null} [preflight]
+ */
+export async function runBenchmark(config, preflight = null) {
+  const artifacts = artifactPaths(Boolean(config.fixture));
   assert(Number.isInteger(config.iterations) && config.iterations >= 1 && config.iterations <= 10, 'Iterations must be 1–10');
   assert(Number.isInteger(config.maxTurns) && config.maxTurns >= 1 && config.maxTurns <= 50, 'Max turns must be 1–50');
   const app = await createTcrApp();
@@ -317,24 +514,48 @@ export async function runBenchmark(config) {
       // Cached reads are a subset of inputTokens; the cost formula stays on
       // prompt_tokens because that is what the provider bills prompt-side.
       cachedInputTokens: completeCached ? rows.reduce((sum, row) => sum + row.cachedTokens, 0) : null,
+      // Model latency per turn, taken around the request rather than around the
+      // trial: the mean alone hides a slow tail, which is what a caller feels.
+      latency: { turns: rows.reduce((sum, row) => sum + row.turnLatenciesMs.length, 0), meanTurnMs: mean(rows.flatMap(row => row.turnLatenciesMs)), p50TurnMs: percentile(rows.flatMap(row => row.turnLatenciesMs), 50), p95TurnMs: percentile(rows.flatMap(row => row.turnLatenciesMs), 95), slowestTurnMs: percentile(rows.flatMap(row => row.turnLatenciesMs), 100) },
       costUsd: inputTokens !== null && outputTokens !== null && config.inputPrice !== undefined && config.outputPrice !== undefined ? (inputTokens * config.inputPrice + outputTokens * config.outputPrice) / 1e6 : null };
   });
-  const report = { status: config.fixture ? 'fixture-baseline' : 'measured', fixture: config.fixture ?? null, recordedAt: new Date().toISOString(), model: config.model, node: process.version, pricing: { inputPerMillion: config.inputPrice ?? null, outputPerMillion: config.outputPrice ?? null }, summaries, trials };
+  const report = {
+    status: config.fixture ? 'fixture-baseline' : 'measured', fixture: config.fixture ?? null, recordedAt: new Date().toISOString(), model: config.model, node: process.version,
+    // Where the numbers came from. Recorded for a live run so the record is
+    // self-describing: which endpoint answered, what it said it serves, and how long
+    // the capability probe took. Never the API key, which is not passed in here.
+    endpoint: preflight?.ok ? preflight.endpoint : null,
+    endpointPreset: config.preset ?? null,
+    preflight: preflight?.ok ? { models: preflight.models, modelCount: preflight.models.length, probeMs: preflight.probeMs } : null,
+    pricing: { inputPerMillion: config.inputPrice ?? null, outputPerMillion: config.outputPrice ?? null }, summaries, trials
+  };
   const serialized = JSON.stringify(report, null, 2) + '\n';
-  await writeFile(rawPath, serialized);
-  await writeFile(rawAliasPath, serialized);
+  await writeFile(artifacts.raw, serialized);
+  // The alias exists so a record written before the canonical name was chosen stays
+  // readable; it belongs to the baseline and a live run has none.
+  if (artifacts.alias) await writeFile(artifacts.alias, serialized);
   // A fixture run is labelled as one, at the top and in the raw record: telemetry
   // about the harness must never be readable as a claim about a model.
   const heading = config.fixture
-    ? '**Status: fixture baseline — no model was called.** The model side of this run was the local fixture in `' + config.fixture + '`, which drives the MCP server, the browser, the differential action maps and the settlement receipts exactly as a model would. It measures this repository\'s harness and its accounting path. Its token figures are *simulated* provider usage derived from the request body, so they are not a provider invoice, and no model capability, success rate or cost is claimed by this file. The two paths below are driven by scripts that are deliberately not the same length, so their step counts describe the fixture\'s plan and are **not** a comparison between the paths: the paired path comparison is [benchmark-agent-tcr.spec.mjs](../tests/benchmark-agent-tcr.spec.mjs) (deterministic, no model) or a run with a real `LLM_ENDPOINT`/`LLM_MODEL` (see below).\n\nModel id: ' + config.model + '. Node ' + process.version + '.\n\n'
-    : 'Model: ' + config.model + '. Node ' + process.version + '. Paired local sandbox tasks; real provider requests.\n\n';
-  await writeFile(reportPath, '# Autonomous LLM task benchmark\n\n' + heading + '| Path | Completed | TCR | Mean tool steps | Input tokens | Cached input tokens | Output tokens | Cost USD (supplied rates) |\n|---|---:|---:|---:|---:|---:|---:|---:|\n' + summaries.map(row => `| ${row.path} | ${row.successes}/${row.trials} | ${(row.successes / row.trials * 100).toFixed(1)}% | ${row.meanSteps.toFixed(1)} | ${row.inputTokens ?? 'unknown'} | ${row.cachedInputTokens ?? 'unknown'} | ${row.outputTokens ?? 'unknown'} | ${row.costUsd ?? 'unknown'} |`).join('\n') + '\n\nFailure buckets by path: ' + summaries.map(row => `${row.path} ${JSON.stringify(row.failureBuckets)}`).join(' · ') + '\n\nProvider-reported tokens include replayed conversation/tool schemas; unknown usage is not estimated, and cached reads are reported by the provider as a subset of input tokens rather than subtracted. Cost uses explicitly supplied rates only and is not a provider invoice. All trials/errors are retained, with no hidden reruns, and the failures of each path are grouped by taxonomy bucket rather than by prose. An unresolved identifier is not proof of model intent, and a Navi refusal does not imply execution; success requires a correct committed order. No external purchases. These measurements are local task/model-specific, not universal agent reliability. [Raw results](llm-benchmark.json)\n');
+    ? '**Status: fixture baseline — no model was called.** The model side of this run was the local fixture in `' + config.fixture + '`, which drives the MCP server, the browser, the differential action maps and the settlement receipts exactly as a model would. It measures this repository\'s harness and its accounting path. Its token figures are *simulated* provider usage derived from the request body, so they are not a provider invoice, and no model capability, success rate or cost is claimed by this file. The two paths below are driven by scripts that are deliberately not the same length, so their step counts describe the fixture\'s plan and are **not** a comparison between the paths: the paired path comparison is [benchmark-agent-tcr.spec.mjs](../tests/benchmark-agent-tcr.spec.mjs) (deterministic, no model) or a run with a real `LLM_ENDPOINT`/`LLM_MODEL` (see [LLM-TCR-BENCHMARK-LIVE.md](LLM-TCR-BENCHMARK-LIVE.md)).\n\nModel id: ' + config.model + '. Node ' + process.version + '.\n\n'
+    : '**Status: measured — live endpoint trials, including all failures.** Model: ' + config.model + '. Node ' + process.version + '. Paired local sandbox tasks; real provider requests. This file holds empirical model results and never the fixture baseline, which stays in [LLM-TCR-BENCHMARK.md](LLM-TCR-BENCHMARK.md).\n\nEndpoint: ' + (preflight?.ok ? preflight.endpoint : 'unrecorded') + (config.preset ? ' (preset `' + config.preset + '`)' : '') + '; the endpoint was preflighted before the first task — it served ' + (preflight?.ok ? preflight.models.length : 0) + ' model(s) and answered a tool-calling probe in ' + (preflight?.ok ? preflight.probeMs.toFixed(0) : '?') + 'ms.\n\n';
+  // The baseline table keeps the columns it published; the live table adds what a
+  // live run can measure and the baseline cannot, so neither file is read as the other.
+  // Milliseconds are rendered once here, so a percentile cannot arrive as a float with
+  // fifteen digits in a table a human is meant to read.
+  /** @param {number | null} value */
+  const ms = value => (value === null ? 'unknown' : `${value.toFixed(0)}ms`);
+  const table = config.fixture
+    ? '| Path | Completed | TCR | Mean tool steps | Input tokens | Cached input tokens | Output tokens | Cost USD (supplied rates) |\n|---|---:|---:|---:|---:|---:|---:|---:|\n' + summaries.map(row => `| ${row.path} | ${row.successes}/${row.trials} | ${(row.successes / row.trials * 100).toFixed(1)}% | ${row.meanSteps.toFixed(1)} | ${row.inputTokens ?? 'unknown'} | ${row.cachedInputTokens ?? 'unknown'} | ${row.outputTokens ?? 'unknown'} | ${row.costUsd ?? 'unknown'} |`).join('\n')
+    : '| Path | Completed | TCR | Mean tool steps | Input tokens | Cached input tokens | Output tokens | Turn latency mean / p50 / p95 (ms) | Cost USD (supplied rates) |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n' + summaries.map(row => `| ${row.path} | ${row.successes}/${row.trials} | ${(row.successes / row.trials * 100).toFixed(1)}% | ${row.meanSteps.toFixed(1)} | ${row.inputTokens ?? 'unknown'} | ${row.cachedInputTokens ?? 'unknown'} | ${row.outputTokens ?? 'unknown'} | [${[row.latency.meanTurnMs, row.latency.p50TurnMs, row.latency.p95TurnMs].map(ms).join(', ')}] | ${row.costUsd ?? 'unknown'} |`).join('\n');
+  await writeFile(artifacts.report, '# Autonomous LLM task benchmark\n\n' + heading + table + '\n\nFailure buckets by path: ' + summaries.map(row => `${row.path} ${JSON.stringify(row.failureBuckets)}`).join(' · ') + '\n\nProvider-reported tokens include replayed conversation/tool schemas; unknown usage is not estimated, and cached reads are reported by the provider as a subset of input tokens rather than subtracted. Cost uses explicitly supplied rates only and is not a provider invoice. All trials/errors are retained, with no hidden reruns, and the failures of each path are grouped by taxonomy bucket rather than by prose. An unresolved identifier is not proof of model intent, and a Navi refusal does not imply execution; success requires a correct committed order. No external purchases. These measurements are local task/model-specific, not universal agent reliability. [Raw results](' + (config.fixture ? 'llm-benchmark.json' : 'llm-benchmark-live.json') + ')\n');
   return report;
 }
 
 export async function main(env = process.env) {
-  if (process.argv.includes('--help')) {
-    console.log('Live model: LLM_ENDPOINT (OpenAI-compatible base URL) with LLM_MODEL (tool-calling model); LLM_API_KEY is required for any non-loopback endpoint. Fixture: leave both unset and the local mock in tests/fixtures/mock-llm-server.mjs runs instead, which needs no key and measures the harness rather than a model; NAVI_LLM_FIXTURE=0 turns that off and exits 2. LLM_ENDPOINT=mock asks for that fixture explicitly, which is the only way to get it while an endpoint variable is set at all. Optional: LLM_ITERATIONS=10, LLM_MAX_TURNS=25, LLM_INPUT_USD_PER_MILLION, LLM_OUTPUT_USD_PER_MILLION, MOCK_LLM_PORT (the fixture binds an ephemeral loopback port by default).');
+  const wants = (/** @type {string} */ flag) => process.argv.includes(flag);
+  if (wants('--help')) {
+    console.log(`Live model: LLM_ENDPOINT (an OpenAI-compatible base URL, or one of the local daemon names ${Object.keys(LOCAL_INFERENCE_PRESETS).join(', ')}) with LLM_MODEL (tool-calling model); LLM_API_KEY is required for any non-loopback endpoint.\n  A live run is preflighted first: GET /models must serve LLM_MODEL and one probe request must come back as a tool call, or the run exits 2 with setup instructions and writes nothing.\n  Live results: reports/LLM-TCR-BENCHMARK-LIVE.md + reports/llm-benchmark-live.json. The fixture baseline in reports/LLM-TCR-BENCHMARK.md is never written by a live run.\n  --preflight runs only that check and exits (0 reachable and tool-capable, 2 not).\nFixture: leave LLM_ENDPOINT/LLM_MODEL unset and the local mock in tests/fixtures/mock-llm-server.mjs runs instead, which needs no key and measures the harness rather than a model; NAVI_LLM_FIXTURE=0 turns that off and exits 2. LLM_ENDPOINT=mock asks for that fixture explicitly, which is the only way to get it while an endpoint variable is set at all.\nOptional: LLM_ITERATIONS=10, LLM_MAX_TURNS=25, LLM_INPUT_USD_PER_MILLION, LLM_OUTPUT_USD_PER_MILLION, MOCK_LLM_PORT (the fixture binds an ephemeral loopback port by default).`);
     return 0;
   }
   // Fail fast on configuration, before any browser or network work. A partial or
@@ -344,11 +565,12 @@ export async function main(env = process.env) {
   // raw record both.
   const resolved = resolveConfig(env);
   if ('error' in resolved) {
-    const useFixture = resolved.reason === 'mock' || (resolved.reason === 'unconfigured' && env.NAVI_LLM_FIXTURE !== '0');
+    // A preflight request is a question about a configured endpoint, so it is answered
+    // with the configuration error rather than with a fixture run nobody asked for.
+    const useFixture = !wants('--preflight') && (resolved.reason === 'mock' || (resolved.reason === 'unconfigured' && env.NAVI_LLM_FIXTURE !== '0'));
     process.stderr.write(`llm-agent-benchmark: ${resolved.error}\n`);
     if (!useFixture) {
-      await runBenchmark(null);
-      process.stderr.write('llm-agent-benchmark: no model request was made; the blocked status is recorded in reports/LLM-TCR-BENCHMARK.md\n');
+      process.stderr.write('llm-agent-benchmark: set LLM_ENDPOINT=ollama|vllm|lmstudio (or a base URL) and LLM_MODEL to a served tool-capable model; use --help for setup. No model request was made and no report was written.\n');
       return 2;
     }
     const fixture = await createMockLlmServer();
@@ -361,8 +583,22 @@ export async function main(env = process.env) {
       await fixture.close();
     }
   }
-  const report = await runBenchmark(resolved.config);
-  console.log(`LLM benchmark: ${report.status}; see reports/LLM-TCR-BENCHMARK.md`);
+  // Prove the endpoint serves this model and can call a tool before spending a browser
+  // session on it. A failure writes nothing at all: no report is created, no baseline
+  // is touched, and the caller gets exit 2 and the instructions it needs.
+  const preflight = await preflightEndpoint(resolved.config);
+  if (!preflight.ok) {
+    process.stderr.write(`llm-agent-benchmark: ${preflight.code}: ${preflight.detail}\n`);
+    for (const line of preflight.instructions) process.stderr.write(`  - ${line}\n`);
+    process.stderr.write('llm-agent-benchmark: no benchmark was run and no report was written.\n');
+    return 2;
+  }
+  if (wants('--preflight')) {
+    console.log(`LLM preflight ok: ${preflight.endpoint} serves ${preflight.models.length} model(s) including ${resolved.config.model}; tool-calling probe answered in ${preflight.probeMs.toFixed(0)}ms.`);
+    return 0;
+  }
+  const report = await runBenchmark(resolved.config, preflight);
+  console.log(`LLM benchmark: ${report.status}; see reports/LLM-TCR-BENCHMARK-LIVE.md`);
   return report.trials.every(row => row.success) ? 0 : 1;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = await main();

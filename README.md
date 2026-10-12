@@ -265,6 +265,18 @@ npm run benchmark:tcr
 
 The [task benchmark report](reports/TCR-BENCHMARK.md) compares ten paired, independently verified checkouts via Playwright role locators versus actual MCP discovery/execution with settlement receipts. It records exact tokenized DOM-context payloads and end-to-end timings, not billed model usage or general LLM planning performance. [Raw trials](reports/tcr-benchmark.json) include every outcome; there are no retries or discarded failures. The application is a local sandbox with real HTTP requests, not a public store or real payment flow.
 
+### Local model benchmark (no hosted billing)
+
+Start an OpenAI-compatible daemon and choose the exact tool-capable model it serves:
+
+```sh
+LLM_ENDPOINT=ollama LLM_MODEL=YOUR_MODEL npm run benchmark:llm -- --preflight
+LLM_ENDPOINT=ollama LLM_MODEL=YOUR_MODEL npm run benchmark:llm
+# Also supported: LLM_ENDPOINT=vllm, lmstudio, or a full /v1 base URL.
+```
+
+Preflight validates `/models` and a real tool-calling response before opening a task browser. Setup failures exit `2` without changing any report. Successful live runs write `reports/LLM-TCR-BENCHMARK-LIVE.md` and `reports/llm-benchmark-live.json` with provider token counts, cached prompt tokens, per-turn latency and TCR; missing usage stays unknown. The [fixture baseline](reports/LLM-TCR-BENCHMARK.md) remains separate. With no endpoint/model configured, the existing fixture mode still runs, so use `NAVI_LLM_FIXTURE=0` when a run must use a model.
+
 ## Continuous integration
 
 [ci.yml](.github/workflows/ci.yml) runs on every pull request and push to `main` with Node 22.x. Its gates read machine-readable reports rather than re-deriving numbers, and a missing report fails the gate instead of skipping it:
@@ -317,6 +329,7 @@ The CI checks `main` should require are `Quality gates (Node 22.x)`, `Benchmark 
 - [Tenant loader](src/loader.js) · [built snippet](dist/loader.min.js) · [loader suite](tests/loader.spec.mjs)
 - [Integration matrix](docs/INTEGRATION-MATRIX.md) · [Claude Desktop config](examples/claude-desktop-config.json) · [Cursor config](examples/cursor-mcp.json) · [auto-discovery suite](tests/auto-discovery.spec.mjs) · [manifest negotiation suite](tests/manifest-loop.spec.mjs)
 - [Mock model fixture](tests/fixtures/mock-llm-server.mjs) · [LLM harness contract](tests/llm-harness.spec.mjs) · [LLM benchmark report](reports/LLM-TCR-BENCHMARK.md) · [raw metrics](reports/llm-benchmark.json)
+- [v0.5.0 release notes](docs/RELEASES/v0.5.0.md) · [production Compose file](deploy/docker-compose.prod.yml) · [Fly.io configuration](deploy/fly.toml)
 - [Publish preflight](scripts/publish-preflight.mjs) · [release notes generator](scripts/release-notes.mjs) · [release pipeline spec](tests/release-pipeline.spec.mjs)
 - [Host service](server/index.js) · [aggregate store](server/store.js) · [tenant keys](server/tenants.js) · [ingestion suite](tests/backend-ingest.spec.mjs)
 - [CSP compliance suite](tests/csp-compliance.spec.mjs) · [hardening suite](tests/hardening.spec.mjs) · [shared browser helpers](src/browser.js)
