@@ -370,6 +370,33 @@ test('a telemetry host that is down cannot delay, change or unblock a refusal', 
   }
 });
 
+test('a telemetry host that never answers cannot delay a refusal either', async () => {
+  // A dead port refuses the connection immediately, which is the easy case. A
+  // host that accepts and then hangs is the one that would block a naive
+  // forwarder, so the refusal is timed against it rather than asserted loosely.
+  const hung = createServer(() => { /* accept and never answer */ });
+  await new Promise(resolve => hung.listen(0, '127.0.0.1', () => resolve(null)));
+  const address = hung.address();
+  setEnv('NAVI_TELEMETRY_ENDPOINT', `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`);
+  setEnv('NAVI_TENANT_KEY', 'key-alpha');
+  const s = containedSession();
+  try {
+    const started = Date.now();
+    const result = body(await s.navigate({ url: 'http://169.254.169.254/' }));
+    const elapsed = Date.now() - started;
+    expect(result.error.code).toBe('ERR_BLOCKED_BY_CONTAINMENT');
+    expect(elapsed, `the refusal waited ${elapsed}ms on telemetry`).toBeLessThan(1000);
+    // The attempt is still outstanding, which is exactly the point: it is off the
+    // path of the request it describes.
+    expect(containmentForwardingMetrics()).toMatchObject({ configured: true, forwarded: 0, failed: 0, dropped: 0, queued: 1 });
+    expect(containmentMetrics().containment.violations_by_category.metadata_endpoint).toBe(1);
+  } finally {
+    hung.closeAllConnections();
+    await new Promise(resolve => hung.close(() => resolve(null)));
+    await s.close();
+  }
+});
+
 test('the forward queue is bounded and drops the overflow rather than growing', async () => {
   setEnv('NAVI_TELEMETRY_ENDPOINT', `http://127.0.0.1:${await closedPort()}`);
   setEnv('NAVI_TENANT_KEY', 'key-alpha');
