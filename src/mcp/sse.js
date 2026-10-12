@@ -27,7 +27,7 @@
 // only — never a refused URL or a session identifier.
 import { createServer } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
-import { containmentMetrics } from './containment.js';
+import { containmentForwardingMetrics, containmentMetrics } from './containment.js';
 
 /** Default port for the remote transport. */
 export const DEFAULT_SSE_PORT = 3001;
@@ -77,6 +77,7 @@ function sendText(res, status, text, contentType) {
  */
 function prometheusMetrics(sessionCount, sessionCeiling) {
   const { containment } = containmentMetrics();
+  const forwarding = containmentForwardingMetrics();
   const lines = [
     '# HELP navi_containment_enforced 1 while the private-network policy is active, 0 when NAVI_ALLOW_LOCAL_NETWORK=1 disabled it.',
     '# TYPE navi_containment_enforced gauge',
@@ -89,6 +90,20 @@ function prometheusMetrics(sessionCount, sessionCeiling) {
   ];
   for (const category of Object.keys(containment.violations_by_category).sort()) lines.push(`navi_containment_violations{category="${category}"} ${containment.violations_by_category[category]}`);
   lines.push(
+    // A climbing failed or dropped count is the signal that the durable audit
+    // trail has holes, which is the one risk a fail-safe forwarder introduces.
+    '# HELP navi_containment_forwarded_total Violations accepted by the telemetry host.',
+    '# TYPE navi_containment_forwarded_total counter',
+    `navi_containment_forwarded_total ${forwarding.forwarded}`,
+    '# HELP navi_containment_forward_failed_total Violations the telemetry host refused or never answered.',
+    '# TYPE navi_containment_forward_failed_total counter',
+    `navi_containment_forward_failed_total ${forwarding.failed}`,
+    '# HELP navi_containment_forward_dropped_total Violations not queued because the forward backlog was full.',
+    '# TYPE navi_containment_forward_dropped_total counter',
+    `navi_containment_forward_dropped_total ${forwarding.dropped}`,
+    '# HELP navi_containment_forward_queued Violations waiting to be forwarded.',
+    '# TYPE navi_containment_forward_queued gauge',
+    `navi_containment_forward_queued ${forwarding.queued}`,
     '# HELP navi_mcp_sessions Open SSE sessions.', '# TYPE navi_mcp_sessions gauge', `navi_mcp_sessions ${sessionCount}`,
     '# HELP navi_mcp_sessions_max Configured SSE session ceiling.', '# TYPE navi_mcp_sessions_max gauge', `navi_mcp_sessions_max ${sessionCeiling}`
   );
@@ -392,7 +407,7 @@ export async function createSseServer(options) {
     }
 
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      sendJson(res, 200, { ok: true, transport: 'sse', sessions: sessions.size, maxSessions, auth: authToken ? 'bearer' : 'none', idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES, containment: containmentMetrics().containment });
+      sendJson(res, 200, { ok: true, transport: 'sse', sessions: sessions.size, maxSessions, auth: authToken ? 'bearer' : 'none', idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES, containment: containmentMetrics().containment, containmentForwarding: containmentForwardingMetrics() });
       return;
     }
 

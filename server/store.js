@@ -1,8 +1,11 @@
 // Telemetry aggregate store.
 //
 // Aggregates are the only thing the ingestion path writes: no field values, no
-// DOM, no user identifiers. Persistence uses the runtime's own facilities so the
-// service keeps the repository's zero-runtime-dependency rule:
+// DOM, no user identifiers. Containment violations are the deliberate second
+// record type: a refused destination is the one thing this service must be able
+// to show a tenant afterwards, and a sanitized URL that was *not* visited is not
+// page data. Persistence uses the runtime's own facilities so the service keeps
+// the repository's zero-runtime-dependency rule:
 //
 //   * `node:sqlite` when the runtime provides it (Node 22.5+), which is the
 //     preferred store and the one `server/telemetry.db` refers to;
@@ -22,8 +25,48 @@ import { dirname, resolve } from 'node:path';
  * @typedef {{url_origin: string, events: number}} OriginBucket
  * @typedef {{events: number, totals: TelemetryTotals, byTenant: TenantBucket[], byOrigin: OriginBucket[]}} TelemetrySummary
  * @typedef {{tenant_id?: string}} SummaryFilter
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
+ * @typedef {{tenant_id: string, session_id?: string | null, category: string, target_url: string, resolved_ip?: string | null, created_at?: string}} ViolationInput
+ * @typedef {{id: number, tenant_id: string, session_id: string | null, category: string, target_url: string, resolved_ip: string | null, created_at: string}} ContainmentViolation
+ * @typedef {{tenant_id: string, limit?: number, since?: string}} ViolationFilter
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
  */
+
+/** Default number of violation rows one query returns. */
+export const DEFAULT_VIOLATION_LIMIT = 50;
+/** Hard ceiling on violation rows per query, so an audit read stays bounded. */
+export const MAX_VIOLATION_LIMIT = 200;
+/** Discriminator that separates a violation line from an aggregate line. */
+export const VIOLATION_KIND = 'containment_violation';
+
+/**
+ * Clamp a caller-supplied row limit. The route rejects an out-of-range limit
+ * with a named error, so this only guards a direct store caller.
+ * @param {unknown} value @returns {number}
+ */
+function normalizeLimit(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return DEFAULT_VIOLATION_LIMIT;
+  return Math.min(MAX_VIOLATION_LIMIT, Math.max(1, Math.trunc(number)));
+}
+
+/**
+ * Validate one violation and give it a timestamp. Required fields throw rather
+ * than being defaulted: a row with no category is not a containment record, and
+ * silently storing one would corrupt the audit a tenant reads back.
+ * @param {ViolationInput} violation @returns {Required<ViolationInput>}
+ */
+function normalizeViolation(violation) {
+  const tenantId = typeof violation?.tenant_id === 'string' ? violation.tenant_id.trim() : '';
+  const category = typeof violation?.category === 'string' ? violation.category.trim() : '';
+  const targetUrl = typeof violation?.target_url === 'string' ? violation.target_url.trim() : '';
+  if (!tenantId) throw new TypeError('recordViolation needs a tenant_id');
+  if (!category) throw new TypeError('recordViolation needs a category');
+  if (!targetUrl) throw new TypeError('recordViolation needs a target_url');
+  const sessionId = typeof violation.session_id === 'string' && violation.session_id.length ? violation.session_id : null;
+  const resolvedIp = typeof violation.resolved_ip === 'string' && violation.resolved_ip.length ? violation.resolved_ip : null;
+  const createdAt = typeof violation.created_at === 'string' && violation.created_at.length ? violation.created_at : new Date().toISOString();
+  return { tenant_id: tenantId, session_id: sessionId, category, target_url: targetUrl, resolved_ip: resolvedIp, created_at: createdAt };
+}
 
 /**
  * Resolve `node:sqlite` without a static import. It only exists from Node 22.5,
@@ -97,7 +140,25 @@ function createSqliteStore(path, sqlite) {
     execution_failures INTEGER NOT NULL,
     received_at TEXT NOT NULL
   )`);
+  // Refusals live in their own table rather than in the aggregate table: an
+  // audit question ("what did this tenant try to reach?") and a metric question
+  // ("how many controls were indexed?") must not be able to skew each other.
+  db.exec(`CREATE TABLE IF NOT EXISTS containment_violations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    session_id TEXT,
+    category TEXT NOT NULL,
+    target_url TEXT NOT NULL,
+    resolved_ip TEXT,
+    created_at TEXT NOT NULL
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_violations_tenant_created ON containment_violations(tenant_id, created_at)');
   const insert = db.prepare('INSERT INTO telemetry (tenant_id, url_origin, actions_indexed, actions_executed, execution_failures, received_at) VALUES (?, ?, ?, ?, ?, ?)');
+  const insertViolation = db.prepare('INSERT INTO containment_violations (tenant_id, session_id, category, target_url, resolved_ip, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+  const lastViolationId = db.prepare('SELECT last_insert_rowid() AS id');
+  // An empty `since` sorts before every ISO-8601 timestamp, so one prepared
+  // statement serves both the bounded and the unbounded read.
+  const selectViolations = db.prepare('SELECT id, tenant_id, session_id, category, target_url, resolved_ip, created_at FROM containment_violations WHERE tenant_id = ? AND created_at >= ? ORDER BY created_at DESC, id DESC LIMIT ?');
   return {
     mode: 'sqlite',
     file: path,
@@ -117,8 +178,27 @@ function createSqliteStore(path, sqlite) {
         received_at: String(row.received_at)
       })), filter);
     },
+    async recordViolation(violation) {
+      const record = normalizeViolation(violation);
+      insertViolation.run(record.tenant_id, record.session_id, record.category, record.target_url, record.resolved_ip, record.created_at);
+      const row = /** @type {{id?: unknown}} */ (lastViolationId.get());
+      return { id: asNumber(row?.id), ...record };
+    },
+    async queryViolations(filter) {
+      const rows = /** @type {any[]} */ (selectViolations.all(filter.tenant_id, filter.since ?? '', normalizeLimit(filter.limit)));
+      return rows.map(row => ({
+        id: asNumber(row.id),
+        tenant_id: String(row.tenant_id),
+        session_id: row.session_id === null || row.session_id === undefined ? null : String(row.session_id),
+        category: String(row.category),
+        target_url: String(row.target_url),
+        resolved_ip: row.resolved_ip === null || row.resolved_ip === undefined ? null : String(row.resolved_ip),
+        created_at: String(row.created_at)
+      }));
+    },
     async reset() {
       db.exec('DELETE FROM telemetry');
+      db.exec('DELETE FROM containment_violations');
     },
     async close() {
       db.close();
@@ -143,6 +223,9 @@ function createLogStore(path) {
       try {
         const parsed = JSON.parse(line);
         if (parsed && typeof parsed === 'object') {
+          // Violation lines share the file but not the shape: counting one as a
+          // beacon would add a phantom event with zero actions to every summary.
+          if (parsed.kind === VIOLATION_KIND) continue;
           // Normalize the shape so a hand-edited or foreign line cannot inject
           // NaN into an aggregate.
           records.push({
@@ -160,6 +243,47 @@ function createLogStore(path) {
     }
     return records;
   };
+  /** Violations in append order, numbered the way the file's id column would be.
+   * @returns {Promise<ContainmentViolation[]>} */
+  const readViolations = async () => {
+    let text = '';
+    try {
+      text = await readFile(path, 'utf8');
+    } catch {
+      return [];
+    }
+    /** @type {ContainmentViolation[]} */
+    const violations = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (!parsed || typeof parsed !== 'object' || parsed.kind !== VIOLATION_KIND) continue;
+        violations.push({
+          id: violations.length + 1,
+          tenant_id: String(parsed.tenant_id ?? ''),
+          session_id: typeof parsed.session_id === 'string' && parsed.session_id.length ? parsed.session_id : null,
+          category: String(parsed.category ?? ''),
+          target_url: String(parsed.target_url ?? ''),
+          resolved_ip: typeof parsed.resolved_ip === 'string' && parsed.resolved_ip.length ? parsed.resolved_ip : null,
+          created_at: String(parsed.created_at ?? '')
+        });
+      } catch {
+        // A torn final line is skipped rather than fatal, as for aggregates.
+      }
+    }
+    return violations;
+  };
+  /** Ids continue from what the file already holds, so a restart does not reuse
+   * the position a reader already ordered by. One process owns the file, which is
+   * how this backend is deployed; a second writer is not supported.
+   * @type {number | null} */
+  let violationSequence = null;
+  const nextViolationId = async () => {
+    if (violationSequence === null) violationSequence = (await readViolations()).length;
+    violationSequence += 1;
+    return violationSequence;
+  };
   return {
     mode: 'log',
     file: path,
@@ -169,8 +293,24 @@ function createLogStore(path) {
     async summarize(filter = {}) {
       return summarizeRecords(await readRecords(), filter);
     },
+    async recordViolation(violation) {
+      const record = normalizeViolation(violation);
+      // The id is claimed before the append, because the seed reads the file: the
+      // id returned here must be the one a later read assigns to this line.
+      const id = await nextViolationId();
+      // The line is the durable write: it is appended before this resolves, so
+      // the caller's 202 means the record survived the process.
+      await appendFile(path, `${JSON.stringify({ kind: VIOLATION_KIND, ...record })}\n`, 'utf8');
+      return { id, ...record };
+    },
+    async queryViolations(filter) {
+      const selected = (await readViolations()).filter(violation => violation.tenant_id === filter.tenant_id && violation.created_at >= (filter.since ?? ''));
+      const ordered = selected.sort((left, right) => right.created_at.localeCompare(left.created_at) || right.id - left.id);
+      return ordered.slice(0, normalizeLimit(filter.limit));
+    },
     async reset() {
       await rm(path, { force: true });
+      violationSequence = null;
     },
     async close() {
       // Nothing to release: every append is already durable.
@@ -178,14 +318,27 @@ function createLogStore(path) {
   };
 }
 
+/** Whether this runtime can serve the preferred sqlite backend. @returns {Promise<boolean>} */
+export async function sqliteAvailable() {
+  return Boolean(await loadSqlite());
+}
+
 /**
  * Open the telemetry store, preferring sqlite and falling back to the log.
+ * `options.mode` pins a backend instead of following that preference: the host
+ * never does, but a test or an operator comparing the two should not have to.
  * @param {string} file
+ * @param {{mode?: 'sqlite' | 'log'}} [options]
  * @returns {Promise<TelemetryStore>}
  */
-export async function createStore(file) {
+export async function createStore(file, options = {}) {
   const path = resolve(file);
   await mkdir(dirname(path), { recursive: true });
+  if (options.mode === 'log') return createLogStore(path);
   const sqlite = await loadSqlite();
+  if (options.mode === 'sqlite') {
+    if (!sqlite) throw new Error(`The sqlite backend needs a runtime that provides node:sqlite; node ${process.versions.node} does not, and was asked for it explicitly, so no fallback was used.`);
+    return createSqliteStore(path, sqlite);
+  }
   return sqlite ? createSqliteStore(path, sqlite) : createLogStore(path);
 }

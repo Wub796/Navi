@@ -487,6 +487,74 @@ function recordContainmentViolation(violation) {
 `);
   } catch {
   }
+  if (category) queueForward(record);
+}
+var MAX_FORWARD_QUEUE = 256;
+var FORWARD_TIMEOUT_MS = 2e3;
+var forwardQueue = [];
+var draining = false;
+var inFlight = 0;
+var forwarded = 0;
+var failed = 0;
+var dropped = 0;
+function forwardTarget() {
+  const endpoint = (process.env.NAVI_TELEMETRY_ENDPOINT ?? "").trim().replace(/\/+$/, "");
+  const key = (process.env.NAVI_TENANT_KEY ?? "").trim();
+  if (!endpoint || !key) return null;
+  return { endpoint, key, tenantId: (process.env.NAVI_TENANT_ID ?? "").trim() };
+}
+function containmentForwardingMetrics() {
+  return { configured: forwardTarget() !== null, forwarded, failed, dropped, queued: forwardQueue.length + inFlight };
+}
+function queueForward(record) {
+  const target = forwardTarget();
+  if (!target) return;
+  if (forwardQueue.length >= MAX_FORWARD_QUEUE) {
+    dropped++;
+    return;
+  }
+  forwardQueue.push({
+    session_id: record.session_id ?? null,
+    category: String(record.category ?? ""),
+    target_url: String(record.target_url ?? ""),
+    resolved_ip: record.resolved_ip ?? null
+  });
+  void drainForwardQueue();
+}
+async function drainForwardQueue() {
+  if (draining) return;
+  draining = true;
+  try {
+    const take = () => {
+      inFlight = forwardQueue.length ? 1 : 0;
+      return forwardQueue.shift();
+    };
+    let pending = take();
+    while (pending) {
+      const target = forwardTarget();
+      if (!target) {
+        inFlight = 0;
+        break;
+      }
+      try {
+        const response = await fetch(`${target.endpoint}/v1/telemetry/violations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${target.key}` },
+          body: JSON.stringify({ ...target.tenantId ? { tenant_id: target.tenantId } : {}, ...pending }),
+          signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS)
+        });
+        await response.arrayBuffer();
+        if (response.ok) forwarded++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+      pending = take();
+    }
+  } finally {
+    draining = false;
+    inFlight = 0;
+  }
 }
 function classifyAddress(address) {
   const bare = String(address).toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
@@ -854,6 +922,7 @@ function sendText(res, status, text, contentType) {
 }
 function prometheusMetrics(sessionCount, sessionCeiling) {
   const { containment } = containmentMetrics();
+  const forwarding = containmentForwardingMetrics();
   const lines = [
     "# HELP navi_containment_enforced 1 while the private-network policy is active, 0 when NAVI_ALLOW_LOCAL_NETWORK=1 disabled it.",
     "# TYPE navi_containment_enforced gauge",
@@ -866,6 +935,20 @@ function prometheusMetrics(sessionCount, sessionCeiling) {
   ];
   for (const category of Object.keys(containment.violations_by_category).sort()) lines.push(`navi_containment_violations{category="${category}"} ${containment.violations_by_category[category]}`);
   lines.push(
+    // A climbing failed or dropped count is the signal that the durable audit
+    // trail has holes, which is the one risk a fail-safe forwarder introduces.
+    "# HELP navi_containment_forwarded_total Violations accepted by the telemetry host.",
+    "# TYPE navi_containment_forwarded_total counter",
+    `navi_containment_forwarded_total ${forwarding.forwarded}`,
+    "# HELP navi_containment_forward_failed_total Violations the telemetry host refused or never answered.",
+    "# TYPE navi_containment_forward_failed_total counter",
+    `navi_containment_forward_failed_total ${forwarding.failed}`,
+    "# HELP navi_containment_forward_dropped_total Violations not queued because the forward backlog was full.",
+    "# TYPE navi_containment_forward_dropped_total counter",
+    `navi_containment_forward_dropped_total ${forwarding.dropped}`,
+    "# HELP navi_containment_forward_queued Violations waiting to be forwarded.",
+    "# TYPE navi_containment_forward_queued gauge",
+    `navi_containment_forward_queued ${forwarding.queued}`,
     "# HELP navi_mcp_sessions Open SSE sessions.",
     "# TYPE navi_mcp_sessions gauge",
     `navi_mcp_sessions ${sessionCount}`,
@@ -1129,7 +1212,7 @@ data: /message?sessionId=${id}
       return;
     }
     if (req.method === "GET" && url.pathname === "/healthz") {
-      sendJson(res, 200, { ok: true, transport: "sse", sessions: sessions.size, maxSessions, auth: authToken ? "bearer" : "none", idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES, containment: containmentMetrics().containment });
+      sendJson(res, 200, { ok: true, transport: "sse", sessions: sessions.size, maxSessions, auth: authToken ? "bearer" : "none", idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES, containment: containmentMetrics().containment, containmentForwarding: containmentForwardingMetrics() });
       return;
     }
     if (req.method === "GET" && url.pathname === "/") {
@@ -1163,8 +1246,8 @@ data: /message?sessionId=${id}
         /** @param {(value?: void) => void} resolve */
         (resolve2) => server.close(() => resolve2())
       );
-      const failed = results.find((result) => result.status === "rejected");
-      if (failed?.status === "rejected") throw failed.reason;
+      const failed2 = results.find((result) => result.status === "rejected");
+      if (failed2?.status === "rejected") throw failed2.reason;
     }
   };
 }

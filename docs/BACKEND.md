@@ -29,7 +29,7 @@ The SDK dispatches **no telemetry of any kind** — not on load, not during trav
 
 Use a current **Node.js LTS** — at least this package's declared floor, `engines.node >= 22.0.0`, verified on Node 22.23.3 — for a small ingestion/dashboard API. Start with one process and SQLite in WAL mode on durable local storage. Node's built-in `node:sqlite` avoids another database client dependency. A single SQLite writer is fine for an MVP; never place its file on ephemeral serverless storage or a shared network drive.
 
-**Implemented**, with one deliberate softening: the store resolves `node:sqlite` lazily and falls back to an **append-only JSONL log at the same path** when the built-in module is not importable on the running Node release. `store.mode` reports `sqlite` or `log` so an operator can see which path is live rather than assume. WAL pragmas and the “never on a network drive” rule apply to the SQLite mode; a log-backed MVP is even less interesting to a network filesystem, but it has no transactional dedup, so it is a local-demo and single-writer mode only.
+**Implemented**, with one deliberate softening: the store resolves `node:sqlite` lazily and falls back to an **append-only JSONL log at the same path** when the built-in module is not importable on the running Node release. Both backends carry two record types: aggregates, and containment violations in their own `containment_violations` table (indexed on `(tenant_id, created_at)`) or, in log mode, as JSONL lines tagged `kind: "containment_violation"` that the summarizer skips. `store.mode` reports `sqlite` or `log` so an operator can see which path is live rather than assume. WAL pragmas and the “never on a network drive” rule apply to the SQLite mode; a log-backed MVP is even less interesting to a network filesystem, but it has no transactional dedup, so it is a local-demo and single-writer mode only.
 
 Serve the SDK as a **static asset** from a caching reverse proxy or CDN in front of a read-only build directory, keeping the backend off the script-loading critical path. This is a vendor-neutral architecture, not a recommendation or integration of a specific hosting/database provider. Choose vendors only after measuring traffic and deployment constraints.
 
@@ -105,6 +105,29 @@ Telemetry stays **off by default and separate from the tagging SDK**: the SDK se
 - Accepted payloads are appended with a **server-generated** `received_at` timestamp and answered `202` with `{ ok: true, accepted: true, tenant_id, url_origin }`. Server timestamps define the buckets, never the client clock.
 - `GET /v1/telemetry?key=<tenant_key>` returns that tenant's aggregate; `GET /healthz` returns `{ ok, mode, tenants }`.
 
+### Implemented: `POST /v1/telemetry/violations` and the tenant audit read
+
+A containment refusal is the one event this service must be able to show a tenant after the fact: it is a destination the agent was stopped from reaching, which is exactly the kind of thing a security team asks about a week later. It is stored separately from aggregates and read back through its own route.
+
+```json
+{
+  "session_id": "8f0c1f5e-...",
+  "category": "metadata_endpoint",
+  "target_url": "http://169.254.169.254/latest/meta-data/",
+  "resolved_ip": "169.254.169.254"
+}
+```
+
+- **The tenant comes from the credential.** `Authorization: Bearer <tenant_key>` (or `?key=` for parity with the beacon route) resolves through `server/tenants.js`; an unregistered key is `401 UNKNOWN_TENANT` before the body is read. A body may also name `tenant_id`, and then it must be registered **and** equal the key's tenant — a record cannot be filed against somebody else (`401 UNKNOWN_TENANT`).
+- **`category` is one of six:** `metadata_endpoint`, `private_ipv4`, `loopback_or_local`, `cgnat_or_multicast`, `ipv6_special`, `dns_rebinding_rejected`. The list is duplicated from the MCP server's taxonomy rather than imported, because this service is dependency-free and must not load the agent runtime; `tests/containment-persistence.spec.mjs` asserts the two lists are equal so the copy cannot drift.
+- **`target_url` must already be sanitized:** an absolute http(s) URL equal to `origin + pathname`, so credentials, query strings and fragments are `400 INVALID_PAYLOAD`. This route cannot become a second ingestion path for page data.
+- **`session_id`** is 1–128 characters of letters, digits, dot, underscore, colon or hyphen, or absent; **`resolved_ip`** is an IP literal or null.
+- `application/json` only (this is machine-to-machine), cap 2048 bytes, `413`/`415` as on the beacon route, and the answer is `202 { ok, accepted, tenant_id, id }`.
+
+`GET /v1/tenants/<tenant_id>/security-audit` returns `{ ok, tenant_id, count, limit, since, violations }`, newest first, with `?limit=` (default 50, hard maximum 200) and `?since=` (ISO-8601, inclusive). It is `no-store, private` and authenticated with a **Bearer** key only: a key in a query string is one that ends up in URLs, referrers and proxy logs. A key that resolves to a different tenant than the path names is `403 FORBIDDEN`, decided after the key is checked so an anonymous caller cannot probe which tenants exist.
+
+**Trust model, stated plainly:** as with the beacon route, a caller who can reach this host and knows a tenant id can file a record for it — the key is the stronger form of the two, and a key presented with a disagreeing body is refused. There is no per-user auth, no TLS, no retention policy and no rate limiting; treat these records as operator-visible audit evidence, not as a compliance system.
+
 What is *not* there: no batch id, no deduplication, no SDK-version dimension, no day buckets, no per-route keys, and no Origin/CORS enforcement on ingestion (a non-browser client can post). The counts are honest aggregates for a dashboard experiment, not billable usage — see the warning below.
 
 ### Planned: the richer versioned event contract
@@ -131,6 +154,8 @@ Planned endpoints:
 | `GET /v1/navi.js?key=…` | key-gated asset | tenant key; no DB call | implemented |
 | `POST /v1/telemetry` | aggregate counts | strict schema + canonical origin + 2048-byte cap | implemented |
 | `GET /v1/telemetry?key=…` | tenant aggregate | tenant key; private, no-store | implemented |
+| `POST /v1/telemetry/violations` | one containment violation | tenant key; six categories; sanitized origin+path; 2048-byte cap | implemented |
+| `GET /v1/tenants/:id/security-audit` | that tenant's blocked destinations | Bearer key; own tenant only; limit/since | implemented |
 | `POST /v1/events` | versioned batched metrics with dedup | verified exact Origin + site match + limits | planned |
 | `GET /v1/sites/:id/daily?from=…&to=…` | tenant metrics | session + membership; capped range | planned |
 | `POST /v1/sites` | register website | session + CSRF/origin + ownership proof | planned |

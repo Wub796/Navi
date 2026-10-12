@@ -8,6 +8,8 @@
 //   GET  /v1/loader.js                  serve the tenant embed loader
 //   POST /v1/telemetry                  ingest one navigator.sendBeacon payload
 //   GET  /v1/telemetry?key=<tenant_key> read that tenant's aggregate
+//   POST /v1/telemetry/violations       ingest one containment violation
+//   GET  /v1/tenants/<id>/security-audit read that tenant's blocked destinations
 //   GET  /healthz                       liveness, store mode and tenant count
 //   GET  /.well-known/navi.json         public agent discovery document
 //   GET  /v1/source                     offer of the Corresponding Source (AGPL-3.0 §13)
@@ -28,9 +30,10 @@
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createStore } from './store.js';
+import { createStore, DEFAULT_VIOLATION_LIMIT, MAX_VIOLATION_LIMIT } from './store.js';
 import { loadTenants, tenantFor, tenantIds } from './tenants.js';
 
 /** Hard cap for one telemetry beacon body. */
@@ -91,6 +94,24 @@ export const NAVI_PROTOCOL_VERSION = '0.3.0';
 export const DEFAULT_MCP_SSE_URL = 'http://127.0.0.1:3001/sse';
 /** The complete, exact set of accepted telemetry keys. */
 export const TELEMETRY_FIELDS = ['tenant_id', 'url_origin', 'actions_indexed', 'actions_executed', 'execution_failures'];
+/**
+ * The complete, exact set of accepted violation fields. The destination arrives
+ * already sanitized by the MCP server, so no page URL, query string or credential
+ * is representable here — this route cannot become a second ingestion path for
+ * page data.
+ */
+export const VIOLATION_FIELDS = ['tenant_id', 'session_id', 'category', 'target_url', 'resolved_ip'];
+/**
+ * Categories a violation may be filed under. Duplicated from the MCP server's
+ * taxonomy rather than imported: this service is dependency-free and must not
+ * load the agent runtime to answer a request, and `tests/containment-persistence
+ * .spec.mjs` asserts the two lists agree so the copy cannot drift silently.
+ */
+export const VIOLATION_CATEGORIES = ['metadata_endpoint', 'private_ipv4', 'loopback_or_local', 'cgnat_or_multicast', 'ipv6_special', 'dns_rebinding_rejected'];
+/** Longest sanitized destination accepted, matching the MCP server's log cap. */
+export const MAX_VIOLATION_URL_CHARS = 512;
+/** Longest session identifier accepted. */
+export const MAX_SESSION_ID_CHARS = 128;
 
 const USAGE = `navi-host · script distribution and telemetry ingestion
 
@@ -102,6 +123,8 @@ Endpoints
   GET  /v1/loader.js
   POST /v1/telemetry
   GET  /v1/telemetry?key=<tenant_key>
+  POST /v1/telemetry/violations
+  GET  /v1/tenants/<tenant_id>/security-audit
   GET  /healthz
   GET  /.well-known/navi.json
   GET  /v1/source
@@ -109,6 +132,8 @@ Endpoints
 Environment
   NAVI_TENANTS     Comma-separated key:tenantId pairs. Defaults to the local
                    development key, which must not be used in production.
+  (The MCP server persists its refusals here when NAVI_TELEMETRY_ENDPOINT and
+   NAVI_TENANT_KEY are set on that process; see docs/BACKEND.md.)
   NAVI_MCP_SSE_URL MCP SSE endpoint published in the discovery document. Defaults
                    to http://127.0.0.1:3001/sse. Point this at your own bridge
                    only if you intend to publish it.
@@ -277,9 +302,90 @@ function validateTelemetry(payload, allowedTenantIds) {
 }
 
 /**
+ * Strict validation for one containment violation.
+ *
+ * The tenant comes from the caller's key when one is presented, and a body that
+ * names a different tenant is refused rather than rewritten: an audit record has
+ * to be the record the reporter meant, filed against the tenant its key resolves
+ * to. `target_url` must already be sanitized — origin plus path — so this route
+ * cannot become a second ingestion path for page data.
+ * @param {unknown} payload
+ * @param {Set<string>} allowedTenantIds
+ * @param {string | null} keyTenantId tenant the presented key resolved to, if any
+ * @returns {{ok: true, record: {tenant_id: string, session_id: string | null, category: string, target_url: string, resolved_ip: string | null}} | {ok: false, status: number, code: string, message: string}}
+ */
+function validateViolation(payload, allowedTenantIds, keyTenantId) {
+  /** @param {string} message @returns {{ok: false, status: number, code: string, message: string}} */
+  const invalid = message => ({ ok: false, status: 400, code: 'INVALID_PAYLOAD', message });
+  /** @param {string} message @returns {{ok: false, status: number, code: string, message: string}} */
+  const unknownTenant = message => ({ ok: false, status: 401, code: 'UNKNOWN_TENANT', message });
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return invalid('The body must be a JSON object with category and target_url, and optionally tenant_id, session_id and resolved_ip.');
+  }
+  const record = /** @type {Record<string, unknown>} */ (payload);
+  const unknown = Object.keys(record).filter(field => !VIOLATION_FIELDS.includes(field));
+  if (unknown.length) {
+    return invalid(`Unknown field(s): ${unknown.join(', ')}. Accepted fields are exactly ${VIOLATION_FIELDS.join(', ')}; the destination is a sanitized origin plus path and nothing else.`);
+  }
+  const declared = record.tenant_id;
+  if (declared !== undefined) {
+    if (typeof declared !== 'string' || !allowedTenantIds.has(declared)) {
+      return unknownTenant(`tenant_id "${String(declared)}" is not a registered tenant. Present the tenant key on the request, or name the tenant it resolves to.`);
+    }
+    if (keyTenantId && declared !== keyTenantId) {
+      return unknownTenant(`The body names tenant "${declared}" while the presented key resolves to "${keyTenantId}"; a record cannot be filed against another tenant.`);
+    }
+  }
+  const tenantId = typeof declared === 'string' ? declared : keyTenantId;
+  if (!tenantId) return unknownTenant('A tenant key is required: send "Authorization: Bearer <tenant_key>" (or ?key=<tenant_key>), or name a registered tenant_id.');
+  const category = record.category;
+  if (typeof category !== 'string' || !VIOLATION_CATEGORIES.includes(category)) {
+    return invalid(`category must be one of ${VIOLATION_CATEGORIES.join(', ')}.`);
+  }
+  const session = record.session_id;
+  if (session !== undefined && session !== null) {
+    if (typeof session !== 'string' || session.length === 0 || session.length > MAX_SESSION_ID_CHARS || !/^[A-Za-z0-9._:-]+$/.test(session)) {
+      return invalid(`session_id must be 1 to ${MAX_SESSION_ID_CHARS} characters of letters, digits, dot, underscore, colon or hyphen.`);
+    }
+  }
+  const target = record.target_url;
+  if (typeof target !== 'string' || target.length === 0 || target.length > MAX_VIOLATION_URL_CHARS) {
+    return invalid(`target_url must be a sanitized absolute URL of at most ${MAX_VIOLATION_URL_CHARS} characters.`);
+  }
+  /** @type {URL} */
+  let parsed;
+  try {
+    parsed = new URL(target);
+  } catch {
+    return invalid('target_url must be an absolute http(s) URL such as "http://169.254.169.254/latest/meta-data/".');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return invalid('target_url must use http or https.');
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    return invalid('target_url must be sanitized: no credentials, query string or fragment.');
+  }
+  if (`${parsed.origin}${parsed.pathname}` !== target) {
+    return invalid('target_url must be exactly origin plus path, which is what the MCP server records.');
+  }
+  const ip = record.resolved_ip;
+  if (ip !== undefined && ip !== null && (typeof ip !== 'string' || isIP(ip) === 0)) {
+    return invalid('resolved_ip must be an IP literal or null.');
+  }
+  return {
+    ok: true,
+    record: {
+      tenant_id: tenantId,
+      session_id: typeof session === 'string' ? session : null,
+      category,
+      target_url: target,
+      resolved_ip: typeof ip === 'string' ? ip : null
+    }
+  };
+}
+
+/**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
  * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: Map<string, string>, close(): Promise<void>}} NaviHost
  */
@@ -459,6 +565,104 @@ export async function createNaviHostServer(options = {}) {
       res.writeHead(200, headers);
       res.end(bytes);
       return;
+    }
+
+    // The MCP server posts here when it refuses a destination, so a tenant can
+    // read back what its agents were stopped from reaching. The reporter's key is
+    // checked before the body is read: a caller who cannot name a tenant should
+    // not be able to make this service parse anything.
+    if (path === '/v1/telemetry/violations') {
+      if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/telemetry/violations.');
+      const violationType = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+      if (violationType !== 'application/json') {
+        return sendError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Send a violation as application/json. This route is machine-to-machine: page code has no reason to call it.');
+      }
+      const violationLength = Number(req.headers['content-length'] ?? '');
+      if (Number.isFinite(violationLength) && violationLength > MAX_PAYLOAD_BYTES) {
+        req.resume();
+        return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Violation bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
+      }
+      const authorization = req.headers.authorization;
+      let presented = url.searchParams.get('key');
+      if (typeof authorization === 'string') {
+        if (!authorization.startsWith('Bearer ')) {
+          return sendError(res, 401, 'UNAUTHORIZED', 'Use "Authorization: Bearer <tenant_key>", or omit the header and send ?key=<tenant_key>.');
+        }
+        presented = authorization.slice('Bearer '.length).trim();
+      }
+      const keyTenantId = presented ? tenantFor(tenants, presented) : null;
+      if (presented && !keyTenantId) return sendError(res, 401, 'UNKNOWN_TENANT', 'The presented tenant key is not registered.');
+
+      await new Promise(/** @param {(value?: void) => void} resolveBody */ resolveBody => {
+        readBody(req, MAX_PAYLOAD_BYTES, result => {
+          if (result.tooLarge) {
+            sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Violation bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
+            resolveBody();
+            return;
+          }
+          if (result.raw === null) {
+            sendError(res, 400, 'INVALID_PAYLOAD', 'The request body could not be read.');
+            resolveBody();
+            return;
+          }
+          /** @type {unknown} */
+          let payload;
+          try {
+            payload = JSON.parse(result.raw);
+          } catch {
+            sendError(res, 400, 'INVALID_PAYLOAD', 'The body must be valid JSON.');
+            resolveBody();
+            return;
+          }
+          const verdict = validateViolation(payload, allowedTenantIds, keyTenantId);
+          if (!verdict.ok) {
+            sendError(res, verdict.status, verdict.code, verdict.message);
+            resolveBody();
+            return;
+          }
+          void store
+            .recordViolation(verdict.record)
+            .then(record => sendJson(res, 202, { ok: true, accepted: true, tenant_id: record.tenant_id, id: record.id }))
+            .catch(error => sendError(res, 500, 'STORE_FAILED', `The violation could not be stored: ${error instanceof Error ? error.message : String(error)}`))
+            .finally(() => resolveBody());
+        });
+      });
+      return;
+    }
+
+    // The audit read is keyed on a Bearer token rather than a query parameter,
+    // because a query string is the one part of a request that lands in URLs,
+    // referrers and proxy logs. A key is checked before the tenant in the path is
+    // compared, so an unauthenticated caller cannot probe which tenants exist.
+    const auditMatch = /^\/v1\/tenants\/([^/]+)\/security-audit$/.exec(path);
+    if (auditMatch) {
+      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /v1/tenants/<tenant_id>/security-audit.');
+      const authorization = req.headers.authorization;
+      const token = typeof authorization === 'string' && authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '';
+      const tenantId = tenantFor(tenants, token);
+      if (!tenantId) {
+        return sendError(res, 401, 'UNAUTHORIZED', 'An audit read requires "Authorization: Bearer <tenant_key>"; query-string keys are not accepted on this route.');
+      }
+      let requested = '';
+      try {
+        requested = decodeURIComponent(String(auditMatch[1] ?? ''));
+      } catch {
+        return sendError(res, 400, 'INVALID_PAYLOAD', 'The tenant id in the path is not valid percent-encoding.');
+      }
+      if (requested !== tenantId) {
+        return sendError(res, 403, 'FORBIDDEN', `The presented key resolves to "${tenantId}", not "${requested}". An audit read is confined to its own tenant.`);
+      }
+      const limitRaw = url.searchParams.get('limit');
+      const limit = limitRaw === null ? DEFAULT_VIOLATION_LIMIT : Number(limitRaw);
+      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_VIOLATION_LIMIT) {
+        return sendError(res, 400, 'INVALID_PAYLOAD', `limit must be an integer between 1 and ${MAX_VIOLATION_LIMIT}.`);
+      }
+      const since = url.searchParams.get('since');
+      if (since !== null && Number.isNaN(Date.parse(since))) {
+        return sendError(res, 400, 'INVALID_PAYLOAD', 'since must be an ISO-8601 timestamp such as 2026-10-11T00:00:00.000Z.');
+      }
+      const violations = await store.queryViolations(since === null ? { tenant_id: tenantId, limit } : { tenant_id: tenantId, limit, since });
+      return sendJson(res, 200, { ok: true, tenant_id: tenantId, count: violations.length, limit, since, violations }, { 'Cache-Control': 'no-store, private' });
     }
 
     if (path === '/v1/telemetry') {

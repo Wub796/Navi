@@ -144,6 +144,25 @@ try {
   assert(Object.keys(health.containment.violations_by_category).length === 6, 'healthz is missing violation categories');
   assert(!exposition.includes('http'), 'the exposition must not carry a destination URL');
   record('containment-observability', `healthz containment ${JSON.stringify(health.containment)}; ${series.length} containment series on /metrics`);
+  // Durable audit: a violation filed with the tenant's key must be readable back
+  // by that tenant from the shipped image, not only from a unit test.
+  const filed = await request(`${host}/v1/telemetry/violations`, {
+    method: 'POST',
+    // The host's tenant key, not the MCP bearer token: this is the tenant's own
+    // credential, and the audit read is confined to the tenant it resolves to.
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tenantKey}` },
+    body: JSON.stringify({ session_id: 'container-check', category: 'metadata_endpoint', target_url: 'http://169.254.169.254/latest/meta-data/', resolved_ip: '169.254.169.254' })
+  });
+  assert(filed.status === 202, `violation ingest answered ${filed.status}`);
+  const auditResponse = await request(`${host}/v1/tenants/container-check/security-audit`, { headers: { Authorization: `Bearer ${tenantKey}` } });
+  assert(auditResponse.status === 200, `audit read answered ${auditResponse.status}`);
+  const audit = await auditResponse.json();
+  assert(audit.count === 1 && audit.violations[0].target_url === 'http://169.254.169.254/latest/meta-data/', 'the audit record did not round-trip');
+  assert(String(auditResponse.headers.get('cache-control')).includes('private'), 'an audit read must not be publicly cacheable');
+  const anonymousAudit = await request(`${host}/v1/tenants/container-check/security-audit`);
+  assert(anonymousAudit.status === 401, `an anonymous audit read answered ${anonymousAudit.status}`);
+  const hostHealth = await (await request(`${host}/healthz`)).json();
+  record('tenant-security-audit', `a violation filed with the tenant key reads back through security-audit (${hostHealth.mode} store) and is refused without one`);
   // The containment guard is the shipped default, independent of the fixture
   // override this deployment adds: drive stdio MCP in a container that carries
   // no NAVI_ALLOW_LOCAL_NETWORK and require the metadata endpoint to be refused

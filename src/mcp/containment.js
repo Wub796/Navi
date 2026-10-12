@@ -50,11 +50,17 @@ export function containmentMetrics() {
   };
 }
 
-/** Zero the counters, for a test that asserts on deltas. Monotonic counters are
- * what a scrape wants, so nothing in the server calls this. */
+/** Zero the counters and empty the forward queue, for a test that asserts on
+ * deltas. Monotonic counters are what a scrape wants, so nothing in the server
+ * calls this. */
 export function resetContainmentMetrics() {
   violationsTotal = 0;
   for (const category of VIOLATION_CATEGORIES) violationsByCategory[category] = 0;
+  forwardQueue.length = 0;
+  inFlight = 0;
+  forwarded = 0;
+  failed = 0;
+  dropped = 0;
 }
 
 /** Strip everything the caller supplied as data: credentials, query and fragment.
@@ -77,7 +83,10 @@ function stripUserInfo(text) {
 
 /**
  * One structured line per refusal, on stderr so the stdio transport's stdout
- * stays a clean protocol surface.
+ * stays a clean protocol surface. A refusal with no taxonomy category (a
+ * malformed or credentialed URL, an unresolvable host) is counted and logged but
+ * not forwarded: the ingest route accepts the six destination categories, and
+ * "unclassified" describes a bad request rather than a destination.
  * @param {{category: string | null, target: string, resolvedIp?: string | null, sessionId?: string | null}} violation
  */
 export function recordContainmentViolation(violation) {
@@ -99,6 +108,87 @@ export function recordContainmentViolation(violation) {
   // enforcement decision never depends on being able to log it.
   try { process.stderr.write(`${JSON.stringify(record)}\n`); }
   catch { /* the refusal still stands; a lost audit line is reported by the counter gap */ }
+  // Durability is attempted last and never awaited: a host that is slow, down or
+  // misconfigured must not delay the refusal it is being told about.
+  if (category) queueForward(record);
+}
+
+/** Most violations held while the telemetry host is unreachable. Beyond this the
+ * oldest are not queued: an audit trail is worth bounded memory, not unbounded. */
+export const MAX_FORWARD_QUEUE = 256;
+const FORWARD_TIMEOUT_MS = 2000;
+
+/** @type {{session_id: string | null, category: string, target_url: string, resolved_ip: string | null}[]} */
+const forwardQueue = [];
+let draining = false;
+let inFlight = 0;
+let forwarded = 0;
+let failed = 0;
+let dropped = 0;
+
+/** The telemetry host this process was told to persist into, if any.
+ * @returns {{endpoint: string, key: string, tenantId: string} | null} */
+function forwardTarget() {
+  const endpoint = (process.env.NAVI_TELEMETRY_ENDPOINT ?? '').trim().replace(/\/+$/, '');
+  const key = (process.env.NAVI_TENANT_KEY ?? '').trim();
+  if (!endpoint || !key) return null;
+  return { endpoint, key, tenantId: (process.env.NAVI_TENANT_ID ?? '').trim() };
+}
+
+/** Whether refusals are being persisted, and how the queue is doing. A `failed`
+ * or `dropped` count that climbs is the signal that the audit trail has holes.
+ * Every refusal is in exactly one bucket — forwarded, failed, dropped or queued
+ * (which includes the one being attempted) — so the four numbers always add up
+ * to the violations that have been through the forwarder. */
+export function containmentForwardingMetrics() {
+  return { configured: forwardTarget() !== null, forwarded, failed, dropped, queued: forwardQueue.length + inFlight };
+}
+
+/** @param {{session_id?: string | null, category?: string, target_url?: string, resolved_ip?: string | null}} record */
+function queueForward(record) {
+  const target = forwardTarget();
+  if (!target) return;
+  if (forwardQueue.length >= MAX_FORWARD_QUEUE) { dropped++; return; }
+  forwardQueue.push({
+    session_id: record.session_id ?? null,
+    category: String(record.category ?? ''),
+    target_url: String(record.target_url ?? ''),
+    resolved_ip: record.resolved_ip ?? null
+  });
+  void drainForwardQueue();
+}
+
+/**
+ * Send queued violations one at a time, in order. Every failure path ends in a
+ * counter rather than an exception: the agent this MCP server is driving must
+ * never see a refused destination turn into a different error, and a telemetry
+ * host that is down must not unblock anything or stall a tool call.
+ */
+async function drainForwardQueue() {
+  if (draining) return;
+  draining = true;
+  try {
+    /** @returns {typeof forwardQueue[number] | undefined} */
+    const take = () => { inFlight = forwardQueue.length ? 1 : 0; return forwardQueue.shift(); };
+    let pending = take();
+    while (pending) {
+      const target = forwardTarget();
+      if (!target) { inFlight = 0; break; }
+      try {
+        const response = await fetch(`${target.endpoint}/v1/telemetry/violations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${target.key}` },
+          body: JSON.stringify({ ...(target.tenantId ? { tenant_id: target.tenantId } : {}), ...pending }),
+          signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS)
+        });
+        // Drain the body so the socket is released before the next attempt.
+        await response.arrayBuffer();
+        if (response.ok) forwarded++;
+        else failed++;
+      } catch { failed++; }
+      pending = take();
+    }
+  } finally { draining = false; inFlight = 0; }
 }
 
 /** Classify a non-public address into the bucket an audit reader triages by, or
