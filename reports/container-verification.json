@@ -1,11 +1,11 @@
 {
-  "recordedAt": "2026-10-12T01:42:01.358Z",
+  "recordedAt": "2026-10-12T01:52:44.148Z",
   "ok": true,
   "checks": [
     {
       "check": "image",
       "ok": true,
-      "detail": "sha256:aa4ae9eaea28b3c977b517de74597cf6872d1248594a02593e581c223f87e6ae; linux/arm64; user pwuser:pwuser"
+      "detail": "sha256:872ba0fa7df710c8c20ed0beec179367278d5831a5181ca2b9c12f92f17372e9; linux/arm64; user pwuser:pwuser"
     },
     {
       "check": "compose-health",
@@ -20,7 +20,7 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"125\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532960]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"124\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "distribution",
@@ -50,12 +50,17 @@
     {
       "check": "containment-observability",
       "ok": true,
-      "detail": "healthz containment {\"enforced\":false,\"violations_total\":0,\"violations_by_category\":{\"metadata_endpoint\":0,\"private_ipv4\":0,\"loopback_or_local\":0,\"cgnat_or_multicast\":0,\"ipv6_special\":0,\"dns_rebinding_rejected\":0}}; 8 containment series on /metrics"
+      "detail": "healthz containment {\"enforced\":false,\"violations_total\":0,\"violations_by_category\":{\"metadata_endpoint\":0,\"private_ipv4\":0,\"loopback_or_local\":0,\"cgnat_or_multicast\":0,\"ipv6_special\":0,\"dns_rebinding_rejected\":0}}; 12 containment series on /metrics"
+    },
+    {
+      "check": "tenant-security-audit",
+      "ok": true,
+      "detail": "a violation filed with the tenant key reads back through security-audit (log store) and is refused without one"
     },
     {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-12T01:42:00.984Z\",\"session_id\":\"19f8dfff-f90d-48a5-8915-0f25f3ada102\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-12T01:52:43.773Z\",\"session_id\":\"d4be729c-3e30-4da3-85f6-fc14da51b0dc\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }
