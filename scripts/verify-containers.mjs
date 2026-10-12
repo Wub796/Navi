@@ -5,11 +5,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 
 // Isolated project/volume; never touches a user's normal Compose deployment.
-const project = `navi-check-${process.pid}`;
+// --production exercises the shipped production file and writes a separate receipt.
+const production = process.argv.includes('--production');
+const image = process.env.NAVI_IMAGE || 'navi:local';
+const project = `${production ? 'navi-prod-check' : 'navi-check'}-${process.pid}`;
 const token = randomBytes(32).toString('hex');
 const tenantKey = randomBytes(16).toString('hex');
-const env = { ...process.env, NAVI_MCP_TOKEN: token, NAVI_TENANTS: `${tenantKey}:container-check` };
-const composeArgs = ['compose', '--project-name', project, '-f', 'docker-compose.yml'];
+const env = { ...process.env, NAVI_IMAGE: image, NAVI_BIND_ADDRESS: '127.0.0.1', NAVI_MCP_TOKEN: token, NAVI_TENANTS: `${tenantKey}:container-check` };
+const composeArgs = ['compose', '--project-name', project, '-f', production ? 'deploy/docker-compose.prod.yml' : 'docker-compose.yml'];
 /** @type {{check: string, ok: boolean, detail: string}[]} */
 const checks = [];
 /** @param {string[]} args @param {number} [timeout] */
@@ -26,9 +29,10 @@ let started = false;
 /** @type {Client | undefined} */
 let client;
 try {
+  if (production) assert(Boolean(process.env.NAVI_IMAGE), '--production requires NAVI_IMAGE to select the verified artifact');
   docker(['info']);
   compose(['config', '--quiet']);
-  const metadata = JSON.parse(docker(['image', 'inspect', 'navi:local']))[0];
+  const metadata = JSON.parse(docker(['image', 'inspect', production ? image : 'navi:local']))[0];
   assert(metadata.Config.User === 'pwuser:pwuser', 'image must run as pwuser:pwuser');
   record('image', `${metadata.Id}; ${metadata.Os}/${metadata.Architecture}; user ${metadata.Config.User}`);
   started = true;
@@ -114,7 +118,7 @@ try {
   record('authenticated-browser', 'official SSE client launched locked Chromium, discovered host and fixture pages, executed a DOM mutation and verified navigation receipts');
   await client.close(); client = undefined;
   let refused = false;
-  try { docker(['run', '--rm', '-e', 'NAVI_MODE=mcp', 'navi:local']); }
+  try { docker(['run', '--rm', '-e', 'NAVI_MODE=mcp', production ? image : 'navi:local']); }
   catch (error) {
     const captured = /** @type {{status?: number, stderr?: string | Buffer}} */ (error);
     refused = captured.status !== 0 && String(captured.stderr).includes('NAVI_MCP_TOKEN');
@@ -132,5 +136,5 @@ try {
     catch { checks.push({ check: 'cleanup', ok: false, detail: `Could not clean isolated Compose project ${project}` }); process.exitCode = 1; }
   }
   await mkdir('reports', { recursive: true });
-  await writeFile('reports/container-verification.json', JSON.stringify({ recordedAt: new Date().toISOString(), ok: checks.length > 0 && checks.every(check => check.ok), checks }, null, 2) + '\n');
+  await writeFile(production ? 'reports/production-container-verification.json' : 'reports/container-verification.json', JSON.stringify({ recordedAt: new Date().toISOString(), ok: checks.length > 0 && checks.every(check => check.ok), checks }, null, 2) + '\n');
 }

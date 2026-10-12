@@ -1,0 +1,123 @@
+# Fly.io deployment for the Navi host service and the MCP bridge.
+#
+# Two process groups from one image. `host` serves the browser SDK, the discovery
+# document and the telemetry API; `mcp` serves the remote MCP bridge over SSE and
+# launches a real Chromium per session. They are separate processes rather than one
+# so the browser can be given its own memory ceiling and its own restart policy.
+#
+#   fly config validate --config deploy/fly.toml      # check this file first
+#   fly deploy --config deploy/fly.toml --ha=false    # deploy; see the notes below
+#
+# The image is built from the repository root, not from this directory:
+#
+#   docker build -t registry.fly.io/navi-bridge:v0.5.0 .
+# Publish only after authorization; select the resulting digest with --image.
+# Replace app below with your Fly app name before use.
+#
+# `[build]` names an image so deployment does not rebuild verified artifacts.
+# Supply a verified image digest with fly deploy --image registry/...@sha256:....
+# A Dockerfile build must use this repository root as its build context.
+#
+# Secrets, supplied by the deployment and never by a file in this tree:
+#
+#   fly secrets set NAVI_TENANTS='key:tenantId' NAVI_MCP_TOKEN='<strong token>'
+#
+# Non-root is inherited from the image, which declares `USER pwuser:pwuser` (UID
+# 1000); nothing here overrides it. Fly runs the image in a Machine, not Docker:
+# fly.toml has no cap_drop, no-new-privileges, read_only, tmpfs or custom seccomp
+# settings. This is NOT equivalent to Compose hardening; use Compose when those
+# controls are mandatory. Chromium sandbox support must be verified on Fly before
+# production use; never disable it to make a deployment pass.
+# Prepare the attached volume directory to be writable by UID/GID 1000; a fresh
+# Fly volume can hide the ownership baked into the image's /data directory.
+app = "navi-bridge"
+primary_region = "iad"
+
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  image = "registry.fly.io/navi-bridge:v0.5.0"
+
+[env]
+  NAVI_HOST = "0.0.0.0"
+  # The store path the volume below is mounted at; the compose deployment uses the
+  # same path so an operator moving between them does not have to think about it.
+  NAVI_STORE = "/data/telemetry.db"
+  NAVI_MCP_MAX_SESSIONS = "2"
+  NAVI_MCP_IDLE_TIMEOUT = "300"
+  NODE_ENV = "production"
+
+# One command per process group. The image entrypoint execs the command it is given
+# (scripts/docker-entrypoint.sh), so each group starts exactly the service it names
+# rather than relying on a shared NAVI_MODE environment value.
+[processes]
+  host = "node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db"
+  mcp = "node bin/navi-mcp.js --transport sse --host :: --port 3001"
+
+[[mounts]]
+  source = "navi_data"
+  destination = "/data"
+  processes = ["host"]
+
+# The host service is public: it serves the SDK to browsers and the discovery
+# document to agents, and `/healthz` is intentionally unauthenticated so a platform
+# probe can read it. TLS is terminated by Fly, and HTTPS is forced.
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+  processes = ["host"]
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/healthz"
+    protocol = "http"
+
+# The MCP bridge has no published ports on purpose. Whoever reaches an open SSE port
+# can drive a real browser, so the default here is the private 6PN network — other
+# Fly apps in the same organisation reach it as `mcp.process.navi-bridge.internal:3001`.
+# The :: bind accepts IPv6 6PN traffic as well as IPv4 health checks. Do not define a
+# portless [[services]] block: Fly requires a port on every proxy service. Use an
+# independent, process-scoped check instead. No proxy means no proxy autostart;
+# keep the MCP Machine running. This monitoring check does not restart a failure.
+[checks.mcp]
+  type = "http"
+  port = 3001
+  processes = ["mcp"]
+  interval = "15s"
+  timeout = "3s"
+  grace_period = "30s"
+  method = "GET"
+  path = "/healthz"
+
+[[vm]]
+  processes = ["host"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# A Chromium per SSE session is the memory consumer here; size this together with
+# NAVI_MCP_MAX_SESSIONS rather than independently.
+[[vm]]
+  processes = ["mcp"]
+  size = "shared-cpu-2x"
+  memory = "2gb"
+
+[deploy]
+  # The telemetry volume is single-writer, so a rolling replacement stays one machine
+  # at a time instead of briefly running two writers against the same store.
+  strategy = "rolling"

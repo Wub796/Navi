@@ -37,6 +37,25 @@ The build context is an allowlist in [.dockerignore](../.dockerignore): no Git h
 - All capabilities dropped and `no-new-privileges:true`. The host service keeps the default Docker seccomp policy; the MCP service additionally applies [security/chromium-seccomp.json](../security/chromium-seccomp.json), a default-derived profile extended with only the namespace and `chroot` permissions Chromium's own sandbox needs, so the renderer can install its filter without widening the container's capability set. No privileged mode, Docker socket, host networking, host PID or host IPC.
 - An init process, bounded PIDs, CPU/memory limits, 512 MiB private Chromium shared memory, rotating logs, health probes and `SIGTERM` handling.
 
+### Production deployment files
+
+The file above is the local/verification deployment. [deploy/docker-compose.prod.yml](../deploy/docker-compose.prod.yml) is the production one, and [deploy/fly.toml](../deploy/fly.toml) is the same two services expressed as Fly.io process groups with the store on a Fly volume. Compose selects the two roles with `NAVI_MODE`; Fly supplies explicit process-group commands. Both use the image's `pwuser` (UID/GID 1000), mount the host store directory at `/data`, and define a `/healthz` probe per role. **Only Compose enforces** `cap_drop: [ALL]`, `no-new-privileges:true`, a read-only root, `/tmp` tmpfs and the renderer's [seccomp profile](../security/chromium-seccomp.json). Fly runs the image inside a Machine and has no documented equivalents for those Docker controls in [its configuration schema](https://docs.fly.io/reference/configuration); it is not hardening-equivalent. Verify Chromium sandbox behavior on the actual Fly Machine before production use. The private MCP process binds IPv6 (`::`) for 6PN access and has a process-scoped top-level health check, not an invalid portless proxy service; keep it running because direct 6PN does not proxy-autostart. Prepare a fresh Fly volume's ownership for UID/GID 1000 before the host starts.
+
+Reproduce the production runtime check without publishing anything:
+
+```sh
+docker build -t navi:prod-verify .
+NAVI_IMAGE=navi:prod-verify npm run test:containers -- --production
+```
+
+The verifier creates an isolated project/volume, runs authenticated SSE and telemetry persistence checks, removes only its own resources, and writes [production-container-verification.json](../reports/production-container-verification.json). Ports 3000/3001 must be free.
+
+Three differences from the local file are deliberate. The image is not built by the deployment (`NAVI_IMAGE` is required, so a production host runs exactly the digest that was verified), the credentials are required rather than defaulted (`NAVI_TENANTS` and `NAVI_MCP_TOKEN` are interpolated with `:?`, so a missing value stops the deployment instead of starting a weaker one), and the published ports bind to `127.0.0.1` unless `NAVI_BIND_ADDRESS` says otherwise — a container is not a TLS gateway, and the bearer token is the only thing between a reachable SSE port and a real browser.
+
+The telemetry store is mounted as the **directory** `/data`, not as the single file. On the pinned Node 22 runtime `store.mode` reports the append-only JSONL backend, whose whole state is that one path; a runtime that opens the same path with SQLite adds `-wal` and `-shm` companions beside it, and mounting a single file would silently lose them. `GET /healthz` reports which backend is live.
+
+[tests/deploy-config.spec.mjs](../tests/deploy-config.spec.mjs) checks Compose's hardening against the file text and again against the configuration `docker compose config` resolves, resolves the seccomp profile path relative to the Compose file and parses it as JSON, and checks Fly's process commands, private check and shared store path. TOML parsing is a syntax check, not a Fly deployment or runtime security verification.
+
 ### Security limits that containerization does not resolve
 
 **Node 22 is maintenance LTS, not active LTS.** As of October 2026 the 22.x line is a supported but maintenance-phase release, so it receives security fixes without new features; the Active-LTS line has moved on. This deployment is pinned to the exact `22.23.3` patch and its digest, which is what makes the image reproducible, not a claim that the line is the newest supported runtime. See [Node release lifecycle](https://nodejs.org/en/about/previous-releases).

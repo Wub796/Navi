@@ -1,0 +1,51 @@
+{
+  "recordedAt": "2026-10-12T00:20:54.000Z",
+  "ok": true,
+  "checks": [
+    {
+      "check": "image",
+      "ok": true,
+      "detail": "sha256:a37b0c2e143f5b7a7b667834a906de35df3501b4652b25ff2fefe87224f3c30f; linux/arm64; user pwuser:pwuser"
+    },
+    {
+      "check": "compose-health",
+      "ok": true,
+      "detail": "both services healthy under read-only rootfs, dropped capabilities, no-new-privileges"
+    },
+    {
+      "check": "runtime-posture",
+      "ok": true,
+      "detail": "{\"uid\":1000,\"node\":\"v22.23.3\",\"playwright\":\"1.64.0\",\"proc\":[\"CapEff:\\t0000000000000000\",\"NoNewPrivs:\\t1\"]}"
+    },
+    {
+      "check": "chromium-sandbox",
+      "ok": true,
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"124\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
+    },
+    {
+      "check": "distribution",
+      "ok": true,
+      "detail": "SDK and loader byte-identical; missing tenant key rejected"
+    },
+    {
+      "check": "telemetry-persistence",
+      "ok": true,
+      "detail": "accepted aggregate survives service restart in isolated named volume"
+    },
+    {
+      "check": "bearer-rejection",
+      "ok": true,
+      "detail": "missing/wrong credentials rejected on both SSE and message endpoints"
+    },
+    {
+      "check": "authenticated-browser",
+      "ok": true,
+      "detail": "official SSE client launched locked Chromium, discovered host and fixture pages, executed a DOM mutation and verified navigation receipts"
+    },
+    {
+      "check": "fail-closed-startup",
+      "ok": true,
+      "detail": "MCP mode refuses missing token before listening"
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+# Production deployment for the Navi host service and the MCP bridge.
+#
+# This is the deployment file; docker-compose.yml at the repository root stays the
+# local/verification one that `npm run test:containers` drives. The difference is
+# intent rather than wording: a production service does not build its own image, does
+# not publish a port to the world by default, and runs with its secrets supplied by
+# the deployment rather than by a developer's shell.
+#
+# The same image serves both roles. `NAVI_MODE` selects which process the image's
+# entrypoint execs (scripts/docker-entrypoint.sh), so the host service and the MCP
+# bridge are two services over one immutable artifact rather than two images.
+#
+#   docker compose -f deploy/docker-compose.prod.yml config     # resolve and inspect
+#   docker compose -f deploy/docker-compose.prod.yml up -d --wait
+#
+# Required, and deliberately not defaulted anywhere below:
+#
+#   NAVI_IMAGE    the image to run; pin a digest, e.g.
+#                 registry.example.com/navi@sha256:<digest>
+#   NAVI_TENANTS  tenant key:tenantId pairs the host serves (see docs/BACKEND.md)
+#   NAVI_MCP_TOKEN a bearer token for the MCP bridge; anyone holding it can drive a
+#                 real Chromium, so treat it as a working credential
+#
+# Compose refuses to start when a required variable is missing or empty (`:?`), and
+# the entrypoint refuses independently. Neither is a substitute for TLS: bind the
+# published ports to loopback and put an authenticating gateway in front of them, or
+# do not publish them at all.
+name: navi-prod
+
+x-runtime: &runtime
+  image: ${NAVI_IMAGE:?Set NAVI_IMAGE to the pinned image to deploy}
+  init: true
+  restart: unless-stopped
+  # UID/GID 1000 is pwuser, the unprivileged account the image declares. It is named
+  # here as well so a base-image change cannot silently start either service as root:
+  # the runtime user is the deployment's decision, not the image's default.
+  user: '1000:1000'
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  # The only writable filesystem either process gets, beyond the telemetry volume.
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+  pids_limit: 256
+  stop_grace_period: 30s
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '3'
+
+services:
+  # server/index.js: the browser SDK distribution endpoint plus the discovery
+  # document and the telemetry ingestion API.
+  navi-host:
+    <<: *runtime
+    environment:
+      NAVI_MODE: host
+      NAVI_HOST: 0.0.0.0
+      NAVI_PORT: '3000'
+      NAVI_TENANTS: ${NAVI_TENANTS:?Set NAVI_TENANTS to key:tenantId pairs}
+      # The store lives on the volume below, never in the container filesystem.
+      NAVI_STORE: /data/telemetry.db
+      NODE_ENV: production
+    ports:
+      # Loopback by default: publish through the gateway, not to the internet. Set
+      # NAVI_BIND_ADDRESS to 0.0.0.0 only behind an authenticating proxy.
+      - '${NAVI_BIND_ADDRESS:-127.0.0.1}:3000:3000'
+    volumes:
+      - telemetry:/data
+    healthcheck:
+      # The image's own healthcheck reads NAVI_MODE/NAVI_PORT; this one names the port
+      # it probes instead, so a service that is redeployed onto another port fails its
+      # check rather than passing on the wrong listener.
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/healthz',{signal:AbortSignal.timeout(2000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    mem_limit: 256m
+    cpus: 1
+
+  # bin/navi-mcp.js --transport sse: the remote MCP bridge. It launches a real
+  # Chromium per SSE session, so it is the service that needs shared memory, the
+  # renderer seccomp profile and the larger memory ceiling.
+  navi-mcp:
+    <<: *runtime
+    environment:
+      NAVI_MODE: mcp
+      NAVI_HOST: 0.0.0.0
+      NAVI_PORT: '3001'
+      NAVI_MCP_TOKEN: ${NAVI_MCP_TOKEN:?Set a strong NAVI_MCP_TOKEN}
+      NAVI_MCP_MAX_SESSIONS: ${NAVI_MCP_MAX_SESSIONS:-2}
+      NAVI_MCP_IDLE_TIMEOUT: ${NAVI_MCP_IDLE_TIMEOUT:-300}
+      NODE_ENV: production
+    ports:
+      - '${NAVI_BIND_ADDRESS:-127.0.0.1}:3001:3001'
+    security_opt:
+      - no-new-privileges:true
+      # Chromium keeps its own sandbox: as UID 1000 it needs the namespace and
+      # chroot permissions this profile adds in order to install the renderer filter.
+      # Without it the alternative would be --no-sandbox, which this tree never uses.
+      - seccomp=../security/chromium-seccomp.json
+    shm_size: 512m
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/healthz',{signal:AbortSignal.timeout(2000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      # A session opens a browser before it answers tools; give the listener room.
+      start_period: 20s
+      retries: 3
+    mem_limit: 2g
+    cpus: 2
+
+volumes:
+  # The telemetry store and whatever sidecar files its backend keeps. store.mode on
+  # GET /healthz reports which backend is live: the JSONL log, or SQLite with its
+  # -wal/-shm companions. Mounting the directory rather than a single file is what
+  # keeps a backend switch, or a crash-recovery replay, from losing the sidecars the
+  # committed records depend on.
+  telemetry:
+    driver: local
