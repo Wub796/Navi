@@ -163,6 +163,26 @@ try {
   assert(anonymousAudit.status === 401, `an anonymous audit read answered ${anonymousAudit.status}`);
   const hostHealth = await (await request(`${host}/healthz`)).json();
   record('tenant-security-audit', `a violation filed with the tenant key reads back through security-audit (${hostHealth.mode} store) and is refused without one`);
+  // Retention: the route has to exist, be confined to its own tenant, and run the
+  // compaction this image actually uses. The pinned Node 22 runtime serves the log
+  // backend, so a prune with nothing to delete still rewrites the file - and the
+  // record inside the window has to come back with the same id afterwards.
+  const anonymousPrune = await request(`${host}/v1/tenants/container-check/maintenance/prune`, { method: 'POST' });
+  assert(anonymousPrune.status === 401, `an anonymous prune answered ${anonymousPrune.status}`);
+  const crossTenantPrune = await request(`${host}/v1/tenants/other-tenant/maintenance/prune`, { method: 'POST', headers: { Authorization: `Bearer ${tenantKey}` } });
+  assert(crossTenantPrune.status === 403, `a cross-tenant prune answered ${crossTenantPrune.status}`);
+  const pruneResponse = await request(`${host}/v1/tenants/container-check/maintenance/prune`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tenantKey}` },
+    body: JSON.stringify({ max_age_days: 1 })
+  });
+  assert(pruneResponse.status === 200, `the maintenance prune answered ${pruneResponse.status}`);
+  const pruneResult = await pruneResponse.json();
+  assert(pruneResult.pruned_count === 0 && pruneResult.remaining_count === 1, `unexpected prune result ${JSON.stringify(pruneResult)}`);
+  const afterPrune = await (await request(`${host}/v1/tenants/container-check/security-audit`, { headers: { Authorization: `Bearer ${tenantKey}` } })).json();
+  assert(afterPrune.count === 1 && afterPrune.violations[0].id === audit.violations[0].id, 'compaction lost or renumbered a record inside the retention window');
+  assert(hostHealth.retention_days === 30, `unexpected default retention window ${hostHealth.retention_days}`);
+  record('retention-maintenance', `a ${hostHealth.mode}-backed prune kept the in-window record with id ${afterPrune.violations[0].id}, refused anonymous and cross-tenant callers, and reported a ${hostHealth.retention_days}-day window`);
   // The containment guard is the shipped default, independent of the fixture
   // override this deployment adds: drive stdio MCP in a container that carries
   // no NAVI_ALLOW_LOCAL_NETWORK and require the metadata endpoint to be refused

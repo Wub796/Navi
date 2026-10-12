@@ -203,6 +203,13 @@ test('log compaction drops expired violations, keeps aggregates, and does not re
     expect(meta).toEqual({ kind: STORE_META_KIND, violation_sequence: 3 });
     expect(lines.filter(line => line.includes(VIOLATION_KIND)).map(line => JSON.parse(line).id)).toEqual([2, 3]);
 
+    // The sweep calls the same method with no tenant at all, so that shape is
+    // asserted against this backend too: it removes beta's expired row and reports
+    // every surviving row, not one tenant's.
+    expect(await store.pruneViolations({ max_age_days: 30 })).toEqual({ pruned_count: 1, remaining_count: 1 });
+    expect(await store.queryViolations({ tenant_id: 'tenant-beta' }), 'the other tenant is pruned by the same sweep').toEqual([]);
+    expect((await store.queryViolations({ tenant_id: 'tenant-alpha' })).map(/** @param {any} row */ row => row.id)).toEqual([3]);
+
     // An id is never reused, in this process or the next one.
     expect((await store.recordViolation(violation({ tenant_id: 'tenant-alpha' }))).id).toBe(4);
     await store.close();
