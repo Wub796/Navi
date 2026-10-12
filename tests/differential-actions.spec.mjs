@@ -123,7 +123,7 @@ test('MCP differential checkout cuts aggregate context by at least 50% versus id
   try {
     for (const differential of [false, true]) {
       const client = new Client({ name: 'diff-checkout', version: '1.0.0' });
-      await client.connect(new StdioClientTransport({ command: process.execPath, args: ['bin/navi-mcp.js'], cwd: root, stderr: 'pipe' }));
+      await client.connect(new StdioClientTransport({ command: process.execPath, args: ['bin/navi-mcp.js'], cwd: root, stderr: 'pipe', env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1' } }));
       let tokens = 0, observations = 0;
       /** @type {Map<string, any>} */
       const cache = new Map();

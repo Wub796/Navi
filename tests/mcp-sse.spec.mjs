@@ -71,7 +71,7 @@ test('an MCP client drives the same multi-step flow over the SSE transport', asy
   const child = spawn(process.execPath, [binPath, '--transport', 'sse', '--port', String(port)], {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env }
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1' }
   });
   let stderr = '';
   child.stderr?.on('data', chunk => { stderr += String(chunk); });

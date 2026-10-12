@@ -5,7 +5,11 @@
 // a web framework, a validation library and a token library into an agent
 // runtime. Conformance is verified in tests against the official
 // @modelcontextprotocol/sdk Client, which is a development-only dependency.
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { CONTAINMENT_CODE, containedGet, containmentError, createContainmentProxy, resolveDestination } from './containment.js';
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { NaviPlaywrightAdapter, NAVI_PROTOCOL_VERSION } from '../adapter.js';
@@ -37,6 +41,7 @@ export const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2
 const DEFAULT_VIEWPORT = { width: 1360, height: 900 };
 const DEFAULT_TIMEOUT_MS = 20000;
 const MAX_ACTIONS = 5000;
+export const MAX_PAGES_PER_SESSION = 3;
 /**
  * Budget for reading a host's discovery document. It is a same-origin fetch of a
  * few hundred bytes, so a host that cannot answer inside this window is treated as
@@ -130,6 +135,8 @@ const GUIDANCE = {
   NO_BROWSER: 'Playwright is not installed. Install it with "npm i -D playwright" and run "npx playwright install chromium".',
   NO_SDK: 'The built browser bundle was not found. Run "npm run build" first.',
   NO_PAGE: 'No page is open. Call navi_navigate with a URL first.',
+  ERR_BLOCKED_BY_CONTAINMENT: 'Private network access is disabled. NAVI_ALLOW_LOCAL_NETWORK=1 is an explicit test-fixture override, not a production setting.',
+  SESSION_CLOSED: 'This session has terminated. Open a new MCP session.',
   PAGE_ORIGIN_CHANGED: 'The page navigated to a different origin, so the previous action map is void. Call navi_navigate again.',
   UNINSTRUMENTED_HOST: 'The page publishes no agent-bridge discovery marker, so this session cannot know which Navi build the host runs. Serve the tenant loader, or declare <meta name="agent-bridge" content="active">, to make the host discoverable.',
   MANIFEST_UNREACHABLE: 'The page declares instrumentation but no usable discovery document could be read from its own origin, so the packaged runtime was injected instead. Serve /.well-known/navi.json (GET /.well-known/navi.json on the host) or fix the Link target it advertises.',
@@ -255,9 +262,10 @@ function isIntegrityHash(value) {
  * SSRF client against whatever network the agent runs on.
  * @param {string} pageUrl
  * @param {string | null} link the manifest URL the page advertised, if any
+ * @param {boolean} allowLocalNetwork
  * @returns {Promise<{ok: true, document: Record<string, any>, url: string} | {ok: false, code: string, detail: string}>}
  */
-async function fetchHostManifest(pageUrl, link) {
+async function fetchHostManifest(pageUrl, link, allowLocalNetwork) {
   const origin = new URL(pageUrl).origin;
   /** @type {URL} */
   let target;
@@ -271,18 +279,17 @@ async function fetchHostManifest(pageUrl, link) {
     return { ok: false, code: 'MANIFEST_CROSS_ORIGIN', detail: `${target.origin} is not the page origin ${origin}` };
   }
   try {
-    const response = await fetch(target, { redirect: 'follow', signal: AbortSignal.timeout(MANIFEST_TIMEOUT_MS), headers: { Accept: 'application/json' } });
-    if (!response.ok) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `GET ${redactUrl(target.href)} answered HTTP ${response.status}` };
-    if (new URL(response.url).origin !== origin) return { ok: false, code: 'MANIFEST_CROSS_ORIGIN', detail: `GET ${redactUrl(target.href)} redirected to ${redactUrl(response.url)}` };
-    const declaredLength = Number(response.headers.get('content-length') ?? '');
+    const response = await containedGet(target.href, allowLocalNetwork, { timeoutMs: MANIFEST_TIMEOUT_MS, maxBytes: MAX_MANIFEST_BYTES, sameOrigin: origin });
+    if (response.status < 200 || response.status >= 300) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `GET ${redactUrl(target.href)} answered HTTP ${response.status}` };
+    const declaredLength = Number(response.headers['content-length'] ?? '');
     if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `the document declares ${declaredLength} bytes` };
-    const text = await response.text();
+    const text = response.bytes.toString('utf8');
     if (text.length > MAX_MANIFEST_BYTES) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `the document is larger than ${MAX_MANIFEST_BYTES} bytes` };
     const document = JSON.parse(text);
     if (!document || typeof document !== 'object' || Array.isArray(document)) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: 'the document is not a JSON object' };
     return { ok: true, document, url: target.href };
   } catch (error) {
-    const timedOut = /** @type {{name?: unknown}} */ (error)?.name === 'TimeoutError';
+    const timedOut = ['TimeoutError', 'AbortError'].includes(String(/** @type {{name?: unknown}} */ (error)?.name));
     return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: timedOut ? `no answer within ${MANIFEST_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
   }
 }
@@ -293,19 +300,20 @@ async function fetchHostManifest(pageUrl, link) {
  * manifest-pinned asset is injected as a script body rather than as a URL.
  * @param {URL} url
  * @param {string} integrity
+ * @param {boolean} allowLocalNetwork
  * @returns {Promise<{ok: true, text: string} | {ok: false, code: string, detail: string}>}
  */
-async function fetchHostAsset(url, integrity) {
+async function fetchHostAsset(url, integrity, allowLocalNetwork) {
   const algorithm = integrity.slice(0, integrity.indexOf('-'));
   try {
-    const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(HOST_ASSET_TIMEOUT_MS) });
-    if (!response.ok) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `GET ${redactUrl(url.href)} answered HTTP ${response.status}` };
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const response = await containedGet(url.href, allowLocalNetwork, { timeoutMs: HOST_ASSET_TIMEOUT_MS });
+    if (response.status < 200 || response.status >= 300) return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: `GET ${redactUrl(url.href)} answered HTTP ${response.status}` };
+    const bytes = response.bytes;
     const digest = `${algorithm}-${createHash(algorithm).update(bytes).digest('base64')}`;
     if (digest !== integrity) return { ok: false, code: 'HOST_ASSET_MISMATCH', detail: `the served bytes hash to ${digest.slice(0, 20)}…, the manifest declared ${integrity.slice(0, 20)}…` };
     return { ok: true, text: bytes.toString('utf8') };
   } catch (error) {
-    const timedOut = /** @type {{name?: unknown}} */ (error)?.name === 'TimeoutError';
+    const timedOut = ['TimeoutError', 'AbortError'].includes(String(/** @type {{name?: unknown}} */ (error)?.name));
     return { ok: false, code: 'MANIFEST_UNREACHABLE', detail: timedOut ? `${redactUrl(url.href)} did not answer within ${HOST_ASSET_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
   }
 }
@@ -323,9 +331,10 @@ async function fetchHostAsset(url, integrity) {
  * than one that says which build it used and why.
  * @param {any} page
  * @param {Discovery} discovery
+ * @param {boolean} allowLocalNetwork
  * @returns {Promise<RuntimeResolution>}
  */
-async function negotiateHostRuntime(page, discovery) {
+async function negotiateHostRuntime(page, discovery, allowLocalNetwork) {
   /** @type {RuntimeResolution} */
   const resolution = { source: 'bundled_fallback', manifest: null, script: null, integrity: 'not_declared', warning: null, detail: null };
   /** @param {string} code @param {string} detail @returns {RuntimeResolution} */
@@ -334,7 +343,7 @@ async function negotiateHostRuntime(page, discovery) {
     resolution.detail = detail;
     return resolution;
   };
-  const fetched = await fetchHostManifest(page.url(), discovery.manifest);
+  const fetched = await fetchHostManifest(page.url(), discovery.manifest, allowLocalNetwork);
   if (!fetched.ok) return fallback(fetched.code, fetched.detail);
   resolution.manifest = redactUrl(fetched.url);
   const declaredVersion = fetched.document.version;
@@ -355,7 +364,7 @@ async function negotiateHostRuntime(page, discovery) {
   const declaredIntegrity = typeof fetched.document.integrity === 'string' && isIntegrityHash(fetched.document.integrity.trim()) ? fetched.document.integrity.trim() : null;
   try {
     if (declaredIntegrity) {
-      const asset = await fetchHostAsset(scriptUrl, declaredIntegrity);
+      const asset = await fetchHostAsset(scriptUrl, declaredIntegrity, allowLocalNetwork);
       if (!asset.ok) {
         resolution.integrity = 'failed';
         return fallback(asset.code, asset.detail);
@@ -575,13 +584,25 @@ export function normalizeStorageState(input) {
  * refuses to act when the page's origin no longer matches the map it produced.
  */
 export class NaviSession {
-  /** @param {{viewport?: {width: number, height: number}, headless?: boolean, fallback?: boolean, log?: (line: string) => void}} [options] */
+  /** @param {{viewport?: {width: number, height: number}, headless?: boolean, fallback?: boolean, log?: (line: string) => void, sessionId?: string}} [options] */
   constructor(options = {}) {
     this.viewport = options.viewport ?? DEFAULT_VIEWPORT;
     this.headless = options.headless !== false;
     this.fallback = options.fallback !== false;
     this.log = options.log ?? (() => {});
-    this.browser = null;
+    this.browser = /** @type {any} */ (null);
+    this.context = /** @type {any} */ (null);
+    this.permissionSession = /** @type {any} */ (null);
+    this.sessionId = options.sessionId ?? randomUUID();
+    if (!/^[a-zA-Z0-9-]{1,64}$/.test(this.sessionId)) throw new Error('Invalid session identifier');
+    this.allowLocalNetwork = process.env.NAVI_ALLOW_LOCAL_NETWORK === '1';
+    this.closed = false;
+    this.abort = new AbortController();
+    this.blockedRequests = 0;
+    this.downloadDirectory = /** @type {string | null} */ (null);
+    this.proxy = /** @type {Awaited<ReturnType<typeof createContainmentProxy>> | null} */ (null);
+    this.launchPromise = /** @type {Promise<any> | null} */ (null);
+    this.closePromise = /** @type {Promise<void> | null} */ (null);
     /** @type {any} */
     this.page = null;
     /** @type {NaviPlaywrightAdapter | null} */
@@ -591,14 +612,100 @@ export class NaviSession {
     this.storageState = null;
   }
 
+  /** Initialize an empty contained context without navigating or reading host state. */
+  async initialize() { return this.#ensurePage(); }
+
   async #ensurePage() {
-    if (this.page) return this.page;
-    const chromium = await resolveChromium();
-    this.browser = await chromium.launch({ headless: this.headless, chromiumSandbox: true });
-    const context = await this.browser.newContext(this.storageState ? { viewport: this.viewport, storageState: this.storageState } : { viewport: this.viewport });
-    this.page = await context.newPage();
-    this.log(`browser launched (${this.viewport.width}x${this.viewport.height}, headless=${this.headless})`);
-    return this.page;
+    if (this.closed) throw Object.assign(new Error('Session closed'), { code: 'SESSION_CLOSED' });
+    if (this.page && !this.page.isClosed()) return this.page;
+    if (this.launchPromise) return this.launchPromise;
+    if (this.context) { this.page = await this.context.newPage(); return this.page; }
+    this.launchPromise = this.#launchPage();
+    try { return await this.launchPromise; } finally { this.launchPromise = null; }
+  }
+
+  /** Cancel protocol setup commands even if Chromium closes before CDP responds.
+   * @template T @param {Promise<T>} operation @returns {Promise<T>} */
+  async #active(operation) {
+    const stopped = () => Object.assign(new Error('Session closed during setup'), { code: 'SESSION_CLOSED' });
+    let cancel = () => {};
+    const canceled = new Promise(/** @param {(value: never) => void} _resolve @param {(error: Error) => void} reject */ (_resolve, reject) => {
+      cancel = () => reject(stopped());
+      if (this.closed) cancel();
+      else this.abort.signal.addEventListener('abort', cancel, { once: true });
+    });
+    try { return await Promise.race([operation, canceled]); }
+    finally { this.abort.signal.removeEventListener('abort', cancel); }
+  }
+
+  async #launchPage() {
+    try {
+      const chromium = await resolveChromium();
+      this.downloadDirectory = await mkdtemp(join(tmpdir(), `navi-downloads-${this.sessionId}-`));
+      this.proxy = await createContainmentProxy(this.allowLocalNetwork, () => { this.blockedRequests++; });
+      const browser = await chromium.launch({
+        headless: this.headless, chromiumSandbox: true, downloadsPath: this.downloadDirectory,
+        proxy: { server: this.proxy.url },
+        args: ['--proxy-bypass-list=<-loopback>', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-quic']
+      });
+      this.browser = browser;
+      browser.on('disconnected', () => {
+        if (!this.closed && this.browser === browser) void this.close().catch(error => this.log(`browser cleanup failed: ${error.message}`));
+      });
+      if (this.closed) throw Object.assign(new Error('Session closed during launch'), { code: 'SESSION_CLOSED' });
+      const context = await this.#active(browser.newContext({ viewport: this.viewport, permissions: [], serviceWorkers: 'block',
+        acceptDownloads: true, ...(this.storageState ? { storageState: this.storageState } : {}) }));
+      this.context = context;
+      if (this.closed) throw Object.assign(new Error('Session closed during context creation'), { code: 'SESSION_CLOSED' });
+      await this.#active(context.clearPermissions());
+      await this.#active(context.route('**/*', async (/** @type {any} */ route) => {
+        try {
+          if (this.closed) throw containmentError('Session closed');
+          await resolveDestination(route.request().url(), this.allowLocalNetwork);
+          await route.continue();
+        } catch {
+          this.blockedRequests++;
+          await route.abort('blockedbyclient').catch(() => {});
+        }
+      }));
+      // No websocket channel is needed by the MCP tool surface. Denying it also
+      // covers WSS tunneled through HTTPS CONNECT and avoids an unbounded socket.
+      if (typeof context.routeWebSocket !== 'function') throw containmentError('Playwright >=1.48 is required for websocket containment');
+      await this.#active(context.routeWebSocket('**/*', (/** @type {any} */ socket) => { socket.close(); }));
+      // Explicit CDP denials, held for the context lifetime: detaching this CDP
+      // session resets its overrides and would re-enable notification prompts.
+      const cdp = await this.#active(browser.newBrowserCDPSession());
+      this.permissionSession = cdp;
+      // Create a page to obtain this context's CDP id; it cannot visit a website
+      // until the routes and permission override above are installed.
+      const page = await this.#active(context.newPage());
+      const target = await this.#active(context.newCDPSession(page));
+      const { targetInfo } = await this.#active(target.send('Target.getTargetInfo'));
+      for (const name of ['geolocation', 'camera', 'microphone', 'notifications', 'clipboard-read', 'clipboard-write']) {
+        await this.#active(cdp.send('Browser.setPermission', { browserContextId: targetInfo.browserContextId, permission: { name }, setting: 'denied' }));
+      }
+      await this.#active(target.detach());
+      this.page = page;
+      const accepted = new Set([page]);
+      context.on('page', (/** @type {any} */ popup) => {
+        if (this.closed || accepted.size >= MAX_PAGES_PER_SESSION) {
+          void popup.close({ runBeforeUnload: false }).catch((/** @type {Error} */ error) => this.log(`popup close failed: ${error.message}`));
+          return;
+        }
+        accepted.add(popup);
+        popup.on('close', () => accepted.delete(popup));
+      });
+      page.on('close', () => accepted.delete(page));
+      context.on('close', () => {
+        if (!this.closed && this.context === context) void this.close().catch(error => this.log(`session cleanup failed: ${error.message}`));
+      });
+      if (this.closed) throw Object.assign(new Error('Session closed during context setup'), { code: 'SESSION_CLOSED' });
+      this.log(`browser launched (${this.viewport.width}x${this.viewport.height}, ephemeral session ${this.sessionId})`);
+      return page;
+    } catch (error) {
+      await this.#disposeBrowser();
+      throw error;
+    }
   }
 
   /** @param {Record<string, unknown>} args */
@@ -609,10 +716,21 @@ export class NaviSession {
     const width = Number.isFinite(args.width) ? Number(args.width) : this.viewport.width;
     const height = Number.isFinite(args.height) ? Number(args.height) : this.viewport.height;
     const timeout = Number.isFinite(args.timeoutMs) ? Number(args.timeoutMs) : DEFAULT_TIMEOUT_MS;
+    if (width < 1 || width > 4096 || height < 1 || height > 4096 || timeout < 1 || timeout > 30000) return toolError('INVALID_PAYLOAD', 'Viewport must be 1–4096 pixels and timeoutMs 1–30000.');
     try {
+      if (this.closed) throw Object.assign(new Error('Session closed'), { code: 'SESSION_CLOSED' });
+      await resolveDestination(safe, this.allowLocalNetwork);
+      const beforeBlocked = this.blockedRequests;
       const page = await this.#ensurePage();
       await page.setViewportSize({ width, height });
-      const response = await page.goto(safe, { waitUntil: 'load', timeout });
+      this.adapter = null;
+      let response;
+      try { response = await page.goto(safe, { waitUntil: 'load', timeout }); }
+      catch (error) {
+        if (this.blockedRequests > beforeBlocked) throw containmentError('Navigation or redirect reached a blocked destination');
+        throw error;
+      }
+      await resolveDestination(page.url(), this.allowLocalNetwork);
       const status = response ? response.status() : null;
       /** @type {Discovery} */
       let discovery = await probeAgentBridge(page, response);
@@ -664,7 +782,7 @@ export class NaviSession {
       } else if (discovery.instrumented) {
         // The page declares instrumentation, so the host is asked for its runtime
         // before the packaged build is used at all.
-        const negotiated = await negotiateHostRuntime(page, discovery);
+        const negotiated = await negotiateHostRuntime(page, discovery, this.allowLocalNetwork);
         negotiatedManifest = negotiated.manifest;
         discovery = { ...discovery, manifest: negotiated.manifest ?? discovery.manifest, script: negotiated.script, integrity: negotiated.integrity };
         if (negotiated.source === 'host_manifest') {
@@ -721,6 +839,7 @@ export class NaviSession {
       });
     } catch (error) {
       const code = errorCode(error);
+      if (code === CONTAINMENT_CODE) this.adapter = null;
       return toolError(code === 'EXECUTION_ERROR' ? 'NAVIGATION_FAILED' : code, error instanceof Error ? error.message : String(error), { url: safe });
     }
   }
@@ -738,18 +857,15 @@ export class NaviSession {
    * @param {{cookies: any[], origins: any[]}} state
    */
   async hydrate(state) {
+    if (this.closed) throw Object.assign(new Error('Session closed'), { code: 'SESSION_CLOSED' });
+    await this.#disposeBrowser();
     this.storageState = state;
-    this.page = null;
-    this.adapter = null;
-    if (!this.browser) return;
-    for (const context of this.browser.contexts()) {
-      try { await context.close(); } catch { /* already gone */ }
-    }
   }
 
   /** @param {Record<string, unknown>} args */
   async setSession(args) {
     const url = typeof args.url === 'string' ? args.url : '';
+    if (typeof args.storage_state === 'string' && !this.allowLocalNetwork) return toolError('INVALID_SESSION', 'Remote sessions accept inline state only; server-side file paths are disabled.');
     if (url && !isAllowedUrl(url)) return toolError('INVALID_URL', `Refusing to open "${redactUrl(url)}": only absolute credential-free http(s) URLs are allowed.`);
     const inline = args.cookies !== undefined || args.origins !== undefined ? { cookies: args.cookies ?? [], origins: args.origins ?? [] } : undefined;
     const input = args.storage_state !== undefined ? args.storage_state : inline;
@@ -805,7 +921,9 @@ export class NaviSession {
     }
     const payload = /** @type {{text?: string, value?: string}} */ (args.payload && typeof args.payload === 'object' ? args.payload : {});
     try {
+      const blockedBefore = this.blockedRequests;
       const result = await adapter.execute(targetId, actionType, payload, args.settle);
+      if (this.blockedRequests > blockedBefore) return toolError(CONTAINMENT_CODE, 'An action attempted blocked network access.', { may_have_applied: true });
       if (!result.ok) {
         const code = result.error?.code ?? 'EXECUTION_ERROR';
         return toolError(code, result.error?.message ?? 'The action failed.', { target_id: targetId, action_type: actionType });
@@ -876,14 +994,41 @@ export class NaviSession {
     }
   }
 
-  async close() {
+  async #disposeBrowser() {
     const browser = this.browser;
+    const context = this.context;
+    const proxy = this.proxy;
+    const directory = this.downloadDirectory;
+    this.proxy = null;
+    this.downloadDirectory = null;
+    this.permissionSession = null;
     this.browser = null;
+    this.context = null;
     this.page = null;
     this.adapter = null;
-    if (browser) {
-      try { await browser.close(); } catch { /* already gone */ }
+    try { if (context) await context.close(); }
+    finally {
+      try { if (browser) await browser.close(); }
+      finally {
+        try { if (proxy) await proxy.close(); }
+        finally { if (directory) await rm(directory, { recursive: true, force: true }); }
+      }
     }
+  }
+
+  close() {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.abort.abort();
+    // Close assigned resources immediately; also wait for an in-flight launch so
+    // it cannot resurrect a browser after disconnection or TTL expiration.
+    this.closePromise = (async () => {
+      await this.#disposeBrowser();
+      await this.launchPromise?.catch(() => {});
+      await this.#disposeBrowser();
+      this.storageState = null;
+    })();
+    return this.closePromise;
   }
 }
 
@@ -1004,7 +1149,7 @@ function isLoopbackHost(host) {
 /** @param {string[]} [argv] @returns {Promise<number>} */
 export async function main(argv = []) {
   if (argv.includes('--help')) {
-    process.stdout.write(`navi-mcp · MCP server for the Navi protocol\n\nUsage\n  navi-mcp                        Speak MCP over stdio (default)\n  navi-mcp --transport sse        Serve the remote SSE transport instead\n  navi-mcp --transport sse --port 3001 --host 127.0.0.1\n                                  Port defaults to 3001, host to 127.0.0.1\n  navi-mcp --transport sse --auth-token <token>\n                                  Require \"Authorization: Bearer <token>\" on /sse\n                                  and /message (or set NAVI_MCP_TOKEN). Mandatory\n                                  for any --host that is not loopback\n  navi-mcp --transport sse --max-sessions 10\n                                  Concurrent event streams; beyond the ceiling is\n                                  503. Default 10\n  navi-mcp --transport sse --idle-timeout 300\n                                  Reap a session idle this many seconds, closing its\n                                  browser. Default 300; 0 disables\n  navi-mcp --no-fallback          Refuse trusted native input; synthetic dispatch only\n  navi-mcp --version              Print the server and protocol version\n  navi-mcp --help                 Print this help\n\nSSE endpoints\n  GET  /sse                       Event stream; the first frame carries the POST URL\n  POST /message?sessionId=<id>    One JSON-RPC message per request\n  GET  /healthz                   Liveness, open-session count, transport posture\n\nSecurity\n  An open SSE port is an open browser: whoever can reach it can drive a real\n  Chromium. Only loopback is served without a bearer token, and a non-loopback\n  --host without one is refused rather than warned about.\n\nEnvironment\n  NAVI_MCP_TOKEN=<token>          Bearer token, same as --auth-token\n  NAVI_MCP_DEBUG=1                Log every tool call to stderr\n`);
+    process.stdout.write(`navi-mcp · MCP server for the Navi protocol\n\nUsage\n  navi-mcp                        Speak MCP over stdio (default)\n  navi-mcp --transport sse        Serve the remote SSE transport instead\n  navi-mcp --transport sse --port 3001 --host 127.0.0.1\n                                  Port defaults to 3001, host to 127.0.0.1\n  navi-mcp --transport sse --auth-token <token>\n                                  Require \"Authorization: Bearer <token>\" on /sse\n                                  and /message (or set NAVI_MCP_TOKEN). Mandatory\n                                  for any --host that is not loopback\n  navi-mcp --transport sse --max-sessions 10\n                                  Concurrent event streams; beyond the ceiling is\n                                  503. Default 10\n  navi-mcp --transport sse --idle-timeout 300\n                                  Reap a session idle this many seconds, closing its\n                                  browser. Default 300; 0 disables\n  navi-mcp --no-fallback          Refuse trusted native input; synthetic dispatch only\n  navi-mcp --version              Print the server and protocol version\n  navi-mcp --help                 Print this help\n\nSSE endpoints\n  GET  /sse                       Event stream; the first frame carries the POST URL\n  POST /message?sessionId=<id>    One JSON-RPC message per request\n  GET  /healthz                   Liveness, open-session count, transport posture\n\nSecurity\n  An open SSE port is an open browser: whoever can reach it can drive a real\n  Chromium. Only loopback is served without a bearer token, and a non-loopback\n  --host without one is refused rather than warned about.\n\nEnvironment\n  NAVI_MCP_TOKEN=<token>          Bearer token, same as --auth-token\n  NAVI_MCP_DEBUG=1                Log every tool call to stderr\n  NAVI_ALLOW_LOCAL_NETWORK=1      TEST ONLY: permit private/loopback destinations\n                                  Default denied, including page subresources.\n  Sessions: 3 pages maximum, 30-minute hard TTL over SSE, ephemeral downloads,\n  no camera/microphone/geolocation/notifications/clipboard grants.\n`);
     return 0;
   }
   if (argv.includes('--version')) {
@@ -1062,7 +1207,7 @@ export async function main(argv = []) {
       authToken,
       maxSessions,
       idleTimeoutMs: Math.round(idleSeconds * 1000),
-      createSession: () => new NaviSession({ fallback, log })
+      createSession: id => new NaviSession({ fallback, log, sessionId: id })
     });
     // stderr, not stdout: stdout must stay free of anything that is not protocol
     // output on every transport.

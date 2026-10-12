@@ -173,10 +173,18 @@ An open SSE port is an open browser: whoever reaches it can steer a real Chromiu
 |---|---|---|
 | `--auth-token <token>` or `NAVI_MCP_TOKEN` | off | Requires `Authorization: Bearer <token>` on both `/sse` and `/message`. A missing or wrong token is `401` with a `WWW-Authenticate` challenge, decided *before* the session is looked up, so an anonymous caller cannot probe which session ids are live. The token is compared in constant time and never echoed into a response or a log. |
 | `--max-sessions <n>` | 10 | Concurrent event streams. A request beyond the ceiling is `503 TOO_MANY_SESSIONS` with `Retry-After`, and no session or browser is started for it. Slots are a live count, so closing a stream frees one. |
-| `--idle-timeout <seconds>` | 300 | A session that receives nothing for this long is reaped and its browser closed. A session with a call in flight is never reaped, so a slow tool call cannot lose its browser. `0` disables reaping. |
+| `--idle-timeout <seconds>` | 300 | A session that receives nothing for this long is reaped and its browser closed. Idle reaping waits for in-flight calls. The independent 30-minute hard TTL still closes busy sessions. `0` disables only idle reaping. |
 | `--host` that is not loopback | — | **Refused** unless a token is set: the server exits `2` instead of exposing a browser driver. |
 
-`GET /healthz` reports the posture — `{ ok, transport, sessions, maxSessions, auth, idleTimeoutMs }` — so an operator can see which mode is live. Anonymous session ids remain what the MCP SSE binding specifies, so a token is a **gate, not an identity**: it is one shared credential rather than an account system. stdout stays empty while diagnostics go to stderr.
+`GET /healthz` reports the posture — `{ ok, transport, sessions, maxSessions, auth, idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages }` — so an operator can see which mode is live. Anonymous session ids remain what the MCP SSE binding specifies, so a token is a **gate, not an identity**: it is one shared credential rather than an account system. stdout stays empty while diagnostics go to stderr.
+
+#### Browser-session containment
+
+MCP defaults to public HTTP(S) destinations only. Navigation and subresources reject private/loopback/link-local addresses (including DNS answers and redirects) with `ERR_BLOCKED_BY_CONTAINMENT`. A session-owned proxy pins the validated IP at connection time; host-runtime fetches use the same policy. WebSockets and service workers are blocked. Set `NAVI_ALLOW_LOCAL_NETWORK=1` **only for explicitly trusted local fixtures**; production files do not enable it.
+
+Each session owns an ephemeral context and private `navi-downloads-<sessionId>-<random>` directory beneath the OS temporary directory (`/tmp` in the container). Context/session disposal deletes downloads and closes Chromium. Camera, microphone, geolocation, notifications and clipboard permissions are explicitly denied. Popups beyond **3 pages** are closed; SSE has a non-disableable **30-minute TTL**, **16 pending messages** maximum and cleanup-aware session slots. State-file paths are accepted only with the trusted local override; otherwise hydration accepts inline state.
+
+These are browser-driver controls, not an OS network sandbox or disk/CPU quota. Keep the Chromium sandbox, container limits and outbound firewall; disable direct UDP/non-proxy egress at the deployment boundary. See [containment tests](tests/session-containment.spec.mjs).
 
 #### Authenticated sessions
 

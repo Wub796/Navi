@@ -263,7 +263,7 @@ test('navi_navigate binds to an instrumented host, and falls back loudly when it
     args: [binPath],
     cwd: root,
     stderr: 'pipe',
-    env: { ...process.env, NAVI_MCP_DEBUG: '0' }
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '0' }
   });
   let stderr = '';
   transport.stderr?.on('data', chunk => { stderr += String(chunk); });
@@ -381,7 +381,8 @@ test('the shipped client configs are runnable: an MCP client starts the command 
     command: entry.command,
     args: /** @type {string[]} */ (entry.args).map(arg => (arg === placeholder ? binPath : arg)),
     cwd: root,
-    stderr: 'pipe'
+    stderr: 'pipe',
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1' }
   });
   const client = new Client({ name: 'navi-config-e2e', version: '1.0.0' });
   await client.connect(transport);

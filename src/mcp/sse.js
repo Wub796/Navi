@@ -17,8 +17,8 @@
 //   * a bearer token (`--auth-token` / `NAVI_MCP_TOKEN`) gates /sse and /message;
 //   * a session ceiling (`--max-sessions`) answers excess streams with 503;
 //   * an idle timeout reaps abandoned sessions and closes their browsers.
-// A session that is mid-call is never reaped, so a slow tool call cannot have
-// its browser pulled out from under it.
+// Idle eviction waits for active calls, but the hard 30-minute TTL never does.
+// Disconnection/TTL closes the session immediately, cancelling browser work.
 import { createServer } from 'node:http';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 
@@ -32,6 +32,8 @@ const HEARTBEAT_MS = 15000;
 export const DEFAULT_MAX_SESSIONS = 10;
 /** How long a session may sit idle before it is reaped, by default. */
 export const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+export const SESSION_MAX_TTL_MS = 1800000;
+export const MAX_PENDING_MESSAGES = 16;
 /** HTTP header a rejected caller must send. */
 const AUTH_CHALLENGE = 'Bearer realm="navi-mcp"';
 
@@ -92,6 +94,9 @@ function seconds(ms) {
  */
 function readBody(req, limit) {
   return new Promise(resolve => {
+    const timer = setTimeout(() => { req.destroy(); resolve({ text: '' }); }, 10000);
+    timer.unref();
+    req.once('close', () => { clearTimeout(timer); resolve({ text: '' }); });
     /** @type {Buffer[]} */
     const chunks = [];
     let size = 0;
@@ -104,7 +109,7 @@ function readBody(req, limit) {
       }
       chunks.push(chunk);
     });
-    req.on('end', () => resolve({ text: Buffer.concat(chunks).toString('utf8') }));
+    req.on('end', () => { clearTimeout(timer); resolve({ text: Buffer.concat(chunks).toString('utf8') }); });
     req.on('error', () => resolve({ text: '' }));
   });
 }
@@ -119,6 +124,10 @@ function readBody(req, limit) {
  * @property {number} openedAt
  * @property {number} callsInFlight Dispatched tool calls not yet answered.
  * @property {Timer | null} idleTimer
+ * @property {Timer | null} ttlTimer
+ * @property {Timer | null} heartbeat
+ * @property {boolean} released
+ * @property {Promise<void> | null} cleanup
  * @property {() => void} touch Restarts the idle clock.
  */
 
@@ -127,12 +136,13 @@ function readBody(req, limit) {
  * @param {object} options
  * @param {number} [options.port] 0 picks a free port.
  * @param {string} [options.host]
- * @param {() => any} options.createSession
+ * @param {(id: string) => any} options.createSession
  * @param {(message: Record<string, any>, state: {session: any, initialized: {value: boolean}, log: (line: string) => void}) => Promise<unknown>} options.handleMessage
  * @param {(line: string) => void} [options.log]
  * @param {string} [options.authToken] Require this bearer token when non-empty.
  * @param {number} [options.maxSessions] Concurrent streams allowed.
  * @param {number} [options.idleTimeoutMs] 0 disables idle reaping.
+ * @param {number} [options.sessionMaxTtlMs] May shorten, never extend the hard TTL.
  * @returns {Promise<{ server: import('node:http').Server, port: number, host: string, sessions: Map<string, SseSession>, close: () => Promise<void> }>}
  */
 export async function createSseServer(options) {
@@ -144,6 +154,10 @@ export async function createSseServer(options) {
   const authToken = options.authToken ?? '';
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const sessionMaxTtlMs = options.sessionMaxTtlMs ?? SESSION_MAX_TTL_MS;
+  if (!Number.isInteger(sessionMaxTtlMs) || sessionMaxTtlMs < 1 || sessionMaxTtlMs > SESSION_MAX_TTL_MS) throw new Error('Session TTL must be between 1 and 1800000ms');
+  const cleanupTasks = new Set();
+  let stopping = false;
   /** @type {Map<string, SseSession>} */
   const sessions = new Map();
 
@@ -154,14 +168,34 @@ export async function createSseServer(options) {
    * @param {string} reason
    */
   const release = (entry, reason) => {
-    if (!sessions.delete(entry.id)) return;
+    if (entry.released) return entry.cleanup;
+    entry.released = true;
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
-    log(`sse session ${entry.id} closed after ${Math.round((Date.now() - entry.openedAt) / 1000)}s (${reason}; ${sessions.size} open)`);
-    Promise.resolve(entry.session.close?.()).catch(() => {});
+    if (entry.ttlTimer) clearTimeout(entry.ttlTimer);
+    if (entry.heartbeat) clearInterval(entry.heartbeat);
+    // Invoke close now, not after the message queue; an active tool must not keep
+    // Chromium alive after disconnection. Keep the slot occupied until cleanup
+    // completes so reconnect storms cannot exceed the browser ceiling.
+    let closing;
+    try { closing = entry.session.close?.(); } catch (error) { closing = Promise.reject(error); }
+    entry.cleanup = Promise.resolve(closing).catch(error => {
+      log(`sse session cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }).finally(() => {
+      sessions.delete(entry.id);
+      cleanupTasks.delete(entry.cleanup);
+    });
+    cleanupTasks.add(entry.cleanup);
+    // Disconnect handlers cannot await, but server.close() joins every cleanup.
+    void entry.cleanup.catch(() => {});
+    entry.res.end();
+    log(`sse session ${entry.id} closing (${reason})`);
+    return entry.cleanup;
   };
 
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url || '/', `http://${req.headers.host ?? 'localhost'}`);
+    const url = new URL(req.url || '/', 'http://localhost');
+    if (stopping) { sendJson(res, 503, { ok: false, error: { code: 'SERVER_STOPPING' } }); return; }
 
     if (req.method === 'GET' && url.pathname === '/sse') {
       // Auth and the ceiling are decided before a stream is opened or a session
@@ -203,20 +237,28 @@ export async function createSseServer(options) {
       // The endpoint frame tells the client where to POST. The origin must match
       // this stream's origin, which is why only the path is sent.
       write(`event: endpoint\ndata: /message?sessionId=${id}\n\n`);
-      const session = createSession();
+      let session;
+      try { session = createSession(id); }
+      catch (error) {
+        log(`session creation failed: ${error instanceof Error ? error.message : String(error)}`);
+        res.end(); return;
+      }
       /** @type {SseSession} */
-      const entry = { id, res, session, initialized: { value: false }, queue: Promise.resolve(), openedAt: Date.now(), callsInFlight: 0, idleTimer: null, touch: () => {} };
+      const entry = { id, res, session, initialized: { value: false }, queue: Promise.resolve(), openedAt: Date.now(), callsInFlight: 0, idleTimer: null, ttlTimer: null, heartbeat: null, released: false, cleanup: null, touch: () => {} };
       sessions.set(id, entry);
       log(`sse session ${id} opened (${sessions.size} open)`);
 
       const heartbeat = setInterval(() => { write(': ping\n\n'); }, HEARTBEAT_MS);
       heartbeat.unref?.();
+      entry.heartbeat = heartbeat;
+      entry.ttlTimer = setTimeout(() => { release(entry, 'hard session TTL'); }, sessionMaxTtlMs);
+      entry.ttlTimer.unref?.();
 
       // Idle reaping. An abandoned stream would otherwise hold a browser open for
       // the life of the process.
       const arm = () => {
         if (entry.idleTimer) clearTimeout(entry.idleTimer);
-        if (!idleTimeoutMs) return;
+        if (!idleTimeoutMs || entry.released) return;
         entry.idleTimer = setTimeout(() => {
           // Busy sessions are re-checked rather than reaped: a tool call may
           // legitimately run longer than the idle window.
@@ -250,13 +292,19 @@ export async function createSseServer(options) {
       }
       const id = url.searchParams.get('sessionId') ?? '';
       const entry = sessions.get(id);
-      if (!entry) {
+      if (!entry || entry.released) {
         sendJson(res, 404, { jsonrpc: '2.0', id: null, error: { code: -32001, message: `Unknown or expired sessionId "${id}". Open GET /sse first and use the sessionId from its endpoint event.` } });
         return;
       }
+      if (entry.callsInFlight >= MAX_PENDING_MESSAGES) {
+        sendJson(res, 429, { ok: false, error: { code: 'TOO_MANY_PENDING_MESSAGES' } }); return;
+      }
+      entry.callsInFlight++;
       entry.touch();
       const body = await readBody(req, MAX_MESSAGE_BYTES);
+      if (entry.released) { entry.callsInFlight--; res.end(); return; }
       if ('tooLarge' in body) {
+        entry.callsInFlight--;
         sendJson(res, 413, { jsonrpc: '2.0', id: null, error: { code: -32600, message: `Request body over ${MAX_MESSAGE_BYTES} bytes` } });
         return;
       }
@@ -265,6 +313,7 @@ export async function createSseServer(options) {
       try {
         message = JSON.parse(body.text || 'null');
       } catch (error) {
+        entry.callsInFlight--;
         sendJson(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: `Parse error: ${/** @type {Error} */ (error).message}` } });
         return;
       }
@@ -276,9 +325,9 @@ export async function createSseServer(options) {
         if (entry.res.writableEnded || entry.res.destroyed) return;
         try { entry.res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch { /* the stream is gone; the client will reconnect */ }
       };
-      entry.callsInFlight++;
       entry.queue = entry.queue.then(async () => {
         try {
+          if (entry.released) return;
           const reply = await handleMessage(message, { session: entry.session, initialized: entry.initialized, log });
           if (reply) push(reply);
         } catch (error) {
@@ -292,7 +341,7 @@ export async function createSseServer(options) {
     }
 
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      sendJson(res, 200, { ok: true, transport: 'sse', sessions: sessions.size, maxSessions, auth: authToken ? 'bearer' : 'none', idleTimeoutMs });
+      sendJson(res, 200, { ok: true, transport: 'sse', sessions: sessions.size, maxSessions, auth: authToken ? 'bearer' : 'none', idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES });
       return;
     }
 
@@ -304,7 +353,12 @@ export async function createSseServer(options) {
     sendJson(res, 404, { ok: false, error: { code: 'NOT_FOUND', message: `No route for ${req.method} ${url.pathname}.` } });
   });
 
-  await new Promise(/** @param {(value?: void) => void} resolve */ resolve => server.listen(port, host, () => resolve()));
+  server.requestTimeout = 10000;
+  server.headersTimeout = 10000;
+  await new Promise(/** @param {(value?: void) => void} resolve @param {(error: Error) => void} reject */ (resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => resolve());
+  });
   const address = server.address();
   const boundPort = typeof address === 'object' && address ? address.port : port;
 
@@ -314,13 +368,13 @@ export async function createSseServer(options) {
     host,
     sessions,
     close: async () => {
-      for (const entry of [...sessions.values()]) {
-        if (entry.idleTimer) clearTimeout(entry.idleTimer);
-        try { entry.res.end(); } catch { /* already closed */ }
-        await Promise.resolve(entry.session.close?.()).catch(() => {});
-      }
-      sessions.clear();
+      stopping = true;
+      for (const entry of [...sessions.values()]) release(entry, 'server shutdown');
+      const results = await Promise.allSettled([...cleanupTasks]);
+      server.closeAllConnections();
       await new Promise(/** @param {(value?: void) => void} resolve */ resolve => server.close(() => resolve()));
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
     }
   };
 }

@@ -30,7 +30,7 @@ test('an MCP client drives a multi-step form and receives actionable refusals', 
     args: [binPath],
     cwd: root,
     stderr: 'pipe',
-    env: { ...process.env, NAVI_MCP_DEBUG: '1' }
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '1' }
   });
   let stderr = '';
   transport.stderr?.on('data', chunk => { stderr += String(chunk); });
@@ -145,7 +145,7 @@ test('trusted-input fallback is automatic by default and refused under --no-fall
     args: [binPath, '--no-fallback'],
     cwd: root,
     stderr: 'pipe',
-    env: { ...process.env, NAVI_MCP_DEBUG: '1' }
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '1' }
   });
   const client = new Client({ name: 'navi-mcp-strict', version: '1.0.0' });
   await client.connect(transport);
@@ -184,7 +184,7 @@ test('trusted-input fallback is automatic by default and refused under --no-fall
     args: [binPath],
     cwd: root,
     stderr: 'pipe',
-    env: { ...process.env, NAVI_MCP_DEBUG: '0' }
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '0' }
   }));
   try {
     const reopened = envelope(await normal.callTool({ name: 'navi_navigate', arguments: { url: `${baseURL}/csp.html` } }));
@@ -200,7 +200,7 @@ test('trusted-input fallback is automatic by default and refused under --no-fall
 
 test('the server speaks spec-conformant JSON-RPC over stdio', async () => {
   test.setTimeout(60000);
-  const child = spawn(process.execPath, [binPath], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, NAVI_MCP_DEBUG: '1' } });
+  const child = spawn(process.execPath, [binPath], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '1' } });
   const reader = createInterface({ input: child.stdout });
   /** @type {((line: string) => void)[]} */
   const pending = [];

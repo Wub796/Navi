@@ -141,7 +141,8 @@ test('navi_execute_action returns the settlement receipt in its envelope', async
     command: process.execPath,
     args: [binPath],
     cwd: root,
-    stderr: 'pipe'
+    stderr: 'pipe',
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1' }
   });
   const client = new Client({ name: 'navi-mcp-settlement', version: '1.0.0' });
   await client.connect(transport);

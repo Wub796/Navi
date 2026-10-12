@@ -152,7 +152,7 @@ const expectResolutionParity = receipt => {
 
 test('a declared host runtime is negotiated, verified and injected instead of the packaged build', async () => {
   test.setTimeout(180000);
-  const transport = new StdioClientTransport({ command: process.execPath, args: [join(root, 'bin/navi-mcp.js')], cwd: root, stderr: 'pipe' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [join(root, 'bin/navi-mcp.js')], cwd: root, stderr: 'pipe', env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1' } });
   let stderr = '';
   transport.stderr?.on('data', chunk => { stderr += String(chunk); });
   const client = new Client({ name: 'navi-manifest-e2e', version: '1.0.0' });

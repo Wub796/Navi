@@ -108,7 +108,7 @@ function openStream(body) {
 /** Run the MCP binary to completion and capture how it exited.
  * @param {string[]} args */
 async function runCli(args) {
-  const child = spawn(process.execPath, [binPath, ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } });
+  const child = spawn(process.execPath, [binPath, ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1' } });
   let stdout = '', stderr = '';
   child.stdout?.on('data', chunk => { stdout += String(chunk); });
   child.stderr?.on('data', chunk => { stderr += String(chunk); });
@@ -324,7 +324,7 @@ test('the official MCP client drives a hardened server once it presents the toke
   const child = spawn(process.execPath, [binPath, '--transport', 'sse', '--port', String(port), '--auth-token', token, '--max-sessions', '2', '--idle-timeout', '120'], {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env }
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1' }
   });
   let stderr = '';
   child.stderr?.on('data', chunk => { stderr += String(chunk); });

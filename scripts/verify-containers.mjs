@@ -37,6 +37,11 @@ try {
   record('image', `${metadata.Id}; ${metadata.Os}/${metadata.Architecture}; user ${metadata.Config.User}`);
   started = true;
   // Fail on occupied requested ports; do not stop or replace their owners.
+  // Only the isolated verification deployment allows its private fixture hosts.
+  const override = '.freebuff/container-fixture.override.yml';
+  await mkdir('.freebuff', { recursive: true });
+  await writeFile(override, 'services:\n  navi-mcp:\n    environment:\n      NAVI_ALLOW_LOCAL_NETWORK: "1"\n');
+  composeArgs.push('-f', override);
   compose(['up', '-d', '--no-build', '--wait', '--wait-timeout', '90'], 120000);
   record('compose-health', 'both services healthy under read-only rootfs, dropped capabilities, no-new-privileges');
   const runtime = compose(['exec', '-T', 'navi-mcp', 'node', '-e', 'const f=require("fs");console.log(JSON.stringify({uid:process.getuid(),node:process.version,playwright:require("playwright-core/package.json").version,proc:f.readFileSync("/proc/self/status","utf8").split(String.fromCharCode(10)).filter(s=>/^(CapEff|NoNewPrivs):/.test(s))}))']);
@@ -125,6 +130,21 @@ try {
   }
   assert(refused, 'MCP image must fail closed without token');
   record('fail-closed-startup', 'MCP mode refuses missing token before listening');
+  // The containment guard is the shipped default, independent of the fixture
+  // override this deployment adds: drive stdio MCP in a container that carries
+  // no NAVI_ALLOW_LOCAL_NETWORK and require the metadata endpoint to be refused
+  // with the containment code, which happens before a browser is launched.
+  const guardedEnv = { ...process.env };
+  delete guardedEnv.NAVI_ALLOW_LOCAL_NETWORK;
+  const stdioInput = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'containment-check', version: '1' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'navi_navigate', arguments: { url: 'http://169.254.169.254/latest/meta-data/' } } }
+  ].map(message => JSON.stringify(message)).join('\n') + '\n';
+  const guarded = execFileSync('docker', ['run', '--rm', '-i', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m', production ? image : 'navi:local', 'node', 'bin/navi-mcp.js'], { env: guardedEnv, input: stdioInput, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 90000 });
+  assert(guarded.includes('ERR_BLOCKED_BY_CONTAINMENT'), 'a metadata destination was not refused by default');
+  assert(!guarded.includes('"ok": true'), 'the metadata destination was navigated to');
+  record('containment-default-deny', 'metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT without any local-network override');
 } catch (error) {
   checks.push({ check: 'container-validation', ok: false, detail: error instanceof Error ? error.message : String(error) });
   process.exitCode = 1;

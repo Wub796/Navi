@@ -90,7 +90,7 @@ async function standardTrial(origin, seed) {
 /** @param {string} origin @param {number} seed */
 async function naviTrial(origin, seed) {
   const trial = trialRecord('Navi MCP + settlement receipts', seed);
-  const transport = new StdioClientTransport({ command: process.execPath, args: ['bin/navi-mcp.js'], cwd: root, stderr: 'pipe' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: ['bin/navi-mcp.js'], cwd: root, stderr: 'pipe', env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1' } });
   const client = new Client({ name: 'navi-tcr-benchmark', version: '1.0.0' });
   await client.connect(transport);
   /** Unwrap the actual MCP envelope, not a local adapter shortcut. @param {string} name @param {Record<string, unknown>} args @param {boolean} [context] @returns {Promise<any>} */

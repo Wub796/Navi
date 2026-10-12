@@ -371,7 +371,7 @@ async function runTrial(path, iteration, origin, config) {
   try {
     if (path === 'navi-differential') {
       client = new Client({ name: 'live-llm-benchmark', version: '1.0.0' });
-      await client.connect(new StdioClientTransport({ command: process.execPath, args: ['bin/navi-mcp.js'], cwd: root, stderr: 'pipe', env: childEnvironment() }));
+      await client.connect(new StdioClientTransport({ command: process.execPath, args: ['bin/navi-mcp.js'], cwd: root, stderr: 'pipe', env: { ...childEnvironment(), NAVI_ALLOW_LOCAL_NETWORK: '1' } }));
       await mcp('navi_navigate', { url: finalUrl });
       const listed = await client.listTools();
       // The model gets the real MCP execution schema, but no session hydration,

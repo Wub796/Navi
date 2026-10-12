@@ -414,9 +414,240 @@ var init_adapter = __esm({
 });
 
 // src/mcp/server.js
+import { createHash, randomUUID as randomUUID3 } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// src/mcp/containment.js
+import { lookup } from "node:dns/promises";
+import { isIP, connect } from "node:net";
+import { createServer, request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+var CONTAINMENT_CODE = "ERR_BLOCKED_BY_CONTAINMENT";
+var MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+var MAX_CONNECTIONS = 64;
+var NETWORK_TIMEOUT_MS = 2e4;
+function containmentError(detail) {
+  return Object.assign(new Error(`${CONTAINMENT_CODE}: ${detail}`), { code: CONTAINMENT_CODE });
+}
+function isPrivateAddress(address) {
+  const bare = address.toLowerCase().replace(/^\[|\]$/g, "");
+  if (isIP(bare) === 4) {
+    const [a, b] = bare.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 || a === 100 && b >= 64 && b <= 127 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && (b === 168 || b === 0) || a === 198 && (b === 18 || b === 19);
+  }
+  if (isIP(bare) === 6) {
+    const canonical = new URL(`http://[${bare}]/`).hostname.slice(1, -1);
+    if (canonical.startsWith("::ffff:")) {
+      const words = canonical.slice(7).split(":");
+      const value = parseInt(words[0], 16) * 65536 + parseInt(words[1], 16);
+      return isPrivateAddress([value >>> 24, value >>> 16 & 255, value >>> 8 & 255, value & 255].join("."));
+    }
+    const first = parseInt(canonical.split(":")[0], 16);
+    return !Number.isFinite(first) || first < 8192 || first > 16383 || canonical.startsWith("2001:0:") || canonical.startsWith("2002:");
+  }
+  return true;
+}
+async function resolveHost(host) {
+  let timer = (
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    void 0
+  );
+  try {
+    return await Promise.race([
+      lookup(host, { all: true, verbatim: true }),
+      new Promise(
+        /** @param {(value: never) => void} _resolve @param {(error: Error) => void} reject */
+        (_resolve, reject) => {
+          timer = setTimeout(() => reject(containmentError("DNS resolution timed out")), 5e3);
+          timer.unref();
+        }
+      )
+    ]);
+  } catch {
+    throw containmentError("Destination DNS could not be validated");
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+async function resolveDestination(value, allowLocalNetwork) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw containmentError("Invalid destination URL");
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw containmentError("Only credential-free HTTP(S) destinations are permitted");
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (!allowLocalNetwork && (host === "localhost" || host.endsWith(".localhost") || isIP(host) && isPrivateAddress(host))) {
+    throw containmentError("Private, loopback or link-local destination refused");
+  }
+  const addresses = isIP(host) ? [{ address: host, family: isIP(host) }] : await resolveHost(host);
+  if (!addresses.length || !allowLocalNetwork && addresses.some((entry) => isPrivateAddress(entry.address))) throw containmentError("DNS resolves to a non-public address");
+  return { url, ...addresses[0] };
+}
+async function containedGet(value, allowLocalNetwork, options = {}) {
+  let target = value;
+  const deadline = Date.now() + (options.timeoutMs ?? NETWORK_TIMEOUT_MS);
+  for (let hop = 0; hop <= 5; hop++) {
+    if (options.sameOrigin && new URL(target).origin !== options.sameOrigin) throw containmentError("Cross-origin runtime redirect refused");
+    const { url, address, family } = await resolveDestination(target, allowLocalNetwork);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw containmentError("Runtime request timed out");
+    const response = await new Promise(
+      /** @param {(value: {status: number, headers: import('node:http').IncomingHttpHeaders, bytes: Buffer, url: string}) => void} resolve @param {(error: Error) => void} reject */
+      (resolve2, reject) => {
+        const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
+          agent: false,
+          lookup: (_host, _options, callback) => callback(null, address, family),
+          headers: { Accept: "*/*", "Accept-Encoding": "identity" },
+          signal: AbortSignal.timeout(remaining)
+        }, (incoming) => {
+          const chunks = (
+            /** @type {Buffer[]} */
+            []
+          );
+          let bytes = 0;
+          incoming.on("data", (chunk) => {
+            bytes += chunk.length;
+            if (bytes > (options.maxBytes ?? MAX_RESPONSE_BYTES)) incoming.destroy(containmentError("Runtime response exceeds byte limit"));
+            else chunks.push(chunk);
+          });
+          incoming.on("error", reject);
+          incoming.on("end", () => resolve2({ status: incoming.statusCode ?? 502, headers: incoming.headers, bytes: Buffer.concat(chunks), url: url.href }));
+        });
+        request.on("error", reject);
+        request.end();
+      }
+    );
+    if ([301, 302, 303, 307, 308].includes(response.status) && response.headers.location) {
+      target = new URL(response.headers.location, target).href;
+      continue;
+    }
+    return response;
+  }
+  throw containmentError("Too many runtime redirects");
+}
+async function createContainmentProxy(allowLocalNetwork, onBlocked) {
+  const sockets = (
+    /** @type {Set<import('node:net').Socket>} */
+    /* @__PURE__ */ new Set()
+  );
+  let closed = false;
+  const track = (socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {
+    });
+    socket.on("close", () => sockets.delete(socket));
+    return socket;
+  };
+  const server = createServer((req, res) => {
+    void (async () => {
+      const { url, address: address2, family } = await resolveDestination(req.url ?? "", allowLocalNetwork);
+      if (closed) throw containmentError("Session closed");
+      const headers = (
+        /** @type {import('node:http').IncomingHttpHeaders} */
+        { ...req.headers, host: url.host }
+      );
+      delete headers["proxy-authorization"];
+      delete headers["proxy-connection"];
+      delete headers.connection;
+      const outbound = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
+        method: req.method,
+        headers,
+        agent: false,
+        lookup: (_host, _options, callback) => callback(null, address2, family)
+      }, (response) => {
+        const outgoingHeaders = {
+          ...response.headers,
+          "permissions-policy": "geolocation=(), camera=(), microphone=(), clipboard-read=(), clipboard-write=()"
+        };
+        res.writeHead(response.statusCode ?? 502, outgoingHeaders);
+        response.pipe(res);
+        response.on("error", () => res.destroy());
+      });
+      outbound.on("socket", track);
+      outbound.setTimeout(NETWORK_TIMEOUT_MS, () => outbound.destroy());
+      outbound.on("error", () => {
+        if (!res.headersSent) res.writeHead(502);
+        res.end();
+      });
+      res.on("close", () => outbound.destroy());
+      req.pipe(outbound);
+    })().catch(() => {
+      onBlocked();
+      if (!res.headersSent) res.writeHead(403, { "X-Navi-Error": CONTAINMENT_CODE });
+      res.end(CONTAINMENT_CODE);
+    });
+  });
+  server.on("connection", (socket) => {
+    if (closed || sockets.size >= MAX_CONNECTIONS) {
+      socket.destroy();
+      return;
+    }
+    track(socket);
+    socket.setTimeout(NETWORK_TIMEOUT_MS, () => socket.destroy());
+  });
+  server.on("upgrade", (_req, socket) => {
+    onBlocked();
+    socket.destroy();
+  });
+  server.on("connect", (req, client, head) => {
+    void (async () => {
+      const { url, address: address2 } = await resolveDestination(`https://${req.url ?? ""}/`, allowLocalNetwork);
+      if (closed) throw containmentError("Session closed");
+      const upstream = track(connect({ host: address2, port: Number(url.port || 443) }));
+      upstream.setTimeout(NETWORK_TIMEOUT_MS, () => upstream.destroy());
+      client.on("close", () => upstream.destroy());
+      upstream.on("error", () => client.destroy());
+      upstream.on("close", () => client.destroy());
+      upstream.once("connect", () => {
+        if (closed || client.destroyed) {
+          upstream.destroy();
+          return;
+        }
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) upstream.write(head);
+        client.pipe(upstream);
+        upstream.pipe(client);
+      });
+    })().catch(() => {
+      onBlocked();
+      client.end(`HTTP/1.1 403 Forbidden\r
+Connection: close\r
+\r
+${CONTAINMENT_CODE}`);
+    });
+  });
+  server.on("clientError", (_error, socket) => socket.destroy());
+  await new Promise(
+    /** @param {(value?: void) => void} resolve @param {(error: Error) => void} reject */
+    (resolve2, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve2);
+    }
+  );
+  const address = server.address();
+  if (!address || typeof address === "string") throw containmentError("Proxy failed to bind");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: async () => {
+      closed = true;
+      for (const socket of sockets) socket.destroy();
+      await new Promise(
+        /** @param {(value?: void) => void} resolve */
+        (resolve2) => {
+          server.close(() => resolve2());
+        }
+      );
+    }
+  };
+}
+
+// src/mcp/server.js
 init_adapter();
 init_settle();
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
@@ -517,13 +748,15 @@ async function installNavi(page, options = {}) {
 }
 
 // src/mcp/sse.js
-import { createServer } from "node:http";
+import { createServer as createServer2 } from "node:http";
 import { randomUUID as randomUUID2, timingSafeEqual } from "node:crypto";
 var DEFAULT_SSE_PORT = 3001;
 var MAX_MESSAGE_BYTES = 1024 * 1024;
 var HEARTBEAT_MS = 15e3;
 var DEFAULT_MAX_SESSIONS = 10;
 var DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1e3;
+var SESSION_MAX_TTL_MS = 18e5;
+var MAX_PENDING_MESSAGES = 16;
 var AUTH_CHALLENGE = 'Bearer realm="navi-mcp"';
 function sendJson(res, status, body, extraHeaders = {}) {
   const text = JSON.stringify(body, null, 2);
@@ -552,6 +785,15 @@ function seconds(ms) {
 }
 function readBody(req, limit) {
   return new Promise((resolve2) => {
+    const timer = setTimeout(() => {
+      req.destroy();
+      resolve2({ text: "" });
+    }, 1e4);
+    timer.unref();
+    req.once("close", () => {
+      clearTimeout(timer);
+      resolve2({ text: "" });
+    });
     const chunks = [];
     let size = 0;
     req.on("data", (chunk) => {
@@ -563,7 +805,10 @@ function readBody(req, limit) {
       }
       chunks.push(chunk);
     });
-    req.on("end", () => resolve2({ text: Buffer.concat(chunks).toString("utf8") }));
+    req.on("end", () => {
+      clearTimeout(timer);
+      resolve2({ text: Buffer.concat(chunks).toString("utf8") });
+    });
     req.on("error", () => resolve2({ text: "" }));
   });
 }
@@ -577,16 +822,43 @@ async function createSseServer(options) {
   const authToken = options.authToken ?? "";
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const sessionMaxTtlMs = options.sessionMaxTtlMs ?? SESSION_MAX_TTL_MS;
+  if (!Number.isInteger(sessionMaxTtlMs) || sessionMaxTtlMs < 1 || sessionMaxTtlMs > SESSION_MAX_TTL_MS) throw new Error("Session TTL must be between 1 and 1800000ms");
+  const cleanupTasks = /* @__PURE__ */ new Set();
+  let stopping = false;
   const sessions = /* @__PURE__ */ new Map();
   const release = (entry, reason) => {
-    if (!sessions.delete(entry.id)) return;
+    if (entry.released) return entry.cleanup;
+    entry.released = true;
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
-    log(`sse session ${entry.id} closed after ${Math.round((Date.now() - entry.openedAt) / 1e3)}s (${reason}; ${sessions.size} open)`);
-    Promise.resolve(entry.session.close?.()).catch(() => {
+    if (entry.ttlTimer) clearTimeout(entry.ttlTimer);
+    if (entry.heartbeat) clearInterval(entry.heartbeat);
+    let closing;
+    try {
+      closing = entry.session.close?.();
+    } catch (error) {
+      closing = Promise.reject(error);
+    }
+    entry.cleanup = Promise.resolve(closing).catch((error) => {
+      log(`sse session cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }).finally(() => {
+      sessions.delete(entry.id);
+      cleanupTasks.delete(entry.cleanup);
     });
+    cleanupTasks.add(entry.cleanup);
+    void entry.cleanup.catch(() => {
+    });
+    entry.res.end();
+    log(`sse session ${entry.id} closing (${reason})`);
+    return entry.cleanup;
   };
-  const server = createServer(async (req, res) => {
-    const url = new URL(req.url || "/", `http://${req.headers.host ?? "localhost"}`);
+  const server = createServer2(async (req, res) => {
+    const url = new URL(req.url || "/", "http://localhost");
+    if (stopping) {
+      sendJson(res, 503, { ok: false, error: { code: "SERVER_STOPPING" } });
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/sse") {
       if (authToken && !isAuthorized(req, authToken)) {
         log("rejected an unauthenticated GET /sse");
@@ -627,8 +899,15 @@ async function createSseServer(options) {
 data: /message?sessionId=${id}
 
 `);
-      const session = createSession();
-      const entry = { id, res, session, initialized: { value: false }, queue: Promise.resolve(), openedAt: Date.now(), callsInFlight: 0, idleTimer: null, touch: () => {
+      let session;
+      try {
+        session = createSession(id);
+      } catch (error) {
+        log(`session creation failed: ${error instanceof Error ? error.message : String(error)}`);
+        res.end();
+        return;
+      }
+      const entry = { id, res, session, initialized: { value: false }, queue: Promise.resolve(), openedAt: Date.now(), callsInFlight: 0, idleTimer: null, ttlTimer: null, heartbeat: null, released: false, cleanup: null, touch: () => {
       } };
       sessions.set(id, entry);
       log(`sse session ${id} opened (${sessions.size} open)`);
@@ -636,9 +915,14 @@ data: /message?sessionId=${id}
         write(": ping\n\n");
       }, HEARTBEAT_MS);
       heartbeat.unref?.();
+      entry.heartbeat = heartbeat;
+      entry.ttlTimer = setTimeout(() => {
+        release(entry, "hard session TTL");
+      }, sessionMaxTtlMs);
+      entry.ttlTimer.unref?.();
       const arm = () => {
         if (entry.idleTimer) clearTimeout(entry.idleTimer);
-        if (!idleTimeoutMs) return;
+        if (!idleTimeoutMs || entry.released) return;
         entry.idleTimer = setTimeout(() => {
           if (entry.callsInFlight > 0) {
             arm();
@@ -673,13 +957,24 @@ data: /message?sessionId=${id}
       }
       const id = url.searchParams.get("sessionId") ?? "";
       const entry = sessions.get(id);
-      if (!entry) {
+      if (!entry || entry.released) {
         sendJson(res, 404, { jsonrpc: "2.0", id: null, error: { code: -32001, message: `Unknown or expired sessionId "${id}". Open GET /sse first and use the sessionId from its endpoint event.` } });
         return;
       }
+      if (entry.callsInFlight >= MAX_PENDING_MESSAGES) {
+        sendJson(res, 429, { ok: false, error: { code: "TOO_MANY_PENDING_MESSAGES" } });
+        return;
+      }
+      entry.callsInFlight++;
       entry.touch();
       const body = await readBody(req, MAX_MESSAGE_BYTES);
+      if (entry.released) {
+        entry.callsInFlight--;
+        res.end();
+        return;
+      }
       if ("tooLarge" in body) {
+        entry.callsInFlight--;
         sendJson(res, 413, { jsonrpc: "2.0", id: null, error: { code: -32600, message: `Request body over ${MAX_MESSAGE_BYTES} bytes` } });
         return;
       }
@@ -687,6 +982,7 @@ data: /message?sessionId=${id}
       try {
         message = JSON.parse(body.text || "null");
       } catch (error) {
+        entry.callsInFlight--;
         sendJson(res, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: `Parse error: ${/** @type {Error} */
         error.message}` } });
         return;
@@ -701,9 +997,9 @@ data: /message?sessionId=${id}
         } catch {
         }
       };
-      entry.callsInFlight++;
       entry.queue = entry.queue.then(async () => {
         try {
+          if (entry.released) return;
           const reply = await handleMessage2(message, { session: entry.session, initialized: entry.initialized, log });
           if (reply) push(reply);
         } catch (error) {
@@ -716,7 +1012,7 @@ data: /message?sessionId=${id}
       return;
     }
     if (req.method === "GET" && url.pathname === "/healthz") {
-      sendJson(res, 200, { ok: true, transport: "sse", sessions: sessions.size, maxSessions, auth: authToken ? "bearer" : "none", idleTimeoutMs });
+      sendJson(res, 200, { ok: true, transport: "sse", sessions: sessions.size, maxSessions, auth: authToken ? "bearer" : "none", idleTimeoutMs, sessionMaxTtlMs, maxPendingMessages: MAX_PENDING_MESSAGES });
       return;
     }
     if (req.method === "GET" && url.pathname === "/") {
@@ -725,9 +1021,14 @@ data: /message?sessionId=${id}
     }
     sendJson(res, 404, { ok: false, error: { code: "NOT_FOUND", message: `No route for ${req.method} ${url.pathname}.` } });
   });
+  server.requestTimeout = 1e4;
+  server.headersTimeout = 1e4;
   await new Promise(
-    /** @param {(value?: void) => void} resolve */
-    (resolve2) => server.listen(port, host, () => resolve2())
+    /** @param {(value?: void) => void} resolve @param {(error: Error) => void} reject */
+    (resolve2, reject) => {
+      server.once("error", reject);
+      server.listen(port, host, () => resolve2());
+    }
   );
   const address = server.address();
   const boundPort = typeof address === "object" && address ? address.port : port;
@@ -737,20 +1038,16 @@ data: /message?sessionId=${id}
     host,
     sessions,
     close: async () => {
-      for (const entry of [...sessions.values()]) {
-        if (entry.idleTimer) clearTimeout(entry.idleTimer);
-        try {
-          entry.res.end();
-        } catch {
-        }
-        await Promise.resolve(entry.session.close?.()).catch(() => {
-        });
-      }
-      sessions.clear();
+      stopping = true;
+      for (const entry of [...sessions.values()]) release(entry, "server shutdown");
+      const results = await Promise.allSettled([...cleanupTasks]);
+      server.closeAllConnections();
       await new Promise(
         /** @param {(value?: void) => void} resolve */
         (resolve2) => server.close(() => resolve2())
       );
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
     }
   };
 }
@@ -772,6 +1069,7 @@ var SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05
 var DEFAULT_VIEWPORT = { width: 1360, height: 900 };
 var DEFAULT_TIMEOUT_MS = 2e4;
 var MAX_ACTIONS = 5e3;
+var MAX_PAGES_PER_SESSION = 3;
 var MANIFEST_TIMEOUT_MS = 500;
 var HOST_ASSET_TIMEOUT_MS = 4e3;
 var MAX_MANIFEST_BYTES = 16 * 1024;
@@ -820,6 +1118,8 @@ var GUIDANCE = {
   NO_BROWSER: 'Playwright is not installed. Install it with "npm i -D playwright" and run "npx playwright install chromium".',
   NO_SDK: 'The built browser bundle was not found. Run "npm run build" first.',
   NO_PAGE: "No page is open. Call navi_navigate with a URL first.",
+  ERR_BLOCKED_BY_CONTAINMENT: "Private network access is disabled. NAVI_ALLOW_LOCAL_NETWORK=1 is an explicit test-fixture override, not a production setting.",
+  SESSION_CLOSED: "This session has terminated. Open a new MCP session.",
   PAGE_ORIGIN_CHANGED: "The page navigated to a different origin, so the previous action map is void. Call navi_navigate again.",
   UNINSTRUMENTED_HOST: 'The page publishes no agent-bridge discovery marker, so this session cannot know which Navi build the host runs. Serve the tenant loader, or declare <meta name="agent-bridge" content="active">, to make the host discoverable.',
   MANIFEST_UNREACHABLE: "The page declares instrumentation but no usable discovery document could be read from its own origin, so the packaged runtime was injected instead. Serve /.well-known/navi.json (GET /.well-known/navi.json on the host) or fix the Link target it advertises.",
@@ -885,7 +1185,7 @@ async function probeAgentBridge(page, response) {
 function isIntegrityHash(value) {
   return /^sha(256|384|512)-[A-Za-z0-9+/=]{16,}$/.test(value);
 }
-async function fetchHostManifest(pageUrl, link) {
+async function fetchHostManifest(pageUrl, link, allowLocalNetwork) {
   const origin = new URL(pageUrl).origin;
   let target;
   try {
@@ -898,49 +1198,48 @@ async function fetchHostManifest(pageUrl, link) {
     return { ok: false, code: "MANIFEST_CROSS_ORIGIN", detail: `${target.origin} is not the page origin ${origin}` };
   }
   try {
-    const response = await fetch(target, { redirect: "follow", signal: AbortSignal.timeout(MANIFEST_TIMEOUT_MS), headers: { Accept: "application/json" } });
-    if (!response.ok) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `GET ${redactUrl(target.href)} answered HTTP ${response.status}` };
-    if (new URL(response.url).origin !== origin) return { ok: false, code: "MANIFEST_CROSS_ORIGIN", detail: `GET ${redactUrl(target.href)} redirected to ${redactUrl(response.url)}` };
-    const declaredLength = Number(response.headers.get("content-length") ?? "");
+    const response = await containedGet(target.href, allowLocalNetwork, { timeoutMs: MANIFEST_TIMEOUT_MS, maxBytes: MAX_MANIFEST_BYTES, sameOrigin: origin });
+    if (response.status < 200 || response.status >= 300) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `GET ${redactUrl(target.href)} answered HTTP ${response.status}` };
+    const declaredLength = Number(response.headers["content-length"] ?? "");
     if (Number.isFinite(declaredLength) && declaredLength > MAX_MANIFEST_BYTES) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `the document declares ${declaredLength} bytes` };
-    const text = await response.text();
+    const text = response.bytes.toString("utf8");
     if (text.length > MAX_MANIFEST_BYTES) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `the document is larger than ${MAX_MANIFEST_BYTES} bytes` };
     const document2 = JSON.parse(text);
     if (!document2 || typeof document2 !== "object" || Array.isArray(document2)) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: "the document is not a JSON object" };
     return { ok: true, document: document2, url: target.href };
   } catch (error) {
-    const timedOut = (
+    const timedOut = ["TimeoutError", "AbortError"].includes(String(
       /** @type {{name?: unknown}} */
-      error?.name === "TimeoutError"
-    );
+      error?.name
+    ));
     return { ok: false, code: "MANIFEST_UNREACHABLE", detail: timedOut ? `no answer within ${MANIFEST_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
   }
 }
-async function fetchHostAsset(url, integrity) {
+async function fetchHostAsset(url, integrity, allowLocalNetwork) {
   const algorithm = integrity.slice(0, integrity.indexOf("-"));
   try {
-    const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(HOST_ASSET_TIMEOUT_MS) });
-    if (!response.ok) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `GET ${redactUrl(url.href)} answered HTTP ${response.status}` };
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const response = await containedGet(url.href, allowLocalNetwork, { timeoutMs: HOST_ASSET_TIMEOUT_MS });
+    if (response.status < 200 || response.status >= 300) return { ok: false, code: "MANIFEST_UNREACHABLE", detail: `GET ${redactUrl(url.href)} answered HTTP ${response.status}` };
+    const bytes = response.bytes;
     const digest = `${algorithm}-${createHash(algorithm).update(bytes).digest("base64")}`;
     if (digest !== integrity) return { ok: false, code: "HOST_ASSET_MISMATCH", detail: `the served bytes hash to ${digest.slice(0, 20)}\u2026, the manifest declared ${integrity.slice(0, 20)}\u2026` };
     return { ok: true, text: bytes.toString("utf8") };
   } catch (error) {
-    const timedOut = (
+    const timedOut = ["TimeoutError", "AbortError"].includes(String(
       /** @type {{name?: unknown}} */
-      error?.name === "TimeoutError"
-    );
+      error?.name
+    ));
     return { ok: false, code: "MANIFEST_UNREACHABLE", detail: timedOut ? `${redactUrl(url.href)} did not answer within ${HOST_ASSET_TIMEOUT_MS}ms` : error instanceof Error ? error.message : String(error) };
   }
 }
-async function negotiateHostRuntime(page, discovery) {
+async function negotiateHostRuntime(page, discovery, allowLocalNetwork) {
   const resolution = { source: "bundled_fallback", manifest: null, script: null, integrity: "not_declared", warning: null, detail: null };
   const fallback = (code, detail) => {
     resolution.warning = code;
     resolution.detail = detail;
     return resolution;
   };
-  const fetched = await fetchHostManifest(page.url(), discovery.manifest);
+  const fetched = await fetchHostManifest(page.url(), discovery.manifest, allowLocalNetwork);
   if (!fetched.ok) return fallback(fetched.code, fetched.detail);
   resolution.manifest = redactUrl(fetched.url);
   const declaredVersion = fetched.document.version;
@@ -960,7 +1259,7 @@ async function negotiateHostRuntime(page, discovery) {
   const declaredIntegrity = typeof fetched.document.integrity === "string" && isIntegrityHash(fetched.document.integrity.trim()) ? fetched.document.integrity.trim() : null;
   try {
     if (declaredIntegrity) {
-      const asset = await fetchHostAsset(scriptUrl, declaredIntegrity);
+      const asset = await fetchHostAsset(scriptUrl, declaredIntegrity, allowLocalNetwork);
       if (!asset.ok) {
         resolution.integrity = "failed";
         return fallback(asset.code, asset.detail);
@@ -1165,27 +1464,151 @@ function normalizeStorageState(input) {
   return { state: { cookies, origins }, summary: { cookies: cookies.length, origins: origins.length, localStorage: entries } };
 }
 var NaviSession = class {
-  /** @param {{viewport?: {width: number, height: number}, headless?: boolean, fallback?: boolean, log?: (line: string) => void}} [options] */
+  /** @param {{viewport?: {width: number, height: number}, headless?: boolean, fallback?: boolean, log?: (line: string) => void, sessionId?: string}} [options] */
   constructor(options = {}) {
     this.viewport = options.viewport ?? DEFAULT_VIEWPORT;
     this.headless = options.headless !== false;
     this.fallback = options.fallback !== false;
     this.log = options.log ?? (() => {
     });
-    this.browser = null;
+    this.browser = /** @type {any} */
+    null;
+    this.context = /** @type {any} */
+    null;
+    this.permissionSession = /** @type {any} */
+    null;
+    this.sessionId = options.sessionId ?? randomUUID3();
+    if (!/^[a-zA-Z0-9-]{1,64}$/.test(this.sessionId)) throw new Error("Invalid session identifier");
+    this.allowLocalNetwork = process.env.NAVI_ALLOW_LOCAL_NETWORK === "1";
+    this.closed = false;
+    this.abort = new AbortController();
+    this.blockedRequests = 0;
+    this.downloadDirectory = /** @type {string | null} */
+    null;
+    this.proxy = /** @type {Awaited<ReturnType<typeof createContainmentProxy>> | null} */
+    null;
+    this.launchPromise = /** @type {Promise<any> | null} */
+    null;
+    this.closePromise = /** @type {Promise<void> | null} */
+    null;
     this.page = null;
     this.adapter = null;
     this.sdkStrategy = null;
     this.storageState = null;
   }
+  /** Initialize an empty contained context without navigating or reading host state. */
+  async initialize() {
+    return this.#ensurePage();
+  }
   async #ensurePage() {
-    if (this.page) return this.page;
-    const chromium = await resolveChromium();
-    this.browser = await chromium.launch({ headless: this.headless, chromiumSandbox: true });
-    const context = await this.browser.newContext(this.storageState ? { viewport: this.viewport, storageState: this.storageState } : { viewport: this.viewport });
-    this.page = await context.newPage();
-    this.log(`browser launched (${this.viewport.width}x${this.viewport.height}, headless=${this.headless})`);
-    return this.page;
+    if (this.closed) throw Object.assign(new Error("Session closed"), { code: "SESSION_CLOSED" });
+    if (this.page && !this.page.isClosed()) return this.page;
+    if (this.launchPromise) return this.launchPromise;
+    if (this.context) {
+      this.page = await this.context.newPage();
+      return this.page;
+    }
+    this.launchPromise = this.#launchPage();
+    try {
+      return await this.launchPromise;
+    } finally {
+      this.launchPromise = null;
+    }
+  }
+  /** Cancel protocol setup commands even if Chromium closes before CDP responds.
+   * @template T @param {Promise<T>} operation @returns {Promise<T>} */
+  async #active(operation) {
+    const stopped = () => Object.assign(new Error("Session closed during setup"), { code: "SESSION_CLOSED" });
+    let cancel = () => {
+    };
+    const canceled = new Promise(
+      /** @param {(value: never) => void} _resolve @param {(error: Error) => void} reject */
+      (_resolve, reject) => {
+        cancel = () => reject(stopped());
+        if (this.closed) cancel();
+        else this.abort.signal.addEventListener("abort", cancel, { once: true });
+      }
+    );
+    try {
+      return await Promise.race([operation, canceled]);
+    } finally {
+      this.abort.signal.removeEventListener("abort", cancel);
+    }
+  }
+  async #launchPage() {
+    try {
+      const chromium = await resolveChromium();
+      this.downloadDirectory = await mkdtemp(join(tmpdir(), `navi-downloads-${this.sessionId}-`));
+      this.proxy = await createContainmentProxy(this.allowLocalNetwork, () => {
+        this.blockedRequests++;
+      });
+      const browser = await chromium.launch({
+        headless: this.headless,
+        chromiumSandbox: true,
+        downloadsPath: this.downloadDirectory,
+        proxy: { server: this.proxy.url },
+        args: ["--proxy-bypass-list=<-loopback>", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--disable-quic"]
+      });
+      this.browser = browser;
+      browser.on("disconnected", () => {
+        if (!this.closed && this.browser === browser) void this.close().catch((error) => this.log(`browser cleanup failed: ${error.message}`));
+      });
+      if (this.closed) throw Object.assign(new Error("Session closed during launch"), { code: "SESSION_CLOSED" });
+      const context = await this.#active(browser.newContext({
+        viewport: this.viewport,
+        permissions: [],
+        serviceWorkers: "block",
+        acceptDownloads: true,
+        ...this.storageState ? { storageState: this.storageState } : {}
+      }));
+      this.context = context;
+      if (this.closed) throw Object.assign(new Error("Session closed during context creation"), { code: "SESSION_CLOSED" });
+      await this.#active(context.clearPermissions());
+      await this.#active(context.route("**/*", async (route) => {
+        try {
+          if (this.closed) throw containmentError("Session closed");
+          await resolveDestination(route.request().url(), this.allowLocalNetwork);
+          await route.continue();
+        } catch {
+          this.blockedRequests++;
+          await route.abort("blockedbyclient").catch(() => {
+          });
+        }
+      }));
+      if (typeof context.routeWebSocket !== "function") throw containmentError("Playwright >=1.48 is required for websocket containment");
+      await this.#active(context.routeWebSocket("**/*", (socket) => {
+        socket.close();
+      }));
+      const cdp = await this.#active(browser.newBrowserCDPSession());
+      this.permissionSession = cdp;
+      const page = await this.#active(context.newPage());
+      const target = await this.#active(context.newCDPSession(page));
+      const { targetInfo } = await this.#active(target.send("Target.getTargetInfo"));
+      for (const name of ["geolocation", "camera", "microphone", "notifications", "clipboard-read", "clipboard-write"]) {
+        await this.#active(cdp.send("Browser.setPermission", { browserContextId: targetInfo.browserContextId, permission: { name }, setting: "denied" }));
+      }
+      await this.#active(target.detach());
+      this.page = page;
+      const accepted = /* @__PURE__ */ new Set([page]);
+      context.on("page", (popup) => {
+        if (this.closed || accepted.size >= MAX_PAGES_PER_SESSION) {
+          void popup.close({ runBeforeUnload: false }).catch((error) => this.log(`popup close failed: ${error.message}`));
+          return;
+        }
+        accepted.add(popup);
+        popup.on("close", () => accepted.delete(popup));
+      });
+      page.on("close", () => accepted.delete(page));
+      context.on("close", () => {
+        if (!this.closed && this.context === context) void this.close().catch((error) => this.log(`session cleanup failed: ${error.message}`));
+      });
+      if (this.closed) throw Object.assign(new Error("Session closed during context setup"), { code: "SESSION_CLOSED" });
+      this.log(`browser launched (${this.viewport.width}x${this.viewport.height}, ephemeral session ${this.sessionId})`);
+      return page;
+    } catch (error) {
+      await this.#disposeBrowser();
+      throw error;
+    }
   }
   /** @param {Record<string, unknown>} args */
   async navigate(args) {
@@ -1195,10 +1618,22 @@ var NaviSession = class {
     const width = Number.isFinite(args.width) ? Number(args.width) : this.viewport.width;
     const height = Number.isFinite(args.height) ? Number(args.height) : this.viewport.height;
     const timeout = Number.isFinite(args.timeoutMs) ? Number(args.timeoutMs) : DEFAULT_TIMEOUT_MS;
+    if (width < 1 || width > 4096 || height < 1 || height > 4096 || timeout < 1 || timeout > 3e4) return toolError("INVALID_PAYLOAD", "Viewport must be 1\u20134096 pixels and timeoutMs 1\u201330000.");
     try {
+      if (this.closed) throw Object.assign(new Error("Session closed"), { code: "SESSION_CLOSED" });
+      await resolveDestination(safe, this.allowLocalNetwork);
+      const beforeBlocked = this.blockedRequests;
       const page = await this.#ensurePage();
       await page.setViewportSize({ width, height });
-      const response = await page.goto(safe, { waitUntil: "load", timeout });
+      this.adapter = null;
+      let response;
+      try {
+        response = await page.goto(safe, { waitUntil: "load", timeout });
+      } catch (error) {
+        if (this.blockedRequests > beforeBlocked) throw containmentError("Navigation or redirect reached a blocked destination");
+        throw error;
+      }
+      await resolveDestination(page.url(), this.allowLocalNetwork);
       const status = response ? response.status() : null;
       let discovery = await probeAgentBridge(page, response);
       const installed = await page.evaluate(() => Boolean(
@@ -1226,7 +1661,7 @@ var NaviSession = class {
         source = "host_inline";
         if (!discovery.instrumented) warning = warningFor("UNINSTRUMENTED_HOST");
       } else if (discovery.instrumented) {
-        const negotiated = await negotiateHostRuntime(page, discovery);
+        const negotiated = await negotiateHostRuntime(page, discovery, this.allowLocalNetwork);
         negotiatedManifest = negotiated.manifest;
         discovery = { ...discovery, manifest: negotiated.manifest ?? discovery.manifest, script: negotiated.script, integrity: negotiated.integrity };
         if (negotiated.source === "host_manifest") {
@@ -1280,6 +1715,7 @@ var NaviSession = class {
       });
     } catch (error) {
       const code = errorCode(error);
+      if (code === CONTAINMENT_CODE) this.adapter = null;
       return toolError(code === "EXECUTION_ERROR" ? "NAVIGATION_FAILED" : code, error instanceof Error ? error.message : String(error), { url: safe });
     }
   }
@@ -1295,20 +1731,14 @@ var NaviSession = class {
    * @param {{cookies: any[], origins: any[]}} state
    */
   async hydrate(state) {
+    if (this.closed) throw Object.assign(new Error("Session closed"), { code: "SESSION_CLOSED" });
+    await this.#disposeBrowser();
     this.storageState = state;
-    this.page = null;
-    this.adapter = null;
-    if (!this.browser) return;
-    for (const context of this.browser.contexts()) {
-      try {
-        await context.close();
-      } catch {
-      }
-    }
   }
   /** @param {Record<string, unknown>} args */
   async setSession(args) {
     const url = typeof args.url === "string" ? args.url : "";
+    if (typeof args.storage_state === "string" && !this.allowLocalNetwork) return toolError("INVALID_SESSION", "Remote sessions accept inline state only; server-side file paths are disabled.");
     if (url && !isAllowedUrl(url)) return toolError("INVALID_URL", `Refusing to open "${redactUrl(url)}": only absolute credential-free http(s) URLs are allowed.`);
     const inline = args.cookies !== void 0 || args.origins !== void 0 ? { cookies: args.cookies ?? [], origins: args.origins ?? [] } : void 0;
     const input = args.storage_state !== void 0 ? args.storage_state : inline;
@@ -1360,7 +1790,9 @@ var NaviSession = class {
       args.payload && typeof args.payload === "object" ? args.payload : {}
     );
     try {
+      const blockedBefore = this.blockedRequests;
       const result = await adapter.execute(targetId, actionType, payload, args.settle);
+      if (this.blockedRequests > blockedBefore) return toolError(CONTAINMENT_CODE, "An action attempted blocked network access.", { may_have_applied: true });
       if (!result.ok) {
         const code = result.error?.code ?? "EXECUTION_ERROR";
         return toolError(code, result.error?.message ?? "The action failed.", { target_id: targetId, action_type: actionType });
@@ -1426,17 +1858,44 @@ var NaviSession = class {
       return toolError(errorCode(error), error instanceof Error ? error.message : String(error));
     }
   }
-  async close() {
+  async #disposeBrowser() {
     const browser = this.browser;
+    const context = this.context;
+    const proxy = this.proxy;
+    const directory = this.downloadDirectory;
+    this.proxy = null;
+    this.downloadDirectory = null;
+    this.permissionSession = null;
     this.browser = null;
+    this.context = null;
     this.page = null;
     this.adapter = null;
-    if (browser) {
+    try {
+      if (context) await context.close();
+    } finally {
       try {
-        await browser.close();
-      } catch {
+        if (browser) await browser.close();
+      } finally {
+        try {
+          if (proxy) await proxy.close();
+        } finally {
+          if (directory) await rm(directory, { recursive: true, force: true });
+        }
       }
     }
+  }
+  close() {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.abort.abort();
+    this.closePromise = (async () => {
+      await this.#disposeBrowser();
+      await this.launchPromise?.catch(() => {
+      });
+      await this.#disposeBrowser();
+      this.storageState = null;
+    })();
+    return this.closePromise;
   }
 };
 async function handleMessage(message, state) {
@@ -1577,6 +2036,10 @@ Security
 Environment
   NAVI_MCP_TOKEN=<token>          Bearer token, same as --auth-token
   NAVI_MCP_DEBUG=1                Log every tool call to stderr
+  NAVI_ALLOW_LOCAL_NETWORK=1      TEST ONLY: permit private/loopback destinations
+                                  Default denied, including page subresources.
+  Sessions: 3 pages maximum, 30-minute hard TTL over SSE, ephemeral downloads,
+  no camera/microphone/geolocation/notifications/clipboard grants.
 `);
     return 0;
   }
@@ -1636,7 +2099,7 @@ Environment
       authToken,
       maxSessions,
       idleTimeoutMs: Math.round(idleSeconds * 1e3),
-      createSession: () => new NaviSession({ fallback, log })
+      createSession: (id) => new NaviSession({ fallback, log, sessionId: id })
     });
     process.stderr.write(`navi-mcp: SSE transport listening on http://${host}:${remote.port}/sse (endpoint POST /message?sessionId=<id>; auth ${authToken ? "bearer" : "none, loopback only"}, max-sessions ${maxSessions}, idle-timeout ${idleSeconds}s)
 `);
@@ -1667,6 +2130,7 @@ Environment
   return 0;
 }
 export {
+  MAX_PAGES_PER_SESSION,
   NaviSession,
   PROTOCOL_VERSION,
   RESOLUTION_STRATEGY_MAP,

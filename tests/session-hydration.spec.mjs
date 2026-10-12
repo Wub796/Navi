@@ -37,7 +37,7 @@ test('navi_set_session restores cookies and localStorage so restricted controls 
     args: [binPath],
     cwd: root,
     stderr: 'pipe',
-    env: { ...process.env, NAVI_MCP_DEBUG: '1' }
+    env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1', NAVI_MCP_DEBUG: '1' }
   });
   const client = new Client({ name: 'navi-mcp-session', version: '1.0.0' });
   await client.connect(transport);
