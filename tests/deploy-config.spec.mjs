@@ -279,3 +279,70 @@ test('docker resolves the production compose file to least privilege, not just t
   expect(mcp.environment.NAVI_MCP_TOKEN).toBe('test-only-token');
   expect(mcp.environment.NAVI_MODE).toBe('mcp');
 });
+
+test('docker-compose.prod.yml and fly.toml maintain strict parity on volume paths, port bindings, and sentinel environment variables', async () => {
+  const composeDoc = parse(await readFile(composePath, 'utf8'));
+  const flyRaw = await readFile(flyPath, 'utf8');
+  const fly = withoutComments(flyRaw);
+
+  const composeHost = composeDoc.services['navi-host'];
+  const composeMcp = composeDoc.services['navi-mcp'];
+
+  // 1. Sentinel & store environment variable parity (`NAVI_STORE`, `NAVI_MCP_STATE_FILE`, `NAVI_MCP_MAX_SESSIONS`, `NAVI_MCP_IDLE_TIMEOUT`, `NODE_OPTIONS`).
+  const flyEnvBlock = /^\[env\]([\s\S]*?)(?=^\[)/m.exec(fly)?.[1] ?? '';
+  /** @param {string} name @returns {string} */
+  const flyEnv = name => new RegExp(`^\\s*${name}\\s*=\\s*"([^"]*)"`, 'm').exec(flyEnvBlock)?.[1] ?? '';
+
+  expect(flyEnv('NAVI_STORE')).toBe('/data/telemetry.db');
+  expect(composeHost.environment.NAVI_STORE).toBe(flyEnv('NAVI_STORE'));
+
+  expect(flyEnv('NAVI_MCP_STATE_FILE')).toBe('/var/lib/navi/mcp/state.clean');
+  expect(composeMcp.environment.NAVI_MCP_STATE_FILE).toBe(flyEnv('NAVI_MCP_STATE_FILE'));
+  expect(lifecyclePaths(flyEnv('NAVI_MCP_STATE_FILE'))).toEqual({
+    stateFile: '/var/lib/navi/mcp/state.dirty',
+    cleanFile: '/var/lib/navi/mcp/state.clean',
+    normalized: true
+  });
+
+  expect(flyEnv('NAVI_MCP_MAX_SESSIONS')).toBe('2');
+  expect(flyEnv('NAVI_MCP_IDLE_TIMEOUT')).toBe('300');
+  expect(flyEnv('NODE_ENV')).toBe('production');
+  expect(flyEnv('NODE_OPTIONS')).toBe('--experimental-sqlite');
+  expect(composeHost.environment.NODE_OPTIONS).toBe(flyEnv('NODE_OPTIONS'));
+  expect(composeMcp.environment.NODE_OPTIONS).toBe(flyEnv('NODE_OPTIONS'));
+
+  // 2. Persistent volume mount parity (`/data` isolated to `host`, `/var/lib/navi/mcp` isolated to `mcp`).
+  const mountBlocks = fly.split('[[mounts]]').slice(1);
+  expect(mountBlocks).toHaveLength(2);
+  const parsedMounts = mountBlocks.map(block => ({
+    source: /^\s*source\s*=\s*"([^"]+)"/m.exec(block)?.[1],
+    destination: /^\s*destination\s*=\s*"([^"]+)"/m.exec(block)?.[1],
+    processes: /^\s*processes\s*=\s*\[\s*"([^"]+)"\s*\]/m.exec(block)?.[1]
+  }));
+  expect(parsedMounts).toEqual([
+    { source: 'navi_data', destination: '/data', processes: 'host' },
+    { source: 'navi_mcp_state', destination: '/var/lib/navi/mcp', processes: 'mcp' }
+  ]);
+  expect(composeHost.volumes).toEqual(['telemetry:/data']);
+  expect(composeMcp.volumes).toEqual(['mcp-state:/var/lib/navi/mcp']);
+
+  // 3. Port bindings, private networking (`::` for 6PN / `.flycast`), and `/healthz` probes on 3000 and 3001.
+  expect(composeHost.environment.NAVI_PORT).toBe('3000');
+  expect(composeMcp.environment.NAVI_PORT).toBe('3001');
+  expect(fly).toMatch(/^\s*host\s*=\s*"node server\/index\.js --host 0\.0\.0\.0 --port 3000 --store \/data\/telemetry\.db"$/m);
+  expect(fly).toMatch(/^\s*mcp\s*=\s*"node bin\/navi-mcp\.js --transport sse --host :: --port 3001"$/m);
+  expect(flyRaw).toMatch(/\.flycast/);
+  expect(flyRaw).toMatch(/fly-local-6pn/);
+  expect(flyRaw).toMatch(/USER 1000:1000/);
+
+  const serviceBlock = fly.split('[[services]]')[1] ?? '';
+  expect(serviceBlock).toMatch(/internal_port\s*=\s*3000/);
+  expect(serviceBlock).toMatch(/processes\s*=\s*\["host"\]/);
+  expect(serviceBlock).toMatch(/\[\[services\.http_checks\]\][\s\S]*?path\s*=\s*"\/healthz"/);
+
+  const mcpCheckBlock = /^\[checks\.mcp\]([\s\S]*?)(?=^\[)/m.exec(fly)?.[1] ?? '';
+  expect(mcpCheckBlock).toMatch(/port\s*=\s*3001/);
+  expect(mcpCheckBlock).toMatch(/processes\s*=\s*\["mcp"\]/);
+  expect(mcpCheckBlock).toMatch(/path\s*=\s*"\/healthz"/);
+});
+

@@ -23,13 +23,14 @@
 #   fly secrets set NAVI_TENANTS='key:tenantId' NAVI_MCP_TOKEN='<strong token>'
 #
 # Non-root is inherited from the image, which declares `USER pwuser:pwuser` (UID
-# 1000); nothing here overrides it. Fly runs the image in a Machine, not Docker:
+# 1000 / `USER 1000:1000`); nothing here overrides it. Fly runs the image in a Machine, not Docker:
 # fly.toml has no cap_drop, no-new-privileges, read_only, tmpfs or custom seccomp
 # settings. This is NOT equivalent to Compose hardening; use Compose when those
 # controls are mandatory. Chromium sandbox support must be verified on Fly before
 # production use; never disable it to make a deployment pass.
-# Prepare the attached volume directory to be writable by UID/GID 1000; a fresh
-# Fly volume can hide the ownership baked into the image's /data directory.
+# Prepare the attached volume directories (`/data` and `/var/lib/navi/mcp`) to be
+# writable by UID/GID 1000; a fresh Fly volume can hide the ownership baked into
+# the image's directories.
 app = "navi-bridge"
 primary_region = "iad"
 
@@ -44,9 +45,13 @@ kill_timeout = "30s"
   # The store path the volume below is mounted at; the compose deployment uses the
   # same path so an operator moving between them does not have to think about it.
   NAVI_STORE = "/data/telemetry.db"
+  # Exclusive MCP lifecycle sentinel path on the dedicated MCP volume, matching
+  # deploy/docker-compose.prod.yml so unclean-shutdown detection survives restarts.
+  NAVI_MCP_STATE_FILE = "/var/lib/navi/mcp/state.clean"
   NAVI_MCP_MAX_SESSIONS = "2"
   NAVI_MCP_IDLE_TIMEOUT = "300"
   NODE_ENV = "production"
+  NODE_OPTIONS = "--experimental-sqlite"
 
 # One command per process group. The image entrypoint execs the command it is given
 # (scripts/docker-entrypoint.sh), so each group starts exactly the service it names
@@ -59,6 +64,11 @@ kill_timeout = "30s"
   source = "navi_data"
   destination = "/data"
   processes = ["host"]
+
+[[mounts]]
+  source = "navi_mcp_state"
+  destination = "/var/lib/navi/mcp"
+  processes = ["mcp"]
 
 # The host service is public: it serves the SDK to browsers and the discovery
 # document to agents, and `/healthz` is intentionally unauthenticated so a platform
@@ -89,8 +99,10 @@ kill_timeout = "30s"
     protocol = "http"
 
 # The MCP bridge has no published ports on purpose. Whoever reaches an open SSE port
-# can drive a real browser, so the default here is the private 6PN network — other
-# Fly apps in the same organisation reach it as `mcp.process.navi-bridge.internal:3001`.
+# can drive a real browser, so the default here is the internal private 6PN network
+# (`fly-local-6pn` / `.internal`, or a private `.flycast` address if allocated) —
+# other Fly apps in the same organisation reach it as
+# `mcp.process.navi-bridge.internal:3001`.
 # The :: bind accepts IPv6 6PN traffic as well as IPv4 health checks. Do not define a
 # portless [[services]] block: Fly requires a port on every proxy service. Use an
 # independent, process-scoped check instead. No proxy means no proxy autostart;

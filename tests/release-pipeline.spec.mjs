@@ -8,6 +8,7 @@ import { CONTAINER_CHECKS_FLOOR, evaluatePublish } from '../scripts/publish-pref
 import { renderReleaseNotes } from '../scripts/release-notes.mjs';
 import { readContainerReceipts, summarizeContainer } from '../scripts/container-evidence.mjs';
 import { MIN_PASSING_TESTS } from '../scripts/verify-release.mjs';
+import { evaluateUnpackedPackage, REQUIRED_PACKAGE_FILES, verifyCleanRoomPackage } from '../scripts/verify-registry-package.mjs';
 
 /**
  * Release-pipeline checks.
@@ -416,3 +417,42 @@ test('the pipeline cannot publish without container verification on both archite
   expect(stepValues(containerGate.steps, 'path')).toContain('reports/production-container-verification.json');
   expect(stepValues(release.jobs.publish.steps, 'pattern')).toContain('release-container-receipt-*');
 });
+
+test('clean-room package verifier enforces manifest layout, SRI byte parity, zero leaks, and stdio MCP handshake', async () => {
+  const result = await verifyCleanRoomPackage({ mode: 'tarball' });
+  expect(result.ok, JSON.stringify(result.checks, null, 2)).toBe(true);
+  expect(result.checks.map(check => check.id)).toEqual([
+    'manifest-layout',
+    'sri-and-budgets',
+    'zero-leak-isolation',
+    'mcp-initialize',
+    'mcp-tools-list',
+    'mcp-sigterm-teardown'
+  ]);
+  expect(result.checks.every(check => check.ok)).toBe(true);
+
+  // Verify the pure evaluator refuses leaked source/test files, runtime dependencies, or broken SRI.
+  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  const bundle = await readFile(join(root, 'dist/navi.min.js'));
+  const loader = await readFile(join(root, 'dist/loader.min.js'));
+  const sri = (await readFile(join(root, 'dist/sri.txt'), 'utf8')).trim();
+
+  const leaked = evaluateUnpackedPackage({
+    files: [...REQUIRED_PACKAGE_FILES, 'src/mcp/server.js', 'tests/release-pipeline.spec.mjs'],
+    pkg,
+    expectedSri: sri,
+    actualBundleBytes: bundle,
+    actualLoaderBytes: loader
+  });
+  expect(leaked.find(check => check.id === 'zero-leak-isolation')?.ok).toBe(false);
+
+  const badSri = evaluateUnpackedPackage({
+    files: [...REQUIRED_PACKAGE_FILES],
+    pkg,
+    expectedSri: 'sha384-wrong',
+    actualBundleBytes: bundle,
+    actualLoaderBytes: loader
+  });
+  expect(badSri.find(check => check.id === 'sri-and-budgets')?.ok).toBe(false);
+});
+

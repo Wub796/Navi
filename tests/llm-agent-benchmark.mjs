@@ -123,7 +123,9 @@ export function childEnvironment(source = process.env) {
  * @returns {{config: Config} | {error: string, reason: 'unconfigured' | 'mock' | 'invalid'}}
  */
 export function resolveConfig(env = process.env) {
-  const endpoint = (env.LLM_ENDPOINT || env.LLM_BASE_URL || '').trim();
+  const rawEndpoint = (env.LLM_ENDPOINT || env.LLM_BASE_URL || '').trim();
+  const markdownUrlMatch = /^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/.exec(rawEndpoint);
+  const endpoint = (markdownUrlMatch ? markdownUrlMatch[2] : rawEndpoint).trim();
   const model = (env.LLM_MODEL || '').trim();
   const apiKey = (env.LLM_API_KEY || env.OPENAI_API_KEY || '').trim() || undefined;
   // The knobs are validated once, for the live path and the fixture path alike, so
@@ -507,13 +509,15 @@ export async function runBenchmark(config, preflight = null) {
     const completeCached = rows.every(row => row.cachedComplete);
     const inputTokens = completeUsage ? rows.reduce((sum, row) => sum + row.inputTokens, 0) : null;
     const outputTokens = completeUsage ? rows.reduce((sum, row) => sum + row.outputTokens, 0) : null;
+    const cachedInputTokens = completeCached ? rows.reduce((sum, row) => sum + row.cachedTokens, 0) : null;
     return { path, successes: rows.filter(row => row.success).length, trials: rows.length, meanSteps: rows.reduce((s, r) => s + r.steps, 0) / rows.length, inputTokens, outputTokens,
       // Taxonomy counts for this path, plus any run-level marker. This is what
       // separates a hallucinated identifier from a refusal Navi made on purpose.
       failureBuckets: summarizeFailures(rows.flatMap(row => row.failures)),
       // Cached reads are a subset of inputTokens; the cost formula stays on
       // prompt_tokens because that is what the provider bills prompt-side.
-      cachedInputTokens: completeCached ? rows.reduce((sum, row) => sum + row.cachedTokens, 0) : null,
+      cachedInputTokens,
+      cachedTokenRatio: inputTokens !== null && inputTokens > 0 && cachedInputTokens !== null ? Number((cachedInputTokens / inputTokens).toFixed(4)) : null,
       // Model latency per turn, taken around the request rather than around the
       // trial: the mean alone hides a slow tail, which is what a caller feels.
       latency: { turns: rows.reduce((sum, row) => sum + row.turnLatenciesMs.length, 0), meanTurnMs: mean(rows.flatMap(row => row.turnLatenciesMs)), p50TurnMs: percentile(rows.flatMap(row => row.turnLatenciesMs), 50), p95TurnMs: percentile(rows.flatMap(row => row.turnLatenciesMs), 95), slowestTurnMs: percentile(rows.flatMap(row => row.turnLatenciesMs), 100) },
