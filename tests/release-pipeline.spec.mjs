@@ -4,19 +4,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { evaluatePublish } from '../scripts/publish-preflight.mjs';
+import { CONTAINER_CHECKS_FLOOR, evaluatePublish } from '../scripts/publish-preflight.mjs';
 import { renderReleaseNotes } from '../scripts/release-notes.mjs';
 import { readContainerReceipts, summarizeContainer } from '../scripts/container-evidence.mjs';
+import { MIN_PASSING_TESTS } from '../scripts/verify-release.mjs';
 
 /**
  * Release-pipeline checks.
  *
  * A registry publish is the one action in this repository that cannot be undone, so
  * the rules that guard it are tested rather than trusted: the preflight must refuse
- * while a decision is missing, and it must refuse a receipt that no longer describes
- * the artifacts in front of it. The release notes are held to the same standard from
- * the other side — they are generated from the receipts, so they can only state what
- * a gate actually recorded.
+ * while a decision is missing, it must refuse a receipt that no longer describes the
+ * artifacts in front of it, and it must refuse a receipt that cites no green container
+ * verification of a deployment this repository ships. The release notes are held to the
+ * same standard from the other side — they are generated from the receipts, so they can
+ * only state what a gate actually recorded.
  */
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -27,10 +29,14 @@ const readyManifest = {
   license: 'MIT',
   publishConfig: { access: 'public', provenance: true }
 };
+/** A green container verification of the file an operator deploys, as the receipt records it. */
+const readyContainers = [
+  { architecture: 'linux/arm64', compose: 'deploy/docker-compose.prod.yml', recordedAt: '2026-10-13T01:40:09.443Z', ok: true, passed: 18, checks: 18 }
+];
 const readyReceipt = {
   ok: true,
   checks: [{ id: 'test-suite', ok: true, detail: '81 passed, 0 failed (floor 81)' }],
-  evidence: { revision: 'abc123def456', sri: 'sha384-AAAA', bundleBytes: 14929, loaderBytes: 689, floor: 81, tests: [81, 0] }
+  evidence: { revision: 'abc123def456', sri: 'sha384-AAAA', bundleBytes: 14929, loaderBytes: 689, floor: 81, tests: [81, 0], containers: readyContainers }
 };
 const readyArtifacts = { sri: 'sha384-AAAA', bundleBytes: 14929, loaderBytes: 689 };
 
@@ -80,6 +86,24 @@ const receiptViolations = (receipt, { artifacts, floor }) => {
   return violations;
 };
 
+/**
+ * The container-evidence verdict for one shape of cited evidence, with everything else in
+ * `readyManifest` and `readyReceipt` in order so exactly one rule is under test.
+ * @param {any} containers the `evidence.containers` value to evaluate
+ * @returns {{ok: boolean, detail: string}}
+ */
+const containerCheck = containers => {
+  const checks = evaluatePublish(readyManifest, {
+    licenseFile: 'LICENSE',
+    receipt: { ...readyReceipt, evidence: { ...readyReceipt.evidence, containers } },
+    tag: 'v0.5.0',
+    artifacts: readyArtifacts
+  });
+  const check = checks.find(candidate => candidate.id === 'container-evidence');
+  if (!check) throw new Error('the preflight records no container-evidence check');
+  return check;
+};
+
 test('the publish preflight refuses to publish until the license decision is made', () => {
   // The real manifest in this repository declares no license and has no LICENSE
   // file, which is precisely the state the preflight exists to stop.
@@ -101,7 +125,9 @@ test('the publish preflight refuses to publish until the license decision is mad
   expect(blockedBy(evaluatePublish({ ...readyManifest, publishConfig: { access: 'restricted', provenance: true } }, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['public-access']);
   expect(blockedBy(evaluatePublish({ ...readyManifest, publishConfig: { access: 'public' } }, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['provenance']);
   expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.4.0', artifacts: readyArtifacts }))).toEqual(['tag-matches-version']);
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: null, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['verification-receipt', 'receipt-matches-artifacts']);
+  // A missing receipt cites nothing at all — not the bytes, and not the container
+  // verification the bytes are going to run as — so every rule that reads evidence fires.
+  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: null, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['verification-receipt', 'receipt-matches-artifacts', 'container-evidence']);
 });
 
 test('a receipt that no longer describes the artifacts cannot authorise a publish', () => {
@@ -113,8 +139,71 @@ test('a receipt that no longer describes the artifacts cannot authorise a publis
   expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: { ...readyArtifacts, loaderBytes: 690 } }))).toEqual(['receipt-matches-artifacts']);
   // A failing receipt blocks on its own verdict, before any artifact comparison.
   expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: { ...readyReceipt, ok: false }, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['verification-receipt']);
-  // A receipt from before this check existed cannot be shown to describe anything.
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: { ok: true, checks: [] }, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['receipt-matches-artifacts']);
+  // A receipt from before these checks existed cannot be shown to describe anything: it
+  // names no bytes and no container verification, so it authorises neither.
+  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: { ok: true, checks: [] }, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['receipt-matches-artifacts', 'container-evidence']);
+});
+
+test('a publish needs green container verification of a configuration this release ships', () => {
+  // The image is the runtime this release ships, so its verification is a requirement
+  // rather than a note: the preflight reads it out of the receipt instead of trusting that
+  // a container job ran somewhere. Nothing else is blocking here, so the verdict below is
+  // about the container evidence alone.
+  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual([]);
+  expect(containerCheck(readyContainers).ok).toBe(true);
+  expect(containerCheck(readyContainers).detail).toContain('deploy/docker-compose.prod.yml on linux/arm64 is 18/18');
+
+  // Absent evidence and empty evidence are the different unknowns they are, and each is
+  // named instead of being answered with a pass. Both tell the reader how to produce it.
+  const absent = containerCheck(undefined);
+  expect(absent.ok).toBe(false);
+  expect(absent.detail).toContain('evidence.containers is absent');
+  const empty = containerCheck([]);
+  expect(empty.ok).toBe(false);
+  expect(empty.detail).toContain('evidence.containers is empty');
+  for (const verdict of [absent, empty]) expect(verdict.detail).toContain('test:containers');
+
+  // A record for some other file proves something about that file, not about this release,
+  // and an unstamped record cannot be shown to describe any configuration at all.
+  const otherFile = containerCheck([{ ...readyContainers[0], compose: 'deploy/docker-compose.staging.yml' }]);
+  expect(otherFile.ok).toBe(false);
+  expect(otherFile.detail).toContain('deploy/docker-compose.staging.yml');
+  expect(otherFile.detail).toContain('none of which is a configuration this repository deploys');
+  expect(containerCheck([{ ...readyContainers[0], compose: null }]).ok).toBe(false);
+
+  // Green is not the same as complete. A run whose verdict failed, a run whose passing
+  // count does not cover every check it ran, and a run below the floor are all refused —
+  // and the refusal states the floor it is measuring against.
+  expect(containerCheck([{ ...readyContainers[0], ok: false }]).ok).toBe(false);
+  expect(containerCheck([{ ...readyContainers[0], passed: 17 }]).ok).toBe(false);
+  const belowFloor = containerCheck([{ ...readyContainers[0], passed: 17, checks: 17 }]);
+  expect(belowFloor.ok).toBe(false);
+  expect(belowFloor.detail).toContain(`at least ${CONTAINER_CHECKS_FLOOR} checks`);
+  // A verifier that checks more than the floor still counts: the requirement is a floor on
+  // the evidence, not an exact count that would punish added coverage.
+  expect(containerCheck([{ ...readyContainers[0], passed: 19, checks: 19 }]).ok).toBe(true);
+
+  // The local Compose file is a configuration this repository deploys, so it is accepted;
+  // the receipt may cite several targets, and one green shipped configuration carries it.
+  expect(containerCheck([{ ...readyContainers[0], compose: 'docker-compose.yml' }]).ok).toBe(true);
+  expect(containerCheck([{ ...readyContainers[0] }, { ...readyContainers[0], architecture: 'linux/amd64', compose: 'docker-compose.yml' }]).ok).toBe(true);
+  // ...but a green record for a shipped file beside a failing one is not a pass for the
+  // failing one, and an unrelated green record does not substitute for a shipped target.
+  expect(containerCheck([{ ...readyContainers[0], compose: 'docker-compose.yml', ok: false }, { ...readyContainers[0], compose: 'deploy/docker-compose.prod.yml', ok: false }]).ok).toBe(false);
+});
+
+test('the published test floor is one number, stated everywhere it is promised', async () => {
+  // The floor is a promise about the suite's coverage, and it appears in the gate, in the
+  // documents a contributor reads, and in the release note. Pinning it here means moving it
+  // is a deliberate change to all of them, rather than a bump in one place and a doc that
+  // quietly stops matching the gate it describes.
+  const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
+  expect(MIN_PASSING_TESTS).toBe(193);
+  expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
+  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.1.md']) {
+    const text = await readFile(join(root, document), 'utf8');
+    expect(text, `${document} must state the published floor`).toContain(String(MIN_PASSING_TESTS));
+  }
 });
 
 test('release notes state only what the receipts recorded', () => {
@@ -257,7 +346,7 @@ test('a failing gate run cannot wedge the suite through the receipt it leaves be
       { id: 'node-runtime', ok: false, detail: 'v24.21.0; release verification requires Node 22.x and engines >=22.0.0' },
       { id: 'test-suite', ok: true, detail: '88 passed, 0 failed (floor 88)' }
     ],
-    evidence: { revision: '245f0850517c1351101b0d3bf6ef7916c87b0cef', branch: 'main', ...readyArtifacts, floor: 88, tests: null }
+    evidence: { revision: '245f0850517c1351101b0d3bf6ef7916c87b0cef', branch: 'main', ...readyArtifacts, floor: 88, tests: null, containers: readyContainers }
   };
   const checks = evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: poisoned, tag: 'v0.5.0', artifacts: readyArtifacts });
   // The bytes still match, so the artifact coupling is not what refused it...

@@ -16,9 +16,13 @@
  *   --tag    create the annotated v<version> tag once everything above passed.
  *
  * Every run also writes its receipt to reports/release-verification.json: the
- * check ids, their detail lines and the verdict. The receipt is a generated
- * report, so GENERATED_PATHS tolerates it exactly as it tolerates dist/ and
- * reports/build.json — a fresh run rewrites it, and that is expected.
+ * check ids, their detail lines and the verdict, plus the evidence the verdict was
+ * about — the revision, the SRI and artifact sizes, and the container verification
+ * receipts found on this revision. The receipt is a generated report, so
+ * GENERATED_PATHS tolerates it exactly as it tolerates dist/ and
+ * reports/build.json — a fresh run rewrites it, and that is expected. That container
+ * evidence is what the publish preflight requires: a release whose receipt cites no
+ * green container run cannot be published from this checkout.
  *
  * Usage:
  *   node scripts/verify-release.mjs             # verify a candidate release
@@ -35,8 +39,13 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readContainerReceipts, summarizeContainer } from './container-evidence.mjs';
 
-/** Published floor for the suite: the release must not shrink its own coverage. */
-export const MIN_PASSING_TESTS = 189;
+/**
+ * Published floor for the suite: the release must not shrink its own coverage. It is
+ * stated in README.md, docs/ACCEPTANCE.md and the release note beside it, and
+ * tests/release-pipeline.spec.mjs pins the three together, so raising it is a deliberate
+ * change to all of them rather than a silent drift in one.
+ */
+export const MIN_PASSING_TESTS = 193;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
 export const LOADER_BUDGET_BYTES = 700;

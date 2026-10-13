@@ -19,7 +19,10 @@ name: Release verification and publish
 #     renderer that keeps its sandbox, each on native hardware;
 #   * `scripts/publish-preflight.mjs` — the decisions a pipeline must not make for
 #     the owner (a license file and a `license` field), the access and provenance
-#     settings, and the tag agreeing with package.json.
+#     settings, the tag agreeing with package.json, and the container verification
+#     the receipt must cite: a green run against a configuration this repository
+#     deploys, recorded in `evidence.containers`, so the publish job refuses on a
+#     receipt that is silent about the runtime as well as on one that is stale.
 #
 # Provenance is requested with `--provenance`, which requires this repository to be
 # PUBLIC and the job to hold `id-token: write`; npm then publishes a signed
