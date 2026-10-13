@@ -38,6 +38,7 @@ import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readContainerReceipts, summarizeContainer } from './container-evidence.mjs';
+import { verifyCleanRoomPackage } from './verify-registry-package.mjs';
 
 /**
  * Published floor for the suite: the release must not shrink its own coverage. It is
@@ -45,7 +46,7 @@ import { readContainerReceipts, summarizeContainer } from './container-evidence.
  * tests/release-pipeline.spec.mjs pins the three together, so raising it is a deliberate
  * change to all of them rather than a silent drift in one.
  */
-export const MIN_PASSING_TESTS = 193;
+export const MIN_PASSING_TESTS = 199;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
 export const LOADER_BUDGET_BYTES = 700;
@@ -197,6 +198,26 @@ export async function verifyRelease(options) {
     }));
   }
 
+  const canary = await verifyCleanRoomPackage({ mode: 'tarball' });
+  const canarySummary = {
+    ok: canary.ok,
+    mode: canary.mode,
+    source: canary.source,
+    passed: canary.checks.filter(check => check.ok).length,
+    total: canary.checks.length,
+    checks: canary.checks
+  };
+  checks.push(await evaluate('cleanroom-package-canary', async () => {
+    if (!canary.ok) {
+      const failed = canary.checks.filter(check => !check.ok).map(check => `${check.id}: ${check.detail}`).join('; ');
+      return { ok: false, detail: `${canarySummary.passed}/${canarySummary.total} clean-room canary checks passed (${failed})` };
+    }
+    return {
+      ok: true,
+      detail: `${canarySummary.passed}/${canarySummary.total} clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake)`
+    };
+  }));
+
   checks.push(await evaluate('rebuild-stable', async () => {
     // The tagged artifacts must be exactly what this source tree builds. A rebuild
     // that moves the bundle hash means the committed dist/ cannot be reproduced
@@ -229,6 +250,7 @@ export async function verifyRelease(options) {
     }));
   }
 
+  Object.defineProperty(checks, 'canary', { value: canarySummary, enumerable: false });
   return checks;
 }
 
@@ -277,7 +299,8 @@ export async function main(argv) {
     // into a check this gate would have to be able to run: a verification without a Docker
     // daemon still writes a complete receipt, and the container receipts themselves stay
     // the authority a reader can open.
-    containers: (await readContainerReceipts(fileURLToPath(new URL('..', import.meta.url)))).map(summarizeContainer)
+    containers: (await readContainerReceipts(fileURLToPath(new URL('..', import.meta.url)))).map(summarizeContainer),
+    canary: /** @type {any} */ (checks).canary ?? null
   };
   // The receipt is written on failure too: a release gate that only records its
   // successes cannot be audited when it blocks a release.

@@ -33,6 +33,11 @@ export const RELEASE_COMPOSE_TARGETS = ['deploy/docker-compose.prod.yml', 'docke
  */
 export const CONTAINER_CHECKS_FLOOR = 18;
 
+/**
+ * The number of checks a green clean-room package canary must have recorded.
+ */
+export const CANARY_CHECKS_FLOOR = 6;
+
 /** @param {URL | string} path @returns {Promise<boolean>} */
 const exists = async path => stat(path).then(() => true, () => false);
 
@@ -55,6 +60,7 @@ export function evaluatePublish(manifest, context) {
   const expectedTag = `v${manifest.version}`;
   const tagMatches = context.tag === null ? null : context.tag === expectedTag;
   const containers = containerEvidence(context.receipt);
+  const canary = canaryEvidence(context.receipt);
   return [
     {
       id: 'license-file',
@@ -121,6 +127,15 @@ export function evaluatePublish(manifest, context) {
       ok: containers.ok,
       detail: containers.detail,
       blocking: true
+    },
+    {
+      // The clean-room tarball canary proves that the packed archive contains every
+      // manifest export, hashes to the published SRI, leaks zero dev/test/source files,
+      // and passes a live stdio JSON-RPC handshake and SIGTERM teardown.
+      id: 'canary-evidence',
+      ok: canary.ok,
+      detail: canary.detail,
+      blocking: true
     }
   ];
 }
@@ -165,6 +180,40 @@ function containerEvidence(receipt) {
     };
   }
   return { ok: true, detail: `${describeContainerRecord(green)}; the shipped image was verified against a configuration this repository deploys` };
+}
+
+/**
+ * The clean-room package canary verification a publish must cite: `evidence.canary`
+ * with `ok: true` and all 6 checks passing.
+ * @param {Record<string, any> | null} receipt
+ * @returns {{ok: boolean, detail: string}}
+ */
+function canaryEvidence(receipt) {
+  const cited = receipt?.evidence?.canary;
+  if (!cited || typeof cited !== 'object') {
+    return {
+      ok: false,
+      detail: 'evidence.canary is absent in reports/release-verification.json. A publish requires clean-room tarball verification (manifest layout, SRI byte parity, zero leaks, and stdio JSON-RPC handshake); run `npm run verify:release` so the receipt records `evidence.canary`.'
+    };
+  }
+  const checks = Array.isArray(cited.checks) ? cited.checks : [];
+  const passed = checks.length > 0
+    ? checks.filter((/** @type {{ok?: unknown}} */ c) => c?.ok === true).length
+    : Number(cited.passed ?? 0);
+  const total = checks.length > 0 ? checks.length : Number(cited.total ?? 0);
+  const allChecksGreen = checks.length === 0 || checks.every((/** @type {{ok?: unknown}} */ c) => c?.ok === true);
+  if (cited.ok !== true || !allChecksGreen || passed !== total || total < CANARY_CHECKS_FLOOR) {
+    const failedIds = checks.filter((/** @type {{ok?: unknown}} */ c) => c?.ok !== true).map((/** @type {{id?: unknown}} */ c) => String(c?.id ?? 'unknown'));
+    const suffix = failedIds.length ? ` (failed: ${failedIds.join(', ')})` : '';
+    return {
+      ok: false,
+      detail: `evidence.canary is not green (ok: ${Boolean(cited.ok)}, ${passed}/${total} checks passed${suffix}); a publish requires ok: true with all ${CANARY_CHECKS_FLOOR}/${CANARY_CHECKS_FLOOR} clean-room canary checks passing`
+    };
+  }
+  return {
+    ok: true,
+    detail: `clean-room tarball canary passed ${passed}/${total} checks (${cited.source ?? 'local npm pack'})`
+  };
 }
 
 /** @param {Record<string, any> | null} receipt @returns {string} */

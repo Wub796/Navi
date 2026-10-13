@@ -124,7 +124,7 @@ Verified on native **linux/arm64** using the rebuilt `navi:local` image and cont
 
 - `npm run test:containers`: **18/18 passed**, including lifecycle-volume ownership, the normalized sentinel pair (`state.dirty` / `state.clean`, and no `state.clean.clean`), host crash recovery and MCP crash recovery. The receipt records `compose: docker-compose.yml`, `architecture: linux/arm64`.
 - `npm run test:containers -- --compose deploy/docker-compose.prod.yml`: **18/18 passed** using the shipped production Compose file in an isolated local project, **not a production deployment**. Both disposable projects and their volumes were removed after the checks, and the receipt records `compose: deploy/docker-compose.prod.yml`, `architecture: linux/arm64`.
-- Node 22.23.3 `npm test`: **195 passed, 0 failed**, above the published floor **193**. `npm run typecheck` passed on the final source, and `npm run verify:release` recorded all ten checks passing.
+- Node 22.23.3 `npm test`: **199 passed, 0 failed**, above the published floor **199**. `npm run typecheck` passed on the final source, and `npm run verify:release` recorded all eleven checks passing (including `cleanroom-package-canary`).
 - Actual `dist/navi.min.js`: **14,929 bytes** (< 15,000); actual `dist/loader.min.js`: **689 bytes** (<= 700). SDK SHA-384 agrees with `dist/sri.txt`; distribution bytes are unchanged by the sentinel rename.
 
 Receipts: [local container verification](../reports/container-verification.json) and [production-config container verification](../reports/production-container-verification.json). Native amd64 container execution is covered by [.github/workflows/ci.yml](../.github/workflows/ci.yml) rather than by this arm64 host, and host power-loss recovery was not tested in this run.

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { CONTAINER_CHECKS_FLOOR, evaluatePublish } from '../scripts/publish-preflight.mjs';
+import { CANARY_CHECKS_FLOOR, CONTAINER_CHECKS_FLOOR, evaluatePublish } from '../scripts/publish-preflight.mjs';
 import { renderReleaseNotes } from '../scripts/release-notes.mjs';
 import { readContainerReceipts, summarizeContainer } from '../scripts/container-evidence.mjs';
 import { MIN_PASSING_TESTS } from '../scripts/verify-release.mjs';
@@ -34,10 +34,26 @@ const readyManifest = {
 const readyContainers = [
   { architecture: 'linux/arm64', compose: 'deploy/docker-compose.prod.yml', recordedAt: '2026-10-13T01:40:09.443Z', ok: true, passed: 18, checks: 18 }
 ];
+/** A green clean-room package canary verification, as the receipt records it. */
+const readyCanary = {
+  ok: true,
+  mode: 'tarball',
+  source: 'local npm pack',
+  passed: 6,
+  total: 6,
+  checks: [
+    { id: 'manifest-layout', ok: true, detail: 'all 13 required manifest exports present' },
+    { id: 'sri-and-budgets', ok: true, detail: 'dist/navi.min.js matches SRI' },
+    { id: 'zero-leak-isolation', ok: true, detail: '0 forbidden files' },
+    { id: 'mcp-initialize', ok: true, detail: 'negotiated 2024-11-05' },
+    { id: 'mcp-tools-list', ok: true, detail: '5 tools declared' },
+    { id: 'mcp-sigterm-teardown', ok: true, detail: 'exit 0 on SIGTERM' }
+  ]
+};
 const readyReceipt = {
   ok: true,
   checks: [{ id: 'test-suite', ok: true, detail: '81 passed, 0 failed (floor 81)' }],
-  evidence: { revision: 'abc123def456', sri: 'sha384-AAAA', bundleBytes: 14929, loaderBytes: 689, floor: 81, tests: [81, 0], containers: readyContainers }
+  evidence: { revision: 'abc123def456', sri: 'sha384-AAAA', bundleBytes: 14929, loaderBytes: 689, floor: 81, tests: [81, 0], containers: readyContainers, canary: readyCanary }
 };
 const readyArtifacts = { sri: 'sha384-AAAA', bundleBytes: 14929, loaderBytes: 689 };
 
@@ -105,6 +121,23 @@ const containerCheck = containers => {
   return check;
 };
 
+/**
+ * The canary-evidence verdict for one shape of cited canary evidence.
+ * @param {any} canary the `evidence.canary` value to evaluate
+ * @returns {{ok: boolean, detail: string}}
+ */
+const canaryCheck = canary => {
+  const checks = evaluatePublish(readyManifest, {
+    licenseFile: 'LICENSE',
+    receipt: { ...readyReceipt, evidence: { ...readyReceipt.evidence, canary } },
+    tag: 'v0.5.0',
+    artifacts: readyArtifacts
+  });
+  const check = checks.find(candidate => candidate.id === 'canary-evidence');
+  if (!check) throw new Error('the preflight records no canary-evidence check');
+  return check;
+};
+
 test('the publish preflight refuses to publish until the license decision is made', () => {
   // The real manifest in this repository declares no license and has no LICENSE
   // file, which is precisely the state the preflight exists to stop.
@@ -128,7 +161,7 @@ test('the publish preflight refuses to publish until the license decision is mad
   expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.4.0', artifacts: readyArtifacts }))).toEqual(['tag-matches-version']);
   // A missing receipt cites nothing at all — not the bytes, and not the container
   // verification the bytes are going to run as — so every rule that reads evidence fires.
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: null, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['verification-receipt', 'receipt-matches-artifacts', 'container-evidence']);
+  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: null, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['verification-receipt', 'receipt-matches-artifacts', 'container-evidence', 'canary-evidence']);
 });
 
 test('a receipt that no longer describes the artifacts cannot authorise a publish', () => {
@@ -142,7 +175,7 @@ test('a receipt that no longer describes the artifacts cannot authorise a publis
   expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: { ...readyReceipt, ok: false }, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['verification-receipt']);
   // A receipt from before these checks existed cannot be shown to describe anything: it
   // names no bytes and no container verification, so it authorises neither.
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: { ok: true, checks: [] }, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['receipt-matches-artifacts', 'container-evidence']);
+  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: { ok: true, checks: [] }, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['receipt-matches-artifacts', 'container-evidence', 'canary-evidence']);
 });
 
 test('a publish needs green container verification of a configuration this release ships', () => {
@@ -191,6 +224,17 @@ test('a publish needs green container verification of a configuration this relea
   // ...but a green record for a shipped file beside a failing one is not a pass for the
   // failing one, and an unrelated green record does not substitute for a shipped target.
   expect(containerCheck([{ ...readyContainers[0], compose: 'docker-compose.yml', ok: false }, { ...readyContainers[0], compose: 'deploy/docker-compose.prod.yml', ok: false }]).ok).toBe(false);
+
+  // Clean-room tarball canary evidence is required alongside container evidence.
+  expect(canaryCheck(readyCanary).ok).toBe(true);
+  expect(canaryCheck(readyCanary).detail).toContain('6/6 checks');
+  expect(canaryCheck(undefined).ok).toBe(false);
+  expect(canaryCheck(undefined).detail).toContain('evidence.canary is absent');
+  expect(canaryCheck(null).ok).toBe(false);
+  expect(canaryCheck({ ...readyCanary, ok: false }).ok).toBe(false);
+  expect(canaryCheck({ ...readyCanary, passed: 5, total: 6, checks: readyCanary.checks.map((c, i) => i === 0 ? { ...c, ok: false } : c) }).ok).toBe(false);
+  expect(canaryCheck({ ...readyCanary, passed: 5, total: 5, checks: readyCanary.checks.slice(0, 5) }).ok).toBe(false);
+  expect(canaryCheck({ ...readyCanary, passed: 5, total: 5, checks: readyCanary.checks.slice(0, 5) }).detail).toContain(`${CANARY_CHECKS_FLOOR}/${CANARY_CHECKS_FLOOR}`);
 });
 
 test('the published test floor is one number, stated everywhere it is promised', async () => {
@@ -199,9 +243,9 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(193);
+  expect(MIN_PASSING_TESTS).toBe(199);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
-  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.1.md']) {
+  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.1.md', 'docs/CONTAINERS.md']) {
     const text = await readFile(join(root, document), 'utf8');
     expect(text, `${document} must state the published floor`).toContain(String(MIN_PASSING_TESTS));
   }
@@ -347,7 +391,7 @@ test('a failing gate run cannot wedge the suite through the receipt it leaves be
       { id: 'node-runtime', ok: false, detail: 'v24.21.0; release verification requires Node 22.x and engines >=22.0.0' },
       { id: 'test-suite', ok: true, detail: '88 passed, 0 failed (floor 88)' }
     ],
-    evidence: { revision: '245f0850517c1351101b0d3bf6ef7916c87b0cef', branch: 'main', ...readyArtifacts, floor: 88, tests: null, containers: readyContainers }
+    evidence: { revision: '245f0850517c1351101b0d3bf6ef7916c87b0cef', branch: 'main', ...readyArtifacts, floor: 88, tests: null, containers: readyContainers, canary: readyCanary }
   };
   const checks = evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: poisoned, tag: 'v0.5.0', artifacts: readyArtifacts });
   // The bytes still match, so the artifact coupling is not what refused it...
