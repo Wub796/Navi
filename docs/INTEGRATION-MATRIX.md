@@ -2,7 +2,7 @@
 
 The three places Navi meets somebody else's system — a host's discovery metadata, an MCP client's server configuration, and a page embed — collected in one file, with the reference implementation's values and an explicit note on what this repository does and does not verify. Substitute your own origins; nothing here is a deployed service.
 
-Versions in play: Navi protocol **0.3.0**, MCP protocol revision **2025-11-25**, package `navi-interaction-bridge` **0.6.0**. The Navi protocol version is the value in `dist/navi.min.js`; the MCP revision is the transport revision, negotiated separately.
+Versions in play: Navi protocol **0.3.0**, MCP protocol revision **2025-11-25**, package `navi-interaction-bridge` **0.6.1**. The Navi protocol version is the value in `dist/navi.min.js`; the MCP revision is the transport revision, negotiated separately.
 
 ## Discovery: how an agent finds Navi without being told
 

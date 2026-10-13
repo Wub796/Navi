@@ -133,4 +133,4 @@ This runs ten paired tasks per execution path against a disposable live, multi-s
 
 The checkout is also available through `npm run dev` at `/tcr-checkout.html` for UI review, using the same disposable fixture backend. SDK mutation silence is a scheduling signal, not proof of a server commit: the independent outcome oracle remains essential.
 
-The package remains 0.6.0. These post-release persistence checks do not move the immutable `v0.6.0` tag or create a new release tag, publish an image, or deploy to production.
+The package is the unreleased **0.6.1** candidate. The immutable `v0.6.0` tag stays where it is and this change creates no new release tag, publishes no image and deploys nothing to production.
