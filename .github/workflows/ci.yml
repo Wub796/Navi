@@ -96,14 +96,24 @@ jobs:
   # The container is a supported artifact of this repository, so the checks that
   # only a real container runtime can make run here rather than in a release step:
   # non-root UID 1000 under dropped capabilities, persistent-volume lifecycle state,
-  # and SIGKILL/graceful-restart classification on native linux/amd64. The sandbox
-  # gate in containers.yml covers the same image per architecture; this job covers
-  # the full delivered surface, including the amd64 lifecycle behavior that an
-  # emulated local run cannot prove.
+  # and SIGKILL/graceful-restart classification. Each architecture is verified on its
+  # own hardware, because a cross-built image runs Chromium under emulation, where the
+  # renderer sandbox layers the verifier requires do not exist. containers.yml covers
+  # the same image's sandbox per architecture with a narrower check.
   containers:
-    name: Container verification (linux/amd64)
+    name: Container verification (${{ matrix.platform }})
     needs: quality
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
       - name: Check out
@@ -123,8 +133,22 @@ jobs:
       - name: Build release artifacts
         run: npm run build
 
-      - name: Build the image for this runner's architecture
-        run: docker build --platform linux/amd64 --progress=plain -t navi:local .
+      - name: Build the image natively for ${{ matrix.platform }}
+        run: docker build --platform '${{ matrix.platform }}' --progress=plain -t navi:local .
+
+      # Emulation would make every lifecycle and sandbox result describe a different
+      # runtime than the one being shipped, so the image's own architecture is asserted
+      # rather than assumed from the runner label.
+      - name: Assert the image matches the runner's architecture
+        run: |
+          image_arch="$(docker image inspect navi:local --format '{{.Architecture}}')"
+          runner_arch="$(uname -m)"
+          case "$runner_arch" in
+            x86_64) runner_arch=amd64 ;;
+            aarch64|arm64) runner_arch=arm64 ;;
+          esac
+          echo "image=$image_arch runner=$runner_arch"
+          test "$image_arch" = "$runner_arch"
 
       - name: Verify the delivered container and its lifecycle state
         run: npm run test:containers
@@ -133,7 +157,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-container-verification
+          name: ci-container-verification-${{ matrix.arch }}
           path: reports/container-verification.json
           if-no-files-found: warn
 

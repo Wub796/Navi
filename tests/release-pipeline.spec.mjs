@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
 import { evaluatePublish } from '../scripts/publish-preflight.mjs';
 import { renderReleaseNotes } from '../scripts/release-notes.mjs';
 
@@ -214,4 +215,35 @@ test('a failing gate run cannot wedge the suite through the receipt it leaves be
   expect(receiptViolations({ ...poisoned, ok: true, evidence: { ...poisoned.evidence, tests: [12, 0] } }, { artifacts: readyArtifacts, floor: 88 })).toHaveLength(1);
   expect(receiptViolations({ ...poisoned, evidence: { ...poisoned.evidence, floor: 99 } }, { artifacts: readyArtifacts, floor: 88 })).toHaveLength(1);
   expect(receiptViolations({ ...poisoned, checks: [{ id: 'test-suite' }] }, { artifacts: readyArtifacts, floor: 88 })).toHaveLength(1);
+});
+
+test('the pipeline cannot publish without container verification on both architectures', async () => {
+  // The published runtime is the image, so the gate that exercises it is asserted as a
+  // shape of the workflow rather than trusted: the publish job depends on the container
+  // gate by job id, and a rename on either side would leave a pipeline that still looks
+  // gated while publishing past the runtime checks.
+  const release = parse(await readFile(join(root, '.github/workflows/release.yml'), 'utf8'));
+  const ci = parse(await readFile(join(root, '.github/workflows/ci.yml'), 'utf8'));
+  expect(Object.keys(release.jobs)).toEqual(expect.arrayContaining(['verify-release', 'verify-containers', 'publish']));
+  expect(release.jobs.publish.needs).toEqual(expect.arrayContaining(['verify-release', 'verify-containers']));
+  // The gates run the documented entry points, not a copy of what they expand to.
+  expect(release.jobs['verify-release'].steps.some(step => String(step.run ?? '').includes('npm run verify:release'))).toBe(true);
+  const containerGate = release.jobs['verify-containers'];
+  expect(containerGate.steps.some(step => step.run === 'npm run test:containers')).toBe(true);
+  // Both released architectures, each built and verified on its own hardware: an
+  // emulated leg refuses at the renderer sandbox, so it would prove nothing about the
+  // architecture it claims to cover.
+  const expected = [
+    { runner: 'ubuntu-latest', platform: 'linux/amd64', arch: 'amd64' },
+    { runner: 'ubuntu-24.04-arm', platform: 'linux/arm64', arch: 'arm64' }
+  ];
+  for (const job of [containerGate, ci.jobs.containers]) {
+    expect(job.strategy.matrix.include).toEqual(expected);
+    // The runner comes from the matrix, so a leg cannot silently run on the wrong host.
+    expect(String(job['runs-on'])).toContain('matrix.runner');
+    expect(job.steps.some(step => String(step.run ?? '').includes("docker build --platform '${{ matrix.platform }}'"))).toBe(true);
+  }
+  // The container receipts are evidence for the release, not a job-local file.
+  expect(containerGate.steps.some(step => String(step.with?.name ?? '').startsWith('release-container-receipt-'))).toBe(true);
+  expect(release.jobs.publish.steps.some(step => String(step.with?.pattern ?? '').startsWith('release-container-receipt-'))).toBe(true);
 });

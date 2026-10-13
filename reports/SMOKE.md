@@ -14,9 +14,9 @@ Not executed anywhere: `actions/checkout`, `actions/setup-node` (`20.x` resoluti
 
 | Workflow | Trigger | Jobs |
 |---|---|---|
-| [ci.yml](../.github/workflows/ci.yml) | every `pull_request`, every push to `main`, manual dispatch | `quality` (Gate 1 bundle budget, Gate 2 traversal long tasks), then `benchmark` (Gate 3) |
+| [ci.yml](../.github/workflows/ci.yml) | every `pull_request`, every push to `main`, manual dispatch | `quality` (Gate 1 bundle budget, Gate 2 traversal long tasks), then `containers` (the delivered image on native `linux/amd64` and `linux/arm64`) and `benchmark` (Gate 3) |
 | [smoke.yml](../.github/workflows/smoke.yml) | nightly 06:17 UTC, manual dispatch | `external` (`tests/external-smoke.spec.mjs` against a live public SPA) |
-| [release.yml](../.github/workflows/release.yml) | push of a `v*` tag, manual dispatch | `verify` runs `scripts/verify-release.mjs` on the exact revision, and with `create_tag` also creates and pushes the annotated `v<version>` tag. Nothing is published to a registry. |
+| [release.yml](../.github/workflows/release.yml) | push of a `v*` tag, manual dispatch | `verify-release` runs `scripts/verify-release.mjs` on the exact revision, `verify-containers` runs `npm run test:containers` on both native architectures, and with `create_tag` the run also creates and pushes the annotated `v<version>` tag. `publish` needs both gates by job id; nothing is published to a registry from this checkout. |
 
 All three workflows run on Node.js 20.x, install dependencies with `npm ci` from the committed lockfile, and cache `~/.cache/ms-playwright` keyed on `hashFiles('package-lock.json')`, so the Chromium build is pinned by the locked Playwright version and a lockfile change invalidates the cache. The `quality` job prints the locked `@playwright/test` version and Chromium executable path, and fails if the executable is missing. The release job checks out with `fetch-depth: 0` because the version tag has to be visible for the tag/`package.json` agreement check, and a tag push re-runs it with `create_tag` false so the two triggers cannot loop.
 

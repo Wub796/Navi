@@ -5,12 +5,17 @@ name: Release verification and publish
 #
 # The order matters and is not negotiable: verification runs first on the same
 # commit, its receipt is carried into the publish job, and the publish job refuses
-# to run without it. Two gates stand between a tag and a registry:
+# to run without it. Three gates stand between a tag and a registry, and the publish
+# job depends on all of them by job id, so a failing one cannot be published past:
 #
 #   * `scripts/verify-release.mjs` — clean worktree, SRI that hashes to the shipped
 #     bytes, a suite with no failures, both byte budgets, the CI gates, the publish
 #     allowlist and a byte-identical rebuild, all recorded in
 #     reports/release-verification.json;
+#   * `npm run test:containers` on both released architectures — the deployed
+#     runtime's own posture: UID 1000 under dropped capabilities, sentinel files that
+#     survive container replacement, a SIGKILL classified as an unclean shutdown and
+#     a renderer that keeps its sandbox, each verified on native hardware;
 #   * `scripts/publish-preflight.mjs` — the decisions a pipeline must not make for
 #     the owner (a license file and a `license` field), the access and provenance
 #     settings, and the tag agreeing with package.json.
@@ -49,7 +54,7 @@ env:
   CI: 'true'
 
 jobs:
-  verify:
+  verify-release:
     name: Verify release (Node 22.x)
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -112,9 +117,78 @@ jobs:
             test-results/
           if-no-files-found: warn
 
+  # Container verification is a publish gate rather than an advisory job: the runtime
+  # this release ships is the image, and the properties that matter are only visible in
+  # a running container, under the deployment's own restrictions. Both released
+  # architectures are checked on their own hardware, because a cross-built image runs
+  # Chromium under emulation, where the renderer sandbox layers the verifier requires
+  # do not exist and the gate would refuse a run that proves nothing about the target.
+  verify-containers:
+    name: Verify the container (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      # The verifier compares the bytes the container serves with the artifacts in this
+      # checkout, so the same sources have to be built here.
+      - name: Build release artifacts
+        run: npm run build
+
+      - name: Build the image natively for ${{ matrix.platform }}
+        run: docker build --platform '${{ matrix.platform }}' --progress=plain -t navi:local .
+
+      # Emulation would make every lifecycle and sandbox result describe a different
+      # runtime than the one being shipped, so the image's own architecture is asserted
+      # rather than assumed from the runner label.
+      - name: Assert the image matches the runner's architecture
+        run: |
+          image_arch="$(docker image inspect navi:local --format '{{.Architecture}}')"
+          runner_arch="$(uname -m)"
+          case "$runner_arch" in
+            x86_64) runner_arch=amd64 ;;
+            aarch64|arm64) runner_arch=arm64 ;;
+          esac
+          echo "image=$image_arch runner=$runner_arch"
+          test "$image_arch" = "$runner_arch"
+
+      - name: Verify the delivered container, its lifecycle state and the sandbox
+        run: npm run test:containers
+
+      - name: Upload the container verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-container-receipt-${{ matrix.arch }}
+          path: reports/container-verification.json
+          if-no-files-found: warn
+
   publish:
     name: Publish to npm (Node 22.x)
-    needs: verify
+    # Both gates by job id: a release whose container verification failed - a service
+    # running with capabilities it should not have, sentinels that did not survive a
+    # restart, a renderer without its sandbox - never reaches the registry.
+    needs: [verify-release, verify-containers]
     # Only a tag push publishes. A dispatched run may create and push the tag, and
     # that push starts its own verified run of this job.
     if: startsWith(github.ref, 'refs/tags/v')
@@ -149,6 +223,14 @@ jobs:
         with:
           name: release-receipt
           path: reports
+
+      # The container receipts are the evidence for the runtime posture this release
+      # claims, so they travel into the published record beside the release receipt.
+      - name: Download the container verification receipts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-container-receipt-*
+          path: reports/container-verification
 
       - name: Rebuild the artifacts from the tagged sources
         run: npm run build
@@ -189,4 +271,5 @@ jobs:
             reports/release-notes.md
             reports/release-verification.json
             reports/build.json
+            reports/container-verification/**
           if-no-files-found: warn
