@@ -120,7 +120,7 @@ Verified on native **linux/arm64** using the rebuilt `navi:local` image and cont
 
 - `npm run test:containers`: **18/18 passed**, including lifecycle-volume ownership, the normalized sentinel pair (`state.dirty` / `state.clean`, and no `state.clean.clean`), host crash recovery and MCP crash recovery.
 - `NAVI_IMAGE=navi:local npm run test:containers -- --production`: **18/18 passed** using the shipped production Compose file in an isolated local project, **not a production deployment**. Both disposable projects and their volumes were removed after the checks.
-- Node 22.23.3 `npm test`: **192 passed, 0 failed**, above the published floor **189**; the deployment tests were rerun for the sentinel change: **5/5 passed**. `npm run typecheck` passed on the final source.
+- Node 22.23.3 `npm test`: **193 passed, 0 failed**, above the published floor **189**. `npm run typecheck` passed on the final source, and `npm run verify:release` recorded all ten checks passing.
 - Actual `dist/navi.min.js`: **14,929 bytes** (< 15,000); actual `dist/loader.min.js`: **689 bytes** (<= 700). SDK SHA-384 agrees with `dist/sri.txt`; distribution bytes are unchanged by the sentinel rename.
 
 Receipts: [local container verification](../reports/container-verification.json) and [production-config container verification](../reports/production-container-verification.json). Native amd64 container execution is covered by [.github/workflows/ci.yml](../.github/workflows/ci.yml) rather than by this arm64 host, and host power-loss recovery was not tested in this run.
