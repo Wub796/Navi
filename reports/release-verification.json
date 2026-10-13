@@ -1,16 +1,16 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-13T01:58:01.185Z",
+  "recordedAt": "2026-10-13T23:32:26.431Z",
   "evidence": {
-    "revision": "fccb7340f335a11ca30c021e15ed045487918f2e",
+    "revision": "caf05b7bb9ce1e0621fd2d2d8c07af1f4f565b5b",
     "branch": "main",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
-    "floor": 193,
+    "floor": 199,
     "tests": [
-      197,
+      199,
       0
     ],
     "containers": [
@@ -30,7 +30,46 @@
         "passed": 18,
         "checks": 18
       }
-    ]
+    ],
+    "canary": {
+      "ok": true,
+      "mode": "tarball",
+      "source": "local npm pack",
+      "passed": 6,
+      "total": 6,
+      "checks": [
+        {
+          "id": "manifest-layout",
+          "ok": true,
+          "detail": "all 13 required manifest exports present (dist/navi.min.js, dist/loader.min.js, dist/mcp.mjs, bin/navi-mcp.js, …)"
+        },
+        {
+          "id": "sri-and-budgets",
+          "ok": true,
+          "detail": "dist/navi.min.js (14929 B) matches sha384-TmtbTx4Um3FaZ25ht…; dist/loader.min.js is 689 B (<=700 B)"
+        },
+        {
+          "id": "zero-leak-isolation",
+          "ok": true,
+          "detail": "0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (19 files total)"
+        },
+        {
+          "id": "mcp-initialize",
+          "ok": true,
+          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.1 (Navi protocol 0.3.0)"
+        },
+        {
+          "id": "mcp-tools-list",
+          "ok": true,
+          "detail": "tools/list declared navi_navigate, navi_get_actions, navi_execute_action, navi_assert_state, navi_set_session (Navi protocol 0.3.0)"
+        },
+        {
+          "id": "mcp-sigterm-teardown",
+          "ok": true,
+          "detail": "clean teardown on SIGTERM with exit code 0"
+        }
+      ]
+    }
   },
   "checks": [
     {
@@ -46,7 +85,7 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 5 generated path(s)"
+      "detail": "clean apart from 0 generated path(s)"
     },
     {
       "id": "version-tag",
@@ -66,7 +105,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "197 passed, 0 failed (floor 193)"
+      "detail": "199 passed, 0 failed (floor 199)"
     },
     {
       "id": "ci-gates",
@@ -77,6 +116,11 @@
       "id": "pack-check",
       "ok": true,
       "detail": "every published path is an intended release artifact"
+    },
+    {
+      "id": "cleanroom-package-canary",
+      "ok": true,
+      "detail": "6/6 clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake)"
     },
     {
       "id": "rebuild-stable",
