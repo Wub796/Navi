@@ -39,17 +39,17 @@ container receipts rather than restated here.
 
 ### Verification
 
-Recorded by `npm run verify:release` at 2026-10-13T01:45:31.727Z: **10/10 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-13T01:58:01.185Z: **10/10 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 0 generated path(s) |
+| `git-clean` | pass | clean apart from 5 generated path(s) |
 | `version-tag` | pass | v0.6.1 does not exist yet (create it with --tag once this gate is green) |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
-| `test-suite` | pass | 195 passed, 0 failed (floor 189) |
+| `test-suite` | pass | 197 passed, 0 failed (floor 193) |
 | `ci-gates` | pass | All selected gates passed. |
 | `pack-check` | pass | every published path is an intended release artifact |
 | `rebuild-stable` | pass | rebuilt to identical bytes (14929 B bundle, 689 B loader) |
