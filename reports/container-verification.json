@@ -1,11 +1,11 @@
 {
-  "recordedAt": "2026-10-12T23:34:51.443Z",
+  "recordedAt": "2026-10-13T01:06:20.778Z",
   "ok": true,
   "checks": [
     {
       "check": "image",
       "ok": true,
-      "detail": "sha256:1931a6e1063a612be7d75245b757aba1abaa51bba52fa60e48da247cfc30f054; linux/arm64; user pwuser:pwuser"
+      "detail": "sha256:9dbd877aa7dc54ee06606b45b92d6e66da59d719a9aeb298d9e3542f5500e3ee; linux/arm64; user pwuser:pwuser"
     },
     {
       "check": "compose-health",
@@ -20,12 +20,12 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"126\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"125\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "lifecycle-volume",
       "ok": true,
-      "detail": "separate named MCP volume at /var/lib/navi/mcp, owner 1000:1000 mode 0700; base /var/lib/navi/mcp/state.clean, marker /var/lib/navi/mcp/state.clean.clean; first boot 0 on both roles"
+      "detail": "separate named MCP volume at /var/lib/navi/mcp, owner 1000:1000 mode 0700; dirty /var/lib/navi/mcp/state.dirty, marker /var/lib/navi/mcp/state.clean; no /var/lib/navi/mcp/state.clean.clean; first boot 0 on both roles"
     },
     {
       "check": "distribution",
@@ -90,7 +90,7 @@
     {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-12T23:34:51.067Z\",\"session_id\":\"c9ae73c5-8f97-498f-b6fb-51cbad192328\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-13T01:06:20.414Z\",\"session_id\":\"5b3e0cca-a2fa-4ef5-a893-756f75d6511f\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }

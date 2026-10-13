@@ -11,7 +11,7 @@ import {
   createRateLimiter,
   SHUTDOWN_DEADLINE_MS
 } from '../server/index.js';
-import { createStore, sqliteAvailable } from '../server/store.js';
+import { createStore, lifecyclePaths, sqliteAvailable } from '../server/store.js';
 import { createSseServer, SHUTDOWN_DEADLINE_MS as MCP_SHUTDOWN_DEADLINE_MS } from '../src/mcp/sse.js';
 
 /**
@@ -396,6 +396,21 @@ async function startMcpCli(stateFile) {
   return { child, port };
 }
 
+test('lifecycle sentinel names are normalized, never double-suffixed', () => {
+  // The shipped Compose value already names the successful-teardown marker, so the
+  // dirty companion moves beside it instead of the marker growing another `.clean`.
+  expect(lifecyclePaths('/var/lib/navi/mcp/state.clean')).toEqual({
+    stateFile: '/var/lib/navi/mcp/state.dirty',
+    cleanFile: '/var/lib/navi/mcp/state.clean',
+    normalized: true
+  });
+  // An unsuffixed path - the built-in default and the host's store file - keeps the
+  // long-standing pairing, so nothing about the existing layouts changes.
+  for (const path of ['/tmp/navi-mcp-state', '/data/telemetry.db']) {
+    expect(lifecyclePaths(path)).toEqual({ stateFile: path, cleanFile: `${path}.clean`, normalized: false });
+  }
+});
+
 for (const signal of /** @type {const} */ (['SIGTERM', 'SIGINT', 'SIGKILL'])) {
   test(`MCP ${signal}: first boot, restart, and clean recovery use lifecycle state`, async () => {
     const stateFile = tempFile('mcp-state');
@@ -455,6 +470,57 @@ test('host clean marker waits for a background prune and concurrent close caller
     await closed;
     expect((await stat(`${file}.clean`)).isFile()).toBe(true);
   } finally { finishPrune(); await closed; }
+});
+
+test('a configured .clean path is the marker itself, with dirty evidence beside it', async () => {
+  const marker = tempFile('state.clean');
+  const dirty = `${marker.slice(0, -'.clean'.length)}.dirty`;
+  const first = await startMcpCli(marker);
+  expect(await metricsBody(first.port)).toContain('navi_mcp_unclean_shutdowns_total 0');
+  // Dirty evidence is the derived sibling, and neither the marker nor the doubled
+  // name exists while the process is running.
+  expect((await stat(dirty)).isFile()).toBe(true);
+  await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(stat(`${marker}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+  first.child.kill('SIGKILL');
+  expect(await waitForExit(first.child)).toBe('signal');
+  const crashed = await startMcpCli(marker);
+  expect(await metricsBody(crashed.port)).toContain('navi_mcp_unclean_shutdowns_total 1');
+  crashed.child.kill('SIGTERM');
+  expect(await waitForExit(crashed.child)).toBe(0);
+  // A completed shutdown publishes the configured name verbatim.
+  expect((await stat(marker)).isFile()).toBe(true);
+  await expect(stat(`${marker}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+  const recovered = await startMcpCli(marker);
+  expect(await metricsBody(recovered.port)).toContain('navi_mcp_unclean_shutdowns_total 0');
+  await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+  recovered.child.kill('SIGTERM');
+  expect(await waitForExit(recovered.child)).toBe(0);
+});
+
+test('pre-normalization sentinels on an upgraded volume are read once and removed', async () => {
+  // What the previous build left behind: its dirty evidence at the configured name,
+  // and its real verdict in the doubled marker beside it.
+  const migrated = tempFile('state.clean');
+  const migratedDirty = `${migrated.slice(0, -'.clean'.length)}.dirty`;
+  await writeFile(migrated, '');
+  await writeFile(`${migrated}.clean`, 'clean\n');
+  const clean = await startMcpCli(migrated);
+  expect(await metricsBody(clean.port)).toContain('navi_mcp_unclean_shutdowns_total 0');
+  expect((await stat(migratedDirty)).isFile()).toBe(true);
+  await expect(stat(`${migrated}.clean`)).rejects.toMatchObject({ code: 'ENOENT' });
+  clean.child.kill('SIGTERM');
+  expect(await waitForExit(clean.child)).toBe(0);
+  expect((await stat(migrated)).isFile()).toBe(true);
+
+  // A residue file with no verdict beside it is ambiguous, and ambiguity has to read
+  // as dirty: reporting a clean stop that was never recorded would hide a crash.
+  const ambiguous = tempFile('state.clean');
+  await writeFile(ambiguous, '');
+  const next = await startMcpCli(ambiguous);
+  expect(await metricsBody(next.port)).toContain('navi_mcp_unclean_shutdowns_total 1');
+  next.child.kill('SIGTERM');
+  expect(await waitForExit(next.child)).toBe(0);
 });
 
 test('MCP clean marker waits for successful session cleanup', async () => {

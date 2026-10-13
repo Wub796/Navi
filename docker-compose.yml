@@ -42,6 +42,8 @@ services:
       NAVI_MCP_TOKEN: ${NAVI_MCP_TOKEN:?Set a strong NAVI_MCP_TOKEN}
       NAVI_MCP_MAX_SESSIONS: ${NAVI_MCP_MAX_SESSIONS:-2}
       NAVI_MCP_IDLE_TIMEOUT: ${NAVI_MCP_IDLE_TIMEOUT:-300}
+      # Successful-teardown marker, used verbatim: dirty evidence for the next boot
+      # is the sibling /var/lib/navi/mcp/state.dirty.
       NAVI_MCP_STATE_FILE: "/var/lib/navi/mcp/state.clean"
       NODE_OPTIONS: "--experimental-sqlite"
     ports: ['127.0.0.1:3001:3001']

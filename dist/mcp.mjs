@@ -907,9 +907,19 @@ import { randomUUID as randomUUID2, timingSafeEqual } from "node:crypto";
 // server/store.js
 import { appendFile, mkdir, open, readFile as readFile2, rename, rm, stat } from "node:fs/promises";
 import { dirname as dirname2, resolve as resolve2 } from "node:path";
-async function beginProcessLifecycle(file, options = {}) {
+var CLEAN_SUFFIX = ".clean";
+var DIRTY_SUFFIX = ".dirty";
+var CLEAN_MARKER = "clean\n";
+function lifecyclePaths(file) {
   const path = resolve2(file);
-  await mkdir(dirname2(path), { recursive: true });
+  if (path.length > CLEAN_SUFFIX.length && path.endsWith(CLEAN_SUFFIX)) {
+    return { stateFile: `${path.slice(0, -CLEAN_SUFFIX.length)}${DIRTY_SUFFIX}`, cleanFile: path, normalized: true };
+  }
+  return { stateFile: path, cleanFile: `${path}${CLEAN_SUFFIX}`, normalized: false };
+}
+async function beginProcessLifecycle(file, options = {}) {
+  const { stateFile, cleanFile, normalized } = lifecyclePaths(file);
+  await mkdir(dirname2(stateFile), { recursive: true });
   const exists = async (target) => {
     try {
       await stat(target);
@@ -922,11 +932,28 @@ async function beginProcessLifecycle(file, options = {}) {
       throw error;
     }
   };
-  const existed = await exists(path);
-  const clean = await exists(`${path}.clean`);
-  await rm(`${path}.clean`, { force: true });
+  const published = async (target) => {
+    try {
+      return await readFile2(target, "utf8") === CLEAN_MARKER;
+    } catch (error) {
+      if (
+        /** @type {NodeJS.ErrnoException} */
+        error.code === "ENOENT"
+      ) return false;
+      throw error;
+    }
+  };
+  let existed = await exists(stateFile);
+  let clean = await exists(cleanFile);
+  if (normalized && clean && !await published(cleanFile)) {
+    const legacyMarker = `${cleanFile}${CLEAN_SUFFIX}`;
+    existed = true;
+    clean = await published(legacyMarker);
+    await rm(legacyMarker, { force: true });
+  }
+  await rm(cleanFile, { force: true });
   if (options.createState) {
-    const handle = await open(path, "a", 384);
+    const handle = await open(stateFile, "a", 384);
     try {
       await handle.sync();
     } finally {
@@ -934,18 +961,20 @@ async function beginProcessLifecycle(file, options = {}) {
     }
   }
   return {
+    stateFile,
+    cleanFile,
     uncleanShutdowns: existed && !clean ? 1 : 0,
     async markClean() {
-      const temporary = `${path}.clean.tmp`;
+      const temporary = `${cleanFile}.tmp`;
       const handle = await open(temporary, "w", 384);
       try {
         try {
-          await handle.writeFile("clean\n");
+          await handle.writeFile(CLEAN_MARKER);
           await handle.sync();
         } finally {
           await handle.close();
         }
-        await rename(temporary, `${path}.clean`);
+        await rename(temporary, cleanFile);
       } catch (error) {
         await rm(temporary, { force: true });
         throw error;
@@ -1082,6 +1111,7 @@ async function createSseServer(options) {
   if (!Number.isInteger(sessionMaxTtlMs) || sessionMaxTtlMs < 1 || sessionMaxTtlMs > SESSION_MAX_TTL_MS) throw new Error("Session TTL must be between 1 and 1800000ms");
   const shutdownDeadlineMs = Math.min(SHUTDOWN_DEADLINE_MS, Math.max(1, options.shutdownDeadlineMs ?? SHUTDOWN_DEADLINE_MS));
   const lifecycle = await beginProcessLifecycle(options.stateFile ?? process.env.NAVI_MCP_STATE_FILE ?? "/tmp/navi-mcp-state", { createState: true });
+  log(`lifecycle sentinels: dirty ${lifecycle.stateFile}, clean marker ${lifecycle.cleanFile}`);
   const cleanupTasks = /* @__PURE__ */ new Set();
   let cleanupFailure = (
     /** @type {unknown} */

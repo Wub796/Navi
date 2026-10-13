@@ -14,8 +14,10 @@
 # The `up` series used by NaviServiceDown is synthesized by Prometheus itself from
 # each scrape target; process_start_time_seconds is exported by both services.
 # Lifecycle state needs an exclusive, persistent path across restarts. The MCP
-# default is /tmp/navi-mcp-state[.clean]; mount persistent storage there or set
-# NAVI_MCP_STATE_FILE to a persistent volume path to detect container replacement.
+# default is /tmp/navi-mcp-state with its marker at /tmp/navi-mcp-state.clean;
+# mount persistent storage there, or set NAVI_MCP_STATE_FILE to a persistent
+# volume path. A value already ending in .clean names the marker itself and keeps
+# dirty evidence in the sibling .dirty file, so no name is ever double-suffixed.
 
 groups:
   # A refusal is the security boundary doing its job, so it is warned about rather

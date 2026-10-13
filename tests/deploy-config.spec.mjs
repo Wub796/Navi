@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { lifecyclePaths } from '../server/store.js';
 
 /**
  * Production deployment checks.
@@ -111,6 +112,14 @@ test('local and production MCP state volumes match and stay isolated from host t
     const config = parse(await readFile(join(root, path), 'utf8'));
     const mcp = config.services['navi-mcp'];
     expect(mcp.environment.NAVI_MCP_STATE_FILE).toBe('/var/lib/navi/mcp/state.clean');
+    // The value names the successful-teardown marker, and the lifecycle code has to
+    // read it that way: the dirty companion is derived beside it, never the marker by
+    // appending a second `.clean` to the name the operator configured.
+    expect(lifecyclePaths(mcp.environment.NAVI_MCP_STATE_FILE)).toEqual({
+      stateFile: '/var/lib/navi/mcp/state.dirty',
+      cleanFile: '/var/lib/navi/mcp/state.clean',
+      normalized: true
+    });
     expect(mcp.volumes).toContain('mcp-state:/var/lib/navi/mcp');
     expect(config.volumes).toHaveProperty('mcp-state');
     expect(config.services['navi-host'].volumes).not.toContain('mcp-state:/var/lib/navi/mcp');

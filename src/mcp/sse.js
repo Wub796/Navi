@@ -218,7 +218,7 @@ function readBody(req, limit) {
  * @param {number} [options.maxSessions] Concurrent streams allowed.
  * @param {number} [options.idleTimeoutMs] 0 disables idle reaping.
  * @param {number} [options.sessionMaxTtlMs] May shorten, never extend the hard TTL.
- * @param {string} [options.stateFile] Exclusive lifecycle state path; defaults to /tmp/navi-mcp-state.
+ * @param {string} [options.stateFile] Exclusive lifecycle path; defaults to /tmp/navi-mcp-state. A `.clean`-suffixed value names the teardown marker itself and keeps dirty evidence in the sibling `.dirty` file.
  * @param {number} [options.shutdownDeadlineMs] May shorten the teardown deadline for embedded callers.
  * @returns {Promise<{ server: import('node:http').Server, port: number, host: string, sessions: Map<string, SseSession>, close: () => Promise<void> }>}
  */
@@ -234,7 +234,15 @@ export async function createSseServer(options) {
   const sessionMaxTtlMs = options.sessionMaxTtlMs ?? SESSION_MAX_TTL_MS;
   if (!Number.isInteger(sessionMaxTtlMs) || sessionMaxTtlMs < 1 || sessionMaxTtlMs > SESSION_MAX_TTL_MS) throw new Error('Session TTL must be between 1 and 1800000ms');
   const shutdownDeadlineMs = Math.min(SHUTDOWN_DEADLINE_MS, Math.max(1, options.shutdownDeadlineMs ?? SHUTDOWN_DEADLINE_MS));
+  // `options.stateFile` / `NAVI_MCP_STATE_FILE` names the successful-teardown marker
+  // when it already carries that suffix, which is what the shipped Compose value
+  // `/var/lib/navi/mcp/state.clean` does; the helper then keeps dirty evidence in the
+  // sibling `state.dirty` instead of appending a second `.clean`. An unsuffixed path
+  // (the `/tmp/navi-mcp-state` default) is the dirty evidence and the marker is
+  // `<path>.clean`, as before. The resolved pair is logged because the paths an
+  // operator alerts on are the ones the process actually uses.
   const lifecycle = await beginProcessLifecycle(options.stateFile ?? process.env.NAVI_MCP_STATE_FILE ?? '/tmp/navi-mcp-state', { createState: true });
+  log(`lifecycle sentinels: dirty ${lifecycle.stateFile}, clean marker ${lifecycle.cleanFile}`);
   const cleanupTasks = new Set();
   /** Remember even failed disconnect cleanups already removed from the registry. */
   let cleanupFailure = /** @type {unknown} */ (null);

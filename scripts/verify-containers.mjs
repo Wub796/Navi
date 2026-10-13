@@ -56,15 +56,16 @@ async function waitStopped(service, exitCode) {
   throw new Error(`${service} did not stop`);
 }
 /** Read stopped-container state through only its isolated volume, as UID 1000.
- * @param {string} volume @param {string} directory @param {string} baseFile @returns {any} */
-function lifecycleFiles(volume, directory, baseFile) {
+ * @param {string} volume @param {string} directory @param {string} stateFile @param {string} cleanFile @returns {any} */
+function lifecycleFiles(volume, directory, stateFile, cleanFile) {
   return JSON.parse(docker(['run', '--rm', '--read-only', '--user', '1000:1000', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
     '--mount', `type=volume,source=${volume},target=${directory},readonly`, image, 'node', '-e', `
       const fs = require('fs');
-      const directory = ${JSON.stringify(directory)}, base = ${JSON.stringify(baseFile)};
+      const directory = ${JSON.stringify(directory)}, state = ${JSON.stringify(stateFile)}, clean = ${JSON.stringify(cleanFile)};
       const st = fs.statSync(directory);
       console.log(JSON.stringify({uid: st.uid, gid: st.gid, mode: st.mode & 0o777,
-        dirty: fs.existsSync(base), clean: fs.existsSync(base + '.clean')}));
+        dirty: fs.existsSync(state), clean: fs.existsSync(clean),
+        doubled: fs.existsSync(clean + '.clean')}));
     `]));
 }
 /** @param {string} url @param {string} metric @param {number} expected */
@@ -107,20 +108,32 @@ try {
   record('chromium-sandbox', JSON.stringify(sandbox));
   const host = 'http://127.0.0.1:3000';
   const mcp = 'http://127.0.0.1:3001';
+  const hostState = '/data/telemetry.db';
+  const hostClean = `${hostState}.clean`;
   const mcpDirectory = '/var/lib/navi/mcp';
-  const mcpState = `${mcpDirectory}/state.clean`;
   const mcpMount = inspectService('navi-mcp').Mounts.find((/** @type {any} */ mount) => mount.Destination === mcpDirectory);
   assert(mcpMount?.Type === 'volume' && mcpMount.RW, 'MCP lifecycle state must be a writable named volume');
   const hostMount = inspectService('navi-host').Mounts.find((/** @type {any} */ mount) => mount.Destination === '/data');
   assert(hostMount?.Type === 'volume' && hostMount.Name !== mcpMount.Name, 'host/MCP volumes must be separate');
-  const statePosture = lifecycleFiles(mcpMount.Name, mcpDirectory, mcpState);
-  assert(statePosture.uid === 1000 && statePosture.gid === 1000 && statePosture.mode === 0o700, `bad MCP volume ownership/permissions: ${JSON.stringify(statePosture)}`);
-  assert(statePosture.dirty && !statePosture.clean, 'MCP first boot must create dirty evidence and consume clean marker');
+  // The sentinel names come from the code the image ships, not from this script's
+  // assumptions: a `.clean`-suffixed NAVI_MCP_STATE_FILE is the teardown marker
+  // itself, so a completed stop must publish that name rather than `state.clean.clean`.
   const configuredState = compose(['exec', '-T', 'navi-mcp', 'node', '-p', 'process.env.NAVI_MCP_STATE_FILE']).trim();
-  assert(configuredState === mcpState, `unexpected MCP state path: ${configuredState}`);
+  assert(configuredState === `${mcpDirectory}/state.clean`, `unexpected MCP state path: ${configuredState}`);
+  const mcpPaths = JSON.parse(compose(['exec', '-T', 'navi-mcp', 'node', '--input-type=module', '-e', `
+    import { lifecyclePaths } from '/app/server/store.js';
+    console.log(JSON.stringify(lifecyclePaths(process.env.NAVI_MCP_STATE_FILE)));
+  `]));
+  assert(mcpPaths.normalized === true && mcpPaths.cleanFile === configuredState && mcpPaths.stateFile === `${mcpDirectory}/state.dirty`,
+    `MCP sentinels are not normalized: ${JSON.stringify(mcpPaths)}`);
+  const mcpState = mcpPaths.stateFile;
+  const mcpClean = mcpPaths.cleanFile;
+  const statePosture = lifecycleFiles(mcpMount.Name, mcpDirectory, mcpState, mcpClean);
+  assert(statePosture.uid === 1000 && statePosture.gid === 1000 && statePosture.mode === 0o700, `bad MCP volume ownership/permissions: ${JSON.stringify(statePosture)}`);
+  assert(statePosture.dirty && !statePosture.clean && !statePosture.doubled, 'MCP first boot must create dirty evidence, consume the clean marker and never double the suffix');
   await assertBootMetric(host, 'navi_host_unclean_shutdowns_total', 0);
   await assertBootMetric(mcp, 'navi_mcp_unclean_shutdowns_total', 0);
-  record('lifecycle-volume', `separate named MCP volume at ${mcpDirectory}, owner 1000:1000 mode 0700; base ${mcpState}, marker ${mcpState}.clean; first boot 0 on both roles`);
+  record('lifecycle-volume', `separate named MCP volume at ${mcpDirectory}, owner 1000:1000 mode 0700; dirty ${mcpState}, marker ${mcpClean}; no ${mcpClean}.clean; first boot 0 on both roles`);
   const sdk = await request(`${host}/v1/navi.js?key=${tenantKey}`);
   assert(sdk.ok, 'keyed SDK unavailable');
   assert(Buffer.from(await sdk.arrayBuffer()).equals(await readFile('dist/navi.min.js')), 'container SDK differs from local artifact');
@@ -289,9 +302,9 @@ try {
   // Real Node SIGKILL, not a graceful Docker restart. The init process reaps the
   // child and exits 137; the dirty evidence must survive both restart and removal
   // of the container itself. Only this project's resources are ever targeted.
-  for (const [service, url, metric, volume, directory, base] of [
-    ['navi-host', host, 'navi_host_unclean_shutdowns_total', hostMount.Name, '/data', '/data/telemetry.db'],
-    ['navi-mcp', mcp, 'navi_mcp_unclean_shutdowns_total', mcpMount.Name, mcpDirectory, mcpState]
+  for (const [service, url, metric, volume, directory, stateFile, cleanFile] of [
+    ['navi-host', host, 'navi_host_unclean_shutdowns_total', hostMount.Name, '/data', hostState, hostClean],
+    ['navi-mcp', mcp, 'navi_mcp_unclean_shutdowns_total', mcpMount.Name, mcpDirectory, mcpState, mcpClean]
   ]) {
     const killNode = () => compose(['exec', '-T', service, 'node', '-e', `
       const fs = require('fs');
@@ -305,12 +318,12 @@ try {
     `]);
     killNode();
     await waitStopped(service, 137);
-    let files = lifecycleFiles(volume, directory, base);
+    let files = lifecycleFiles(volume, directory, stateFile, cleanFile);
     assert(files.dirty && !files.clean, `${service} SIGKILL left false clean evidence`);
     compose(['start', service]);
     await waitReady(url);
     await assertBootMetric(url, metric, 1);
-    files = lifecycleFiles(volume, directory, base);
+    files = lifecycleFiles(volume, directory, stateFile, cleanFile);
     assert(!files.clean, `${service} did not consume clean marker on startup`);
     // A second crash followed by force-recreation proves the files do not live
     // in the disposable container layer or /tmp tmpfs.
@@ -331,13 +344,13 @@ try {
     }
     compose(['stop', service], 45000);
     await waitStopped(service, 0);
-    files = lifecycleFiles(volume, directory, base);
-    assert(files.dirty && files.clean, `${service} graceful stop did not publish clean marker`);
+    files = lifecycleFiles(volume, directory, stateFile, cleanFile);
+    assert(files.dirty && files.clean && !files.doubled, `${service} graceful stop did not publish exactly one clean marker`);
     await client?.close(); client = undefined;
     compose(['start', service]);
     await waitReady(url);
     await assertBootMetric(url, metric, 0);
-    assert(!lifecycleFiles(volume, directory, base).clean, `${service} clean marker was not consumed`);
+    assert(!lifecycleFiles(volume, directory, stateFile, cleanFile).clean, `${service} clean marker was not consumed`);
     if (service === 'navi-host') {
       const recovered = await (await request(`${host}/v1/telemetry?key=${tenantKey}`)).json();
       const recoveredAudit = await (await request(`${host}/v1/tenants/container-check/security-audit`, { headers: { Authorization: `Bearer ${tenantKey}` } })).json();

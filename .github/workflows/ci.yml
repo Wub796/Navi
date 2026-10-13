@@ -93,6 +93,50 @@ jobs:
           path: test-results/
           if-no-files-found: ignore
 
+  # The container is a supported artifact of this repository, so the checks that
+  # only a real container runtime can make run here rather than in a release step:
+  # non-root UID 1000 under dropped capabilities, persistent-volume lifecycle state,
+  # and SIGKILL/graceful-restart classification on native linux/amd64. The sandbox
+  # gate in containers.yml covers the same image per architecture; this job covers
+  # the full delivered surface, including the amd64 lifecycle behavior that an
+  # emulated local run cannot prove.
+  containers:
+    name: Container verification (linux/amd64)
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      # The verifier compares the bytes the container serves with the artifacts in
+      # this checkout, so the same sources have to be built here.
+      - name: Build release artifacts
+        run: npm run build
+
+      - name: Build the image for this runner's architecture
+        run: docker build --platform linux/amd64 --progress=plain -t navi:local .
+
+      - name: Verify the delivered container and its lifecycle state
+        run: npm run test:containers
+
+      - name: Upload the container verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-container-verification
+          path: reports/container-verification.json
+          if-no-files-found: warn
+
   benchmark:
     name: Benchmark gate (Node 22.x)
     needs: quality
