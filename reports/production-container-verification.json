@@ -1,5 +1,7 @@
 {
-  "recordedAt": "2026-10-13T01:06:43.480Z",
+  "recordedAt": "2026-10-13T01:40:09.443Z",
+  "compose": "deploy/docker-compose.prod.yml",
+  "architecture": "linux/arm64",
   "ok": true,
   "checks": [
     {
@@ -20,7 +22,7 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"127\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532960]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"119\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "lifecycle-volume",
@@ -90,7 +92,7 @@
     {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-13T01:06:43.090Z\",\"session_id\":\"3eb69611-a241-4ab8-ae99-b5815ced2b72\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-13T01:40:09.074Z\",\"session_id\":\"98ff9e1c-544a-4c36-859f-641d3c1aa509\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }

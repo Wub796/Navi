@@ -1,10 +1,12 @@
 import { test, expect } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { evaluatePublish } from '../scripts/publish-preflight.mjs';
 import { renderReleaseNotes } from '../scripts/release-notes.mjs';
+import { readContainerReceipts, summarizeContainer } from '../scripts/container-evidence.mjs';
 
 /**
  * Release-pipeline checks.
@@ -116,13 +118,14 @@ test('a receipt that no longer describes the artifacts cannot authorise a publis
 });
 
 test('release notes state only what the receipts recorded', () => {
-  const notes = renderReleaseNotes({
+  const input = {
     build: { rawBytes: 14929, budgetBytes: 15000, loaderBytes: 689, loaderBudgetBytes: 700, integrity: 'sha384-SRI' },
     receipt: { ok: true, recordedAt: '2026-10-10T00:00:00.000Z', checks: [{ id: 'test-suite', ok: true, detail: '81 passed, 0 failed' }, { id: 'rebuild-stable', ok: false, detail: 'rebuild changed the artifacts' }] },
     version: '0.5.0',
     tag: 'v0.5.0',
     protocol: '9.9.9'
-  });
+  };
+  const notes = renderReleaseNotes(input);
   // The protocol version is the shipped bundle's, not a constant typed into the
   // template: this fixture proves the note prints what it is given.
   expect(notes).toContain('`9.9.9`');
@@ -134,6 +137,71 @@ test('release notes state only what the receipts recorded', () => {
   // 1/2, because one recorded check failed: a note never rounds up.
   expect(notes).toContain('**1/2 checks passed**');
   expect(notes).toContain('| `rebuild-stable` | FAIL |');
+
+  // The container attestation is read out of the container receipts, so it can state the
+  // runtime identity, the capabilities actually held, the store the host served and the
+  // lifecycle verdicts of a platform — and nothing about a platform whose receipt is absent.
+  const arm64 = {
+    architecture: 'linux/arm64',
+    compose: 'deploy/docker-compose.prod.yml',
+    ok: true,
+    checks: [
+      { check: 'image', ok: true, detail: 'sha256:abc; linux/arm64; user pwuser:pwuser' },
+      { check: 'runtime-posture', ok: true, detail: JSON.stringify({ uid: 1000, node: 'v22.23.3', playwright: '1.64.0', proc: ['CapEff:\t0000000000000000', 'NoNewPrivs:\t1'] }) },
+      { check: 'sqlite-store', ok: true, detail: 'the host serves the sqlite backend with the SQLite header and its -wal sidecar present' },
+      { check: 'navi-host-crash-recovery', ok: true, detail: 'SIGKILL exit 137: counter=1' },
+      { check: 'navi-mcp-crash-recovery', ok: true, detail: 'SIGKILL exit 137: counter=1' }
+    ]
+  };
+  const withContainers = renderReleaseNotes({ ...input, containers: [arm64] });
+  expect(withContainers).toContain('| linux/arm64 | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 5/5 pass |');
+  // No receipt is not a pass: the section says so instead of being omitted.
+  expect(notes).toContain('No container receipt was found on this revision');
+  // A leg that failed is printed as FAIL with the count it actually passed, and its
+  // lifecycle cell is not fabricated from the checks that did pass.
+  const failed = renderReleaseNotes({
+    ...input,
+    containers: [{ ...arm64, ok: false, checks: arm64.checks.map(check => check.check === 'navi-mcp-crash-recovery' ? { ...check, ok: false } : check) }]
+  });
+  expect(failed).toContain('4/5 FAIL');
+  expect(failed).toContain('| not recorded |');
+});
+
+test('container receipts are discovered by target, not by the path they sit in', async () => {
+  const workspace = await mkdtemp(join(tmpdir(), 'navi-receipts-'));
+  try {
+    const downloaded = join(workspace, 'reports', 'container-verification', 'release-container-receipt-amd64');
+    await mkdir(downloaded, { recursive: true });
+    // A per-architecture artifact the release workflow downloaded, an older local receipt
+    // for the same target, and a receipt that predates the architecture stamp.
+    await writeFile(join(downloaded, 'production-container-verification.json'), JSON.stringify({
+      recordedAt: '2026-10-13T02:00:00.000Z', compose: 'deploy/docker-compose.prod.yml', architecture: 'linux/amd64', ok: true,
+      checks: [{ check: 'image', ok: true, detail: 'sha256:abc; linux/amd64; user pwuser:pwuser' }]
+    }) + '\n');
+    await writeFile(join(workspace, 'reports', 'production-container-verification.json'), JSON.stringify({
+      recordedAt: '2026-10-12T02:00:00.000Z', compose: 'deploy/docker-compose.prod.yml', architecture: 'linux/amd64', ok: false, checks: []
+    }) + '\n');
+    await writeFile(join(workspace, 'reports', 'container-verification.json'), JSON.stringify({
+      recordedAt: '2026-10-12T03:00:00.000Z', ok: true, checks: [{ check: 'image', ok: true, detail: 'x' }]
+    }) + '\n');
+
+    const receipts = await readContainerReceipts(workspace);
+    // Two pieces of evidence, not three: one platform and configuration is one target, and
+    // the most recent record of it wins.
+    expect(receipts).toHaveLength(2);
+    const amd64 = receipts.find(receipt => receipt.architecture === 'linux/amd64');
+    expect(amd64?.recordedAt).toBe('2026-10-13T02:00:00.000Z');
+    expect(summarizeContainer(/** @type {any} */ (amd64))).toEqual({
+      architecture: 'linux/amd64', compose: 'deploy/docker-compose.prod.yml', recordedAt: '2026-10-13T02:00:00.000Z', ok: true, passed: 1, checks: 1
+    });
+    // An unstamped receipt is kept and reported as unstamped rather than dropped or guessed.
+    expect(receipts.some(receipt => receipt.architecture === null && receipt.compose === null)).toBe(true);
+    // A receipt that cannot be parsed is an error: a quieter release is not an option.
+    await writeFile(join(workspace, 'reports', 'container-verification', 'broken.json'), '{ not json');
+    await expect(readContainerReceipts(workspace)).rejects.toThrow();
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test('the committed receipt describes the committed artifacts', async () => {
@@ -224,12 +292,21 @@ test('the pipeline cannot publish without container verification on both archite
   // gated while publishing past the runtime checks.
   const release = parse(await readFile(join(root, '.github/workflows/release.yml'), 'utf8'));
   const ci = parse(await readFile(join(root, '.github/workflows/ci.yml'), 'utf8'));
+  /** @param {any[]} steps @returns {string[]} */
+  const stepRuns = steps => steps.map(step => String(step?.run ?? ''));
+  /** @param {any[]} steps @param {string} field @returns {string[]} */
+  const stepValues = (steps, field) => steps.map(step => String(step?.with?.[field] ?? ''));
   expect(Object.keys(release.jobs)).toEqual(expect.arrayContaining(['verify-release', 'verify-containers', 'publish']));
   expect(release.jobs.publish.needs).toEqual(expect.arrayContaining(['verify-release', 'verify-containers']));
-  // The gates run the documented entry points, not a copy of what they expand to.
-  expect(release.jobs['verify-release'].steps.some(step => String(step.run ?? '').includes('npm run verify:release'))).toBe(true);
+  // The gates run the documented entry points, not a copy of what they expand to — and the
+  // release gate names the shipped production file explicitly, so the release is verified
+  // against the deployment an operator runs rather than the local one.
+  expect(stepRuns(release.jobs['verify-release'].steps).some(run => run.includes('npm run verify:release'))).toBe(true);
   const containerGate = release.jobs['verify-containers'];
-  expect(containerGate.steps.some(step => step.run === 'npm run test:containers')).toBe(true);
+  expect(stepRuns(containerGate.steps)).toContain('npm run test:containers -- --compose deploy/docker-compose.prod.yml');
+  // CI verifies the image itself against the development file; the two configurations are
+  // different evidence and write different receipts.
+  expect(stepRuns(ci.jobs.containers.steps)).toContain('npm run test:containers');
   // Both released architectures, each built and verified on its own hardware: an
   // emulated leg refuses at the renderer sandbox, so it would prove nothing about the
   // architecture it claims to cover.
@@ -241,9 +318,12 @@ test('the pipeline cannot publish without container verification on both archite
     expect(job.strategy.matrix.include).toEqual(expected);
     // The runner comes from the matrix, so a leg cannot silently run on the wrong host.
     expect(String(job['runs-on'])).toContain('matrix.runner');
-    expect(job.steps.some(step => String(step.run ?? '').includes("docker build --platform '${{ matrix.platform }}'"))).toBe(true);
+    expect(stepRuns(job.steps).some(run => run.includes("docker build --platform '${{ matrix.platform }}'"))).toBe(true);
   }
-  // The container receipts are evidence for the release, not a job-local file.
-  expect(containerGate.steps.some(step => String(step.with?.name ?? '').startsWith('release-container-receipt-'))).toBe(true);
-  expect(release.jobs.publish.steps.some(step => String(step.with?.pattern ?? '').startsWith('release-container-receipt-'))).toBe(true);
+  // The container receipts are evidence for the release, not a job-local file: the release
+  // gate uploads the production receipt it wrote, and the publish job carries every
+  // architecture's receipt into the published record.
+  expect(stepValues(containerGate.steps, 'name')).toContain('release-container-receipt-${{ matrix.arch }}');
+  expect(stepValues(containerGate.steps, 'path')).toContain('reports/production-container-verification.json');
+  expect(stepValues(release.jobs.publish.steps, 'pattern')).toContain('release-container-receipt-*');
 });

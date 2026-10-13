@@ -1,18 +1,35 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { resolveComposeTarget } from './compose-target.mjs';
 
-// Isolated project/volume; never touches a user's normal Compose deployment.
-// --production exercises the shipped production file and writes a separate receipt.
-const production = process.argv.includes('--production');
-const image = production ? (process.env.NAVI_IMAGE || 'navi:local') : 'navi:local';
+// Usage: node scripts/verify-containers.mjs [--production] [--compose <file>]
+//
+// Isolated project/volume; never touches a user's normal Compose deployment. Which
+// deployment configuration is verified is decided by the flags and named in the receipt,
+// so the evidence states the file it proves: the local file by default, the shipped
+// production file for a release (either `--production`, which also requires NAVI_IMAGE,
+// or `--compose deploy/docker-compose.prod.yml` against an image just built here).
+let target;
+try {
+  target = resolveComposeTarget(process.argv.slice(2), process.env);
+} catch (error) {
+  process.stderr.write(`verify-containers: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(2);
+}
+const { production, image, composeFile, receiptPath } = target;
+if (!existsSync(composeFile)) {
+  process.stderr.write(`verify-containers: ${composeFile} does not exist\n`);
+  process.exit(2);
+}
 const project = `${production ? 'navi-prod-check' : 'navi-check'}-${process.pid}`;
 const token = randomBytes(32).toString('hex');
 const tenantKey = randomBytes(16).toString('hex');
 const env = { ...process.env, NAVI_IMAGE: image, NAVI_BIND_ADDRESS: '127.0.0.1', NAVI_MCP_TOKEN: token, NAVI_TENANTS: `${tenantKey}:container-check` };
-const composeArgs = ['compose', '--project-name', project, '-f', production ? 'deploy/docker-compose.prod.yml' : 'docker-compose.yml'];
+const composeArgs = ['compose', '--project-name', project, '-f', composeFile];
 /** @type {{check: string, ok: boolean, detail: string}[]} */
 const checks = [];
 /** @param {string[]} args @param {number} [timeout] */
@@ -77,15 +94,18 @@ async function assertBootMetric(url, metric, expected) {
   assert(body.includes('# TYPE process_start_time_seconds gauge'), 'startup gauge missing');
 }
 let started = false;
+/** The platform the verified image was built for, recorded as evidence. @type {string | null} */
+let architecture = null;
 /** @type {Client | undefined} */
 let client;
 try {
   if (production) assert(Boolean(process.env.NAVI_IMAGE), '--production requires NAVI_IMAGE to select the verified artifact');
   docker(['info']);
   compose(['config', '--quiet']);
-  const metadata = JSON.parse(docker(['image', 'inspect', production ? image : 'navi:local']))[0];
+  const metadata = JSON.parse(docker(['image', 'inspect', image]))[0];
   assert(metadata.Config.User === 'pwuser:pwuser', 'image must run as pwuser:pwuser');
-  record('image', `${metadata.Id}; ${metadata.Os}/${metadata.Architecture}; user ${metadata.Config.User}`);
+  architecture = `${metadata.Os}/${metadata.Architecture}`;
+  record('image', `${metadata.Id}; ${architecture}; user ${metadata.Config.User}`);
   started = true;
   // Fail on occupied requested ports; do not stop or replace their owners.
   // Only the isolated verification deployment allows its private fixture hosts.
@@ -391,5 +411,8 @@ try {
     catch { checks.push({ check: 'cleanup', ok: false, detail: `Could not clean isolated Compose project ${project}` }); process.exitCode = 1; }
   }
   await mkdir('reports', { recursive: true });
-  await writeFile(production ? 'reports/production-container-verification.json' : 'reports/container-verification.json', JSON.stringify({ recordedAt: new Date().toISOString(), ok: checks.length > 0 && checks.every(check => check.ok), checks }, null, 2) + '\n');
+  // The receipt names the deployment configuration and the platform it proves, beside the
+  // verdicts themselves, so a reader of the evidence does not have to infer either from
+  // the file name it happens to sit in.
+  await writeFile(receiptPath, JSON.stringify({ recordedAt: new Date().toISOString(), compose: composeFile, architecture, ok: checks.length > 0 && checks.every(check => check.ok), checks }, null, 2) + '\n');
 }

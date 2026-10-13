@@ -4,14 +4,17 @@
 // Nothing here is retyped by hand: the byte budgets, the SRI hash, the gate verdicts
 // and the rebuild result are read out of reports/build.json and
 // reports/release-verification.json, which the verification job wrote on this exact
-// revision. A release note therefore cannot describe a different artifact than the
-// one being published, and it fails rather than inventing a note for a revision no
-// gate has passed.
+// revision. The same standard applies to the container receipts: the runtime identity,
+// the capabilities the process actually held, the store backend and the lifecycle
+// verdicts are read out of them, so a note cannot claim a platform whose verification
+// never ran. It also fails rather than inventing a note for a revision no gate has
+// passed.
 //
 // Usage: node scripts/release-notes.mjs [--tag v0.5.0] [--out reports/release-notes.md]
 // Exit codes: 0 written, 1 the receipts do not describe a verified release, 2 usage.
 import { readFile, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readContainerReceipts } from './container-evidence.mjs';
 
 /** @param {string[]} argv @param {string} flag @returns {string | null} */
 function option(argv, flag) {
@@ -19,12 +22,51 @@ function option(argv, flag) {
   return index === -1 ? null : argv[index + 1] ?? null;
 }
 
+/** @param {Array<Record<string, any>>} checks @param {string} id @returns {Record<string, any> | undefined} */
+const checkNamed = (checks, id) => checks.find(check => check?.check === id);
+
 /**
- * @param {{build: Record<string, any>, receipt: Record<string, any>, version: string, tag: string, protocol: string}} input
+ * The container attestation table: one row per verified container, read out of the
+ * receipts. A value a receipt does not record is printed as not recorded rather than
+ * guessed, and a platform with no receipt is not claimed at all - an omission that read
+ * as a pass would be worse than an empty table.
+ * @param {Array<Record<string, any>>} containers
+ * @returns {string}
+ */
+export function containerAttestation(containers) {
+  if (!containers.length) {
+    return 'No container receipt was found on this revision, so these notes claim no container verification.';
+  }
+  const rows = containers.map(container => {
+    const checks = /** @type {Array<Record<string, any>>} */ (Array.isArray(container.checks) ? container.checks : []);
+    /** @type {Record<string, any> | null} */
+    let posture = null;
+    try { posture = JSON.parse(String(checkNamed(checks, 'runtime-posture')?.detail ?? '')); }
+    catch { posture = null; }
+    const proc = Array.isArray(posture?.proc) ? posture.proc.map((/** @type {unknown} */ line) => String(line).replace(/\t/g, ' ')) : [];
+    const noNewPrivileges = proc.some(line => /NoNewPrivs:\s+1$/.test(line));
+    const capabilities = /CapEff:\s+0+$/.test(proc.find(line => line.startsWith('CapEff')) ?? '')
+      ? `dropped (\`CapEff 0\`${noNewPrivileges ? ', `NoNewPrivs 1`' : ''})`
+      : 'not recorded';
+    const store = checkNamed(checks, 'sqlite-store');
+    const lifecycle = checks.filter(check => /-crash-recovery$/.test(String(check.check)));
+    const recovered = lifecycle.length === 2 && lifecycle.every(check => check.ok);
+    const passed = checks.filter(check => check.ok).length;
+    return `| ${container.architecture ?? 'not recorded'} | \`${container.compose ?? 'not recorded'}\` | ${typeof posture?.uid === 'number' ? `uid ${posture.uid} (${posture.node ?? 'node not recorded'})` : 'not recorded'} | ${capabilities} | ${store?.ok ? 'sqlite, `-wal` sidecar present' : 'not recorded'} | ${recovered ? 'SIGKILL 137 → counter 1; graceful stop → 0' : 'not recorded'} | ${passed}/${checks.length} ${container.ok ? 'pass' : 'FAIL'} |`;
+  });
+  return [
+    '| Platform | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |',
+    '|---|---|---|---|---|---|---:|',
+    ...rows
+  ].join('\n');
+}
+
+/**
+ * @param {{build: Record<string, any>, receipt: Record<string, any>, version: string, tag: string, protocol: string, containers?: Array<Record<string, any>>}} input
  * @returns {string} markdown
  */
 export function renderReleaseNotes(input) {
-  const { build, receipt, version, tag, protocol } = input;
+  const { build, receipt, version, tag, protocol, containers = [] } = input;
   const bundleBytes = Number(build.rawBytes ?? 0);
   const loaderBytes = Number(build.loaderBytes ?? 0);
   const sdkBudget = Number(build.budgetBytes ?? 15000);
@@ -59,6 +101,15 @@ The loader resolves \`/v1/navi.js\` against its own origin, appends the key, ver
 bundle against \`data-sri\` in CORS mode, and publishes the \`agent-bridge\` marker agents
 auto-discover on. Anything embedding the bundle directly must pin the SRI above.
 
+### Container verification
+
+The image is the deployed runtime, and the properties that matter are only visible inside a
+running container under the deployment's own restrictions. Each released architecture is
+built and exercised natively on its own runner, and every value below is read from those
+container receipts rather than restated here.
+
+${containerAttestation(containers)}
+
 ### Verification
 
 ${checks.length ? `Recorded by \`npm run verify:release\`${verifiedAt ? ` at ${verifiedAt}` : ''}: **${checks.filter(/** @returns {boolean} */ (check) => check.ok).length}/${checks.length} checks passed**, receipt \`ok: ${receipt.ok}\`.
@@ -80,7 +131,8 @@ configuration for Claude Desktop, Cursor and page embeds: [docs/INTEGRATION-MATR
 These notes are generated from this repository's own gate receipts on ${tag}. The npm publish
 is verified by the workflow, not by a hosted CI run reproduced here; the remote SSE transport
 is exercised against this repository's own SSE tests rather than a third-party client; and
-linux/amd64 sandboxing is verified on a native runner rather than through emulation. See
+each architecture's container verification is recorded only where a receipt exists — a
+platform absent from the table above is unverified, not implied. See
 [reports/PHASE5-VERIFICATION.md](reports/PHASE5-VERIFICATION.md) for the phase record.
 `;
 }
@@ -127,7 +179,8 @@ export async function main(argv = process.argv.slice(2)) {
     process.stderr.write(`release-notes: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
-  const notes = renderReleaseNotes({ build, receipt, version: manifest.version, tag, protocol });
+  const containers = await readContainerReceipts(fileURLToPath(new URL('..', import.meta.url)));
+  const notes = renderReleaseNotes({ build, receipt, version: manifest.version, tag, protocol, containers });
   if (out) {
     await writeFile(out, notes);
     process.stdout.write(`release-notes: wrote ${out} (${Buffer.byteLength(notes)} bytes) for ${tag}\n`);

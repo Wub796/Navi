@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { lifecyclePaths } from '../server/store.js';
+import { resolveComposeTarget } from '../scripts/compose-target.mjs';
 
 /**
  * Production deployment checks.
@@ -124,6 +125,45 @@ test('local and production MCP state volumes match and stay isolated from host t
     expect(config.volumes).toHaveProperty('mcp-state');
     expect(config.services['navi-host'].volumes).not.toContain('mcp-state:/var/lib/navi/mcp');
   }
+});
+
+test('the container verifier knows which deployment file it was asked to prove', () => {
+  // The release pipeline verifies the file an operator deploys; the local run verifies
+  // the development file. Both are ordinary invocations of one command, so the flag that
+  // chooses between them is resolved and tested here rather than read inline in the
+  // script that then talks to Docker.
+  expect(resolveComposeTarget([], {})).toEqual({
+    composeFile: 'docker-compose.yml',
+    receiptPath: 'reports/container-verification.json',
+    production: false,
+    image: 'navi:local'
+  });
+  // --production keeps its original contract: the shipped file, the production receipt,
+  // and an operator-selected image that must be named.
+  expect(resolveComposeTarget(['--production'], { NAVI_IMAGE: 'navi:digest' })).toEqual({
+    composeFile: 'deploy/docker-compose.prod.yml',
+    receiptPath: 'reports/production-container-verification.json',
+    production: true,
+    image: 'navi:digest'
+  });
+  // Naming the production file explicitly is the release pipeline's invocation: the image
+  // is the one just built, and the receipt still names the configuration it proves rather
+  // than the flag that selected it.
+  expect(resolveComposeTarget(['--compose', 'deploy/docker-compose.prod.yml'], {})).toEqual({
+    composeFile: 'deploy/docker-compose.prod.yml',
+    receiptPath: 'reports/production-container-verification.json',
+    production: false,
+    image: 'navi:local'
+  });
+  // A third file gets its own receipt, so two configurations cannot overwrite each other's
+  // evidence.
+  expect(resolveComposeTarget(['--compose', 'deploy/ci/docker-compose.arm.yml'], {}).receiptPath).toBe('reports/container-verification-docker-compose.arm.json');
+  // Misuse fails loudly instead of silently verifying the default file: a release gate that
+  // fell back on a typo would report green about a file nobody asked about.
+  expect(() => resolveComposeTarget(['--compsoe', 'x'], {})).toThrow(/unknown flag/);
+  expect(() => resolveComposeTarget(['--compose'], {})).toThrow(/requires a file path/);
+  expect(() => resolveComposeTarget(['--compose', '--production'], {})).toThrow(/requires a file path/);
+  expect(() => resolveComposeTarget(['--production', '--compose', 'docker-compose.yml'], {})).toThrow(/would verify a different file/);
 });
 
 test('the deployment files agree on the store path, and every path they reference resolves', async () => {

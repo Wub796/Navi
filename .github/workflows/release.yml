@@ -12,10 +12,11 @@ name: Release verification and publish
 #     bytes, a suite with no failures, both byte budgets, the CI gates, the publish
 #     allowlist and a byte-identical rebuild, all recorded in
 #     reports/release-verification.json;
-#   * `npm run test:containers` on both released architectures — the deployed
-#     runtime's own posture: UID 1000 under dropped capabilities, sentinel files that
-#     survive container replacement, a SIGKILL classified as an unclean shutdown and
-#     a renderer that keeps its sandbox, each verified on native hardware;
+#   * `npm run test:containers -- --compose deploy/docker-compose.prod.yml` on both
+#     released architectures — the deployed runtime's own posture, verified against the
+#     file an operator deploys: UID 1000 under dropped capabilities, sentinel files that
+#     survive container replacement, a SIGKILL classified as an unclean shutdown and a
+#     renderer that keeps its sandbox, each on native hardware;
 #   * `scripts/publish-preflight.mjs` — the decisions a pipeline must not make for
 #     the owner (a license file and a `license` field), the access and provenance
 #     settings, and the tag agreeing with package.json.
@@ -117,12 +118,14 @@ jobs:
             test-results/
           if-no-files-found: warn
 
-  # Container verification is a publish gate rather than an advisory job: the runtime
-  # this release ships is the image, and the properties that matter are only visible in
-  # a running container, under the deployment's own restrictions. Both released
-  # architectures are checked on their own hardware, because a cross-built image runs
-  # Chromium under emulation, where the renderer sandbox layers the verifier requires
-  # do not exist and the gate would refuse a run that proves nothing about the target.
+  # Container verification is a publish gate rather than an advisory job: the runtime this
+  # release ships is the image, and the properties that matter are only visible in a
+  # running container, under the deployment's own restrictions. It verifies
+  # deploy/docker-compose.prod.yml — the file an operator actually deploys — rather than
+  # the local one, and both released architectures are checked on their own hardware,
+  # because a cross-built image runs Chromium under emulation, where the renderer sandbox
+  # layers the verifier requires do not exist and the gate would refuse a run that proves
+  # nothing about the target.
   verify-containers:
     name: Verify the container (${{ matrix.platform }})
     strategy:
@@ -172,15 +175,20 @@ jobs:
           echo "image=$image_arch runner=$runner_arch"
           test "$image_arch" = "$runner_arch"
 
-      - name: Verify the delivered container, its lifecycle state and the sandbox
-        run: npm run test:containers
+      # The shipped production file, verified against the image just built here: its
+      # required credentials, its bind address, its volume mounts and its seccomp profile
+      # are all resolved from deploy/, which is the file a deployment runs.
+      - name: Verify the production container, its lifecycle state and the sandbox
+        run: npm run test:containers -- --compose deploy/docker-compose.prod.yml
 
+      # The verifier names its receipt for the deployment configuration it proves, so the
+      # release gate uploads the production receipt rather than the local one.
       - name: Upload the container verification receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: release-container-receipt-${{ matrix.arch }}
-          path: reports/container-verification.json
+          path: reports/production-container-verification.json
           if-no-files-found: warn
 
   publish:

@@ -33,6 +33,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readContainerReceipts, summarizeContainer } from './container-evidence.mjs';
 
 /** Published floor for the suite: the release must not shrink its own coverage. */
 export const MIN_PASSING_TESTS = 189;
@@ -261,7 +262,13 @@ export async function main(argv) {
     // measurement so a later reader can tell whether the floor has moved since,
     // instead of comparing a recorded count to whatever the floor is today.
     floor: MIN_PASSING_TESTS,
-    tests: /(\d+) passed, (\d+) failed/.exec(checks.find(check => check.id === 'test-suite')?.detail ?? '')?.slice(1).map(Number) ?? null
+    tests: /(\d+) passed, (\d+) failed/.exec(checks.find(check => check.id === 'test-suite')?.detail ?? '')?.slice(1).map(Number) ?? null,
+    // Container verification runs in its own jobs on its own hardware and writes its own
+    // receipts, so it is recorded here as evidence beside the artifacts rather than turned
+    // into a check this gate would have to be able to run: a verification without a Docker
+    // daemon still writes a complete receipt, and the container receipts themselves stay
+    // the authority a reader can open.
+    containers: (await readContainerReceipts(fileURLToPath(new URL('..', import.meta.url)))).map(summarizeContainer)
   };
   // The receipt is written on failure too: a release gate that only records its
   // successes cannot be audited when it blocks a release.
