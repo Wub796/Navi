@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "node \"/Users/bnjw/.config/freebuff-desktop/account-skills/9cc7200b04bd3c58201f624a2b17a68d91830597c958a063e6c21f4a56642579/bc023aa9bd632c751e2083cee00ed7349a8a07adba25c305dcb2ca069ca313e5/ponytail/hooks/ponytail-activate.js\"",
+        "timeout": 5
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "node \"/Users/bnjw/.config/freebuff-desktop/account-skills/9cc7200b04bd3c58201f624a2b17a68d91830597c958a063e6c21f4a56642579/bc023aa9bd632c751e2083cee00ed7349a8a07adba25c305dcb2ca069ca313e5/ponytail/hooks/ponytail-mode-tracker.js\"",
+        "timeout": 5
+      }
+    ]
+  },
+  "version": 1
+}
