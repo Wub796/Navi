@@ -12,6 +12,11 @@ import { createMockLlmServer } from './fixtures/mock-llm-server.mjs';
 // Harness-side taxonomy. No shipped entry point imports this module, so the
 // distributed bundles (including the client SDK) are byte-identical without it.
 import { classifyFailure, summarizeFailures } from '../src/failure-classifier.js';
+// The server validates a settlement request with this function, and the schema it
+// advertises an agent builds its `wait_for` enum from the same module, so the harness
+// resolves calls through it too rather than restating the rule: one contract, one
+// implementation, and tests/schema-parity.spec.mjs pins the two readers together.
+import { normalizeSettle } from '../src/settle.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
@@ -338,7 +343,45 @@ export function countUsage(trial, usage) {
 /** @param {string} name @param {string} description @param {Record<string, any>} properties @param {string[]} [required] */
 const tool = (name, description, properties, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } });
 const finish = tool('finish_task', 'Call only when the requested order is confirmed; the harness independently verifies the server commit.', {});
-const rawTools = [
+
+/**
+ * The model-facing tool for a live MCP descriptor: the server's own name, description and
+ * inputSchema object, so what the model is offered is what the server advertises rather
+ * than a copy of it that can drift from the fields an agent is actually held to.
+ * @param {{name: string, description?: string, inputSchema: any}} descriptor
+ */
+export function toolFromDescriptor(descriptor) {
+  return { type: 'function', function: { name: descriptor.name, description: descriptor.description, parameters: descriptor.inputSchema } };
+}
+
+/**
+ * Resolve a call's settlement with the server's own rule.
+ *
+ * The advertised schema makes `settle` optional and documents mutation_settle as the
+ * default wait; both the enum and that default live in src/settle.js, which is also what
+ * the server validates with. Resolving here through that same function is what keeps the
+ * harness's validator and the server's schema one contract: an omitted settle resolves to
+ * the documented default, a malformed one is refused, and neither list is restated in this
+ * file. Only an absent key counts as omitted — a null or a string is malformed, as it is
+ * for the server.
+ * @param {Record<string, any>} args
+ * @returns {Record<string, any>} the arguments to dispatch, with a resolved settle
+ */
+export function settleArguments(args) {
+  const requested = args.settle === undefined ? {} : args.settle;
+  const normalized = normalizeSettle(requested);
+  if ('error' in normalized) throw fail('INVALID_SETTLE', normalized.error);
+  return { ...args, settle: {
+    wait_for: normalized.plan.waitFor,
+    ...(requested.timeout_ms === undefined ? {} : { timeout_ms: normalized.plan.timeoutMs })
+  } };
+}
+
+/**
+ * The raw-Playwright path's tool list. Exported because the enums it offers a model have
+ * to stay a subset of the ones the server accepts, which is checkable without a model.
+ */
+export const rawTools = [
   tool('observe_page', 'Read the current Playwright ARIA snapshot and URL.', {}),
   tool('browser_action', 'Act on a current role/name or CSS selector. No retries; read the page again after any failure.', {
     role: { type: 'string' }, name: { type: 'string' }, selector: { type: 'string' },
@@ -381,7 +424,7 @@ async function runTrial(path, iteration, origin, config) {
       const execute = listed.tools.find(item => item.name === 'navi_execute_action');
       if (!execute) throw new Error('Missing MCP execution tool');
       tools = [tool('navi_get_actions', 'Read an action-map update. First response or reset:true replaces your remembered targets; removed:true deletes a target. Keep unchanged targets in memory. Cursors are managed by the harness.', {}),
-        { type: 'function', function: { name: execute.name, description: execute.description, parameters: execute.inputSchema } }, finish];
+        toolFromDescriptor(execute), finish];
     } else {
       browser = await chromium.launch({ headless: true, chromiumSandbox: true });
       page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
@@ -425,14 +468,11 @@ async function runTrial(path, iteration, origin, config) {
               cursor = output.state_version;
             } else {
               if (call.function.name !== 'navi_execute_action') throw fail('UNKNOWN_TOOL', `Unknown tool ${call.function.name}`);
-              // The advertised schema makes `settle` optional and documents
-              // mutation_settle as the default `wait_for`, so a call that omits it is
-              // conforming and must not be refused as a schema violation. Apply the
-              // documented default instead: an omitted settle asks for the default
-              // wait, and the receipt still reports what that wait observed.
-              if (args.settle === undefined) args.settle = { wait_for: 'mutation_settle' };
-              else if (!args.settle || typeof args.settle !== 'object' || Array.isArray(args.settle)) throw fail('INVALID_SETTLE', 'settle must be an object with wait_for and optional timeout_ms');
-              output = await mcp(call.function.name, args);
+              // The advertised schema makes `settle` optional, so an omitted one is
+              // conforming and resolves to the documented default rather than being
+              // refused as a schema violation; a malformed one is refused by the same
+              // rule the server will apply, through settleArguments.
+              output = await mcp(call.function.name, settleArguments(args));
               // A receipt that says the action did not settle is a different
               // outcome from a refusal: it dispatched and never confirmed, which
               // the taxonomy reads from the receipt's own fields.

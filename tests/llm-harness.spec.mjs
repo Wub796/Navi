@@ -397,7 +397,7 @@ test('the CLI writes live token, latency and TCR artifacts without touching fixt
   const daemon = await createStubDaemon();
   try {
     for (const directory of ['tests/fixtures', 'reports', 'src']) await mkdir(join(workspace, directory), { recursive: true });
-    for (const path of ['tests/llm-agent-benchmark.mjs', 'tests/fixtures/tcr-app.mjs', 'tests/fixtures/mock-llm-server.mjs', 'src/failure-classifier.js', 'bin', 'dist', 'demo', 'package.json']) {
+    for (const path of ['tests/llm-agent-benchmark.mjs', 'tests/fixtures/tcr-app.mjs', 'tests/fixtures/mock-llm-server.mjs', 'src/failure-classifier.js', 'src/settle.js', 'bin', 'dist', 'demo', 'package.json']) {
       await cp(join(root, path), join(workspace, path), { recursive: true });
     }
     await symlink(join(root, 'node_modules'), join(workspace, 'node_modules'), 'dir');
