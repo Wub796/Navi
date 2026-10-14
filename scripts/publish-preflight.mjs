@@ -185,10 +185,14 @@ function containerEvidence(receipt) {
 /**
  * The clean-room package canary verification a publish must cite: `evidence.canary`
  * with `ok: true` and all 6 checks passing.
+ *
+ * Exported because the generated release notes describe the same evidence, and a note
+ * that called a record verified while this gate called it incomplete — or the reverse —
+ * would be two answers to one question.
  * @param {Record<string, any> | null} receipt
  * @returns {{ok: boolean, detail: string}}
  */
-function canaryEvidence(receipt) {
+export function canaryEvidence(receipt) {
   const cited = receipt?.evidence?.canary;
   if (!cited || typeof cited !== 'object') {
     return {

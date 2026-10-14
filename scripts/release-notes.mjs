@@ -7,14 +7,18 @@
 // revision. The same standard applies to the container receipts: the runtime identity,
 // the capabilities the process actually held, the store backend and the lifecycle
 // verdicts are read out of them, so a note cannot claim a platform whose verification
-// never ran. It also fails rather than inventing a note for a revision no gate has
-// passed.
+// never ran. The clean-room canary attestation is held to it too — the packed tarball's
+// checks are printed from `evidence.canary`, and whether that record counts as
+// verification at all is decided by the same rule the publish preflight applies, so the
+// note and the gate cannot disagree about whether the tarball was proven. It also fails
+// rather than inventing a note for a revision no gate has passed.
 //
 // Usage: node scripts/release-notes.mjs [--tag v0.5.0] [--out reports/release-notes.md]
 // Exit codes: 0 written, 1 the receipts do not describe a verified release, 2 usage.
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readContainerReceipts } from './container-evidence.mjs';
+import { canaryEvidence } from './publish-preflight.mjs';
 
 /** @param {string[]} argv @param {string} flag @returns {string | null} */
 function option(argv, flag) {
@@ -62,11 +66,37 @@ export function containerAttestation(containers) {
 }
 
 /**
- * @param {{build: Record<string, any>, receipt: Record<string, any>, version: string, tag: string, protocol: string, containers?: Array<Record<string, any>>}} input
+ * The clean-room package canary attestation: one row per check the tarball verifier ran,
+ * with the status read out of the receipt and the description taken from what that very
+ * check recorded. The measured values — the hash it matched, the files it counted, the
+ * handshake it negotiated — therefore travel with the row that claims them, instead of
+ * sitting beside a label that could quietly stop matching the check it names.
+ *
+ * A record that is absent, empty, incomplete or not green is never rendered as a pass:
+ * the same rule the publish preflight applies decides that, and a warning block naming
+ * the shortfall is printed above whatever rows do exist.
+ * @param {Record<string, any> | null | undefined} canary `evidence.canary`
+ * @returns {string}
+ */
+export function canaryAttestation(canary) {
+  const checks = Array.isArray(canary?.checks) ? canary.checks : [];
+  const verdict = canaryEvidence({ evidence: { canary } });
+  const warning = verdict.ok ? '' : `> [!WARNING]\n> \`evidence.canary\` is not a complete green run on this revision: ${verdict.detail}\n`;
+  if (!checks.length) {
+    return `${warning}\nNo clean-room canary check result is recorded, so these notes claim no verification of the packed tarball.`;
+  }
+  const rows = checks.map(check => `| \`${check.id}\` | ${String(check.detail ?? 'not recorded').replace(/\|/g, '\\|')} | ${check.ok === true ? 'Passed' : 'Failed'} |`);
+  const table = ['| Check | Description | Status |', '| :--- | :--- | :--- |', ...rows].join('\n');
+  return warning ? `${warning}\n${table}` : table;
+}
+
+/**
+ * @param {{build: Record<string, any>, receipt: Record<string, any>, version: string, tag: string, protocol: string, containers?: Array<Record<string, any>>, canary?: Record<string, any>}} input
  * @returns {string} markdown
  */
 export function renderReleaseNotes(input) {
   const { build, receipt, version, tag, protocol, containers = [] } = input;
+  const canary = input.canary ?? receipt.evidence?.canary ?? null;
   const bundleBytes = Number(build.rawBytes ?? 0);
   const loaderBytes = Number(build.loaderBytes ?? 0);
   const sdkBudget = Number(build.budgetBytes ?? 15000);
@@ -110,6 +140,18 @@ container receipts rather than restated here.
 
 ${containerAttestation(containers)}
 
+### Clean-Room Package Canary Attestation
+
+The image is not the only artifact a consumer installs: the packed tarball is the other, and
+packing can drop a manifest export, ship a stale hash or sweep a source file into the archive
+without a single source file changing. This is that artifact's verification — the tarball
+unpacked into an empty directory with no \`node_modules\` and no link back to this checkout,
+its layout, hash and leak boundary checked on the extracted files, and the packed
+\`bin/navi-mcp.js\` then driven through a live stdio JSON-RPC handshake and a \`SIGTERM\`
+teardown. Every row is read out of \`evidence.canary\` in the verification receipt.
+
+${canaryAttestation(canary)}
+
 ### Verification
 
 ${checks.length ? `Recorded by \`npm run verify:release\`${verifiedAt ? ` at ${verifiedAt}` : ''}: **${checks.filter(/** @returns {boolean} */ (check) => check.ok).length}/${checks.length} checks passed**, receipt \`ok: ${receipt.ok}\`.
@@ -132,7 +174,8 @@ These notes are generated from this repository's own gate receipts on ${tag}. Th
 is verified by the workflow, not by a hosted CI run reproduced here; the remote SSE transport
 is exercised against this repository's own SSE tests rather than a third-party client; and
 each architecture's container verification is recorded only where a receipt exists — a
-platform absent from the table above is unverified, not implied. See
+platform absent from the table above is unverified, not implied, and the canary table is only
+as green as the record it reads. See
 [reports/PHASE5-VERIFICATION.md](reports/PHASE5-VERIFICATION.md) for the phase record.
 `;
 }
