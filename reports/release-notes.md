@@ -58,14 +58,14 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 
 ### Verification
 
-Provenance: `evidence.revision` is `5ee8055de433a9adedb295572aead1638d4e692c` and `evidence.sourceTree` is `sha256:a1f8bc237722ed7aa4278116c3c7339f5f2d6e7c4a5b33617e53ddc64457f801` — a digest of every tracked
+Provenance: `evidence.revision` is `59d5ee3a1dee5f9885869a44b273360e1d854bf7` and `evidence.sourceTree` is `sha256:aa61e6f15893902c76d4d7dcf00146255fd848a56d35dcce1a4b644154a00854` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-14T00:32:20.648Z: **11/11 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-14T00:41:43.140Z: **11/11 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
@@ -75,7 +75,7 @@ Recorded by `npm run verify:release` at 2026-10-14T00:32:20.648Z: **11/11 checks
 | `version-tag` | pass | v0.6.1 does not exist yet (create it with --tag once this gate is green) |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
-| `test-suite` | pass | 202 passed, 0 failed (floor 200) |
+| `test-suite` | pass | 202 passed, 0 failed (floor 202) |
 | `ci-gates` | pass | All selected gates passed. |
 | `pack-check` | pass | every published path is an intended release artifact |
 | `cleanroom-package-canary` | pass | 6/6 clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake) |

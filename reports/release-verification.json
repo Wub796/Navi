@@ -1,15 +1,15 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-14T00:32:20.648Z",
+  "recordedAt": "2026-10-14T00:41:43.140Z",
   "evidence": {
-    "revision": "5ee8055de433a9adedb295572aead1638d4e692c",
+    "revision": "59d5ee3a1dee5f9885869a44b273360e1d854bf7",
     "branch": "main",
-    "sourceTree": "sha256:a1f8bc237722ed7aa4278116c3c7339f5f2d6e7c4a5b33617e53ddc64457f801",
+    "sourceTree": "sha256:aa61e6f15893902c76d4d7dcf00146255fd848a56d35dcce1a4b644154a00854",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
-    "floor": 200,
+    "floor": 202,
     "tests": [
       202,
       0
@@ -106,7 +106,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "202 passed, 0 failed (floor 200)"
+      "detail": "202 passed, 0 failed (floor 202)"
     },
     {
       "id": "ci-gates",
