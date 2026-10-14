@@ -53,6 +53,20 @@ jobs:
       - name: Build release artifacts
         run: npm run build
 
+      # Same runner defect as the ci.yml jobs: Ubuntu 24.04 denies Chromium's zygote the
+      # user namespace its sandbox needs, so the smoke suite would fail on the runner rather
+      # than on the origin it exists to watch.
+      - name: Allow unprivileged user namespaces for the Chromium sandbox
+        run: |
+          knob=kernel.apparmor_restrict_unprivileged_userns
+          if ! sysctl -n "$knob" >/dev/null 2>&1; then
+            echo "no $knob on this kernel: unprivileged user namespaces are not restricted"
+            exit 0
+          fi
+          sudo sysctl -w "$knob=0"
+          test "$(sysctl -n "$knob")" = "0"
+          echo "$knob=0: the Chromium zygote can sandbox itself"
+
       - name: Run the external smoke suite
         env:
           NAVI_SMOKE_URL: ${{ inputs.target }}

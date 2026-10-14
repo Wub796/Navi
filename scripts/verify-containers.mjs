@@ -32,8 +32,42 @@ const env = { ...process.env, NAVI_IMAGE: image, NAVI_BIND_ADDRESS: '127.0.0.1',
 const composeArgs = ['compose', '--project-name', project, '-f', composeFile];
 /** @type {{check: string, ok: boolean, detail: string}[]} */
 const checks = [];
+/**
+ * What a failed `docker` call actually was: the command, its exit status or the signal that
+ * ended it, how long it took, and the child's own streams. A receipt that records only
+ * "Command failed: <command>" cannot distinguish a missing process from a refused exec from
+ * a client that died with the container it was talking to — which is exactly what a
+ * crash-recovery failure on one architecture looked like, and why it could not be
+diagnosed from its own evidence.
+ * @param {string} command @param {unknown} error @param {number} elapsedMs @returns {string}
+ */
+function describeDockerFailure(command, error, elapsedMs) {
+  const detail = /** @type {{status?: number | null, signal?: string | null, stdout?: unknown, stderr?: unknown}} */ (error);
+  const verdict = typeof detail?.status === 'number'
+    ? `exit code ${detail.status}`
+    : detail?.signal ? `killed by ${detail.signal}` : 'no exit status';
+  const text = (/** @type {unknown} */ value) => String(value ?? '').trim().replace(/\n/g, ' \\n ');
+  return [
+    `${command.replace(/\s+/g, ' ')} failed: ${verdict} after ${elapsedMs}ms`,
+    `stdout: ${text(detail?.stdout) || '(empty)'}`,
+    `stderr: ${text(detail?.stderr) || '(empty)'}`
+  ].join('\n');
+}
 /** @param {string[]} args @param {number} [timeout] */
-const docker = (args, timeout = 30000) => execFileSync('docker', args, { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout });
+const docker = (args, timeout = 30000) => {
+  const startedAt = Date.now();
+  try {
+    return execFileSync('docker', args, { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout });
+  } catch (error) {
+    // The message is rewritten to name the status, the signal, the duration and both
+    // streams; the error object itself is re-thrown so callers that read its `status` and
+    // `stderr` keep working (the fail-closed startup check does), while a receipt that
+    // records only the message still carries the cause.
+    const message = describeDockerFailure(`docker ${args.join(' ')}`, error, Date.now() - startedAt);
+    if (error instanceof Error) { error.message = message; throw error; }
+    throw new Error(message);
+  }
+};
 /** @param {string[]} args @param {number} [timeout] */
 const compose = (args, timeout) => docker([...composeArgs, ...args], timeout);
 /** @param {unknown} condition @param {string} message */
@@ -59,18 +93,75 @@ async function waitReady(url) {
 }
 /** @param {string} service @returns {any} */
 const inspectService = service => JSON.parse(docker(['inspect', compose(['ps', '-a', '-q', service]).trim()]))[0];
-/** @param {string} service @param {number} exitCode @returns {Promise<void>} */
-async function waitStopped(service, exitCode) {
+/**
+ * Wait for the service to be gone, and carry the caller's diagnostic into the failure: a
+ * service that never stopped is usually a signal that never landed, and the report of that
+ * attempt is the only thing that can say why.
+ * @param {string} service @param {number} exitCode @param {string} [diagnostic] @returns {Promise<void>}
+ */
+async function waitStopped(service, exitCode, diagnostic = '') {
+  const note = diagnostic ? `; ${diagnostic}` : '';
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     const state = inspectService(service).State;
     if (!state.Running) {
-      assert(state.ExitCode === exitCode, `${service} exit code ${state.ExitCode}, expected ${exitCode}`);
+      assert(state.ExitCode === exitCode, `${service} exit code ${state.ExitCode}, expected ${exitCode}${note}`);
       return;
     }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  throw new Error(`${service} did not stop`);
+  throw new Error(`${service} did not stop within 15s${note}`);
+}
+/**
+ * The service's own Node process, found inside its container and SIGKILLed, returning what
+ * was signalled (or why nothing was).
+ *
+ * Three things make this deterministic across architectures. The match is a path suffix
+ * rather than one exact argv element, because how the entry point spells the script is not
+ * what this check is about. The probe excludes its own pid, so neither /proc order nor the
+ * script's own text can make it signal the wrapper running it. And the exit status of the
+ * exec is deliberately not treated as the proof that the crash happened: killing the
+ * service's main process can end the container - and this exec's connection to it - before
+ * the client can report a status, so a client that reports a signal after the kill has
+ * already done its job. What proves the crash is the container's own exit code 137 and the
+ * dirty sentinel read immediately after; a kill that did not land leaves the service
+ * running, and the caller's `waitStopped` then fails with this function's report attached.
+ * @param {string} service @param {string} entry @returns {Promise<string>}
+ */
+async function killServiceProcess(service, entry) {
+  const deadline = Date.now() + 20000;
+  let observed = `${entry} was never looked for`;
+  for (;;) {
+    const script = `
+      const fs = require('fs');
+      const entry = ${JSON.stringify(entry)};
+      const self = process.pid;
+      const matches = fs.readdirSync('/proc').filter(p => /^\\d+$/.test(p)).filter(p => Number(p) !== self).filter(p => {
+        try {
+          return fs.readFileSync('/proc/' + p + '/cmdline', 'utf8').split('\\0').some(arg => arg === entry || arg.endsWith('/' + entry));
+        } catch (e) { if (e.code === 'ENOENT' || e.code === 'ESRCH') return false; throw e; }
+      });
+      if (!matches.length) { console.log(JSON.stringify({ found: 0 })); process.exit(0); }
+      const pid = Number(matches[0]);
+      const argv = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\\0').filter(Boolean);
+      console.log(JSON.stringify({ found: matches.length, pid, argv }));
+      process.kill(pid, 'SIGKILL');
+    `;
+    let stdout = '';
+    let clientFailure = '';
+    try { stdout = compose(['exec', '-T', service, 'node', '-e', script], 60000); }
+    catch (error) { clientFailure = error instanceof Error ? error.message : String(error); }
+    /** @type {{found?: number, pid?: number, argv?: string[]} | null} */
+    let probe = null;
+    try { probe = JSON.parse(stdout.trim()); } catch { probe = null; }
+    if (probe?.pid) {
+      const after = clientFailure ? `; the exec client then reported ${clientFailure.replace(/\s+/g, ' ').slice(0, 240)}` : '';
+      return `SIGKILL sent to ${service} pid ${probe.pid} (${(probe.argv ?? []).join(' ')}) among ${probe.found} match(es)${after}`;
+    }
+    observed = clientFailure || `no process matching ${entry} was visible inside ${service} (probe reported ${probe ? `${probe.found} match(es)` : 'no output'})`;
+    if (Date.now() > deadline) return observed;
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
 }
 /** Read stopped-container state through only its isolated volume, as UID 1000.
  * @param {string} volume @param {string} directory @param {string} stateFile @param {string} cleanFile @returns {any} */
@@ -336,18 +427,9 @@ try {
     ['navi-host', host, 'navi_host_unclean_shutdowns_total', hostMount.Name, '/data', hostState, hostClean],
     ['navi-mcp', mcp, 'navi_mcp_unclean_shutdowns_total', mcpMount.Name, mcpDirectory, mcpState, mcpClean]
   ]) {
-    const killNode = () => compose(['exec', '-T', service, 'node', '-e', `
-      const fs = require('fs');
-      const entry = ${JSON.stringify(service === 'navi-host' ? 'server/index.js' : 'bin/navi-mcp.js')};
-      const pid = fs.readdirSync('/proc').filter(p => /^\\d+$/.test(p)).find(p => {
-        try { return fs.readFileSync('/proc/' + p + '/cmdline', 'utf8').split('\\0').includes(entry); }
-        catch (e) { if (e.code === 'ENOENT' || e.code === 'ESRCH') return false; throw e; }
-      });
-      if (!pid) throw new Error('service Node process not found');
-      process.kill(Number(pid), 'SIGKILL');
-    `]);
-    killNode();
-    await waitStopped(service, 137);
+    const entry = service === 'navi-host' ? 'server/index.js' : 'bin/navi-mcp.js';
+    const crash = await killServiceProcess(service, entry);
+    await waitStopped(service, 137, crash);
     let files = lifecycleFiles(volume, directory, stateFile, cleanFile);
     assert(files.dirty && !files.clean, `${service} SIGKILL left false clean evidence`);
     compose(['start', service]);
@@ -358,8 +440,8 @@ try {
     // A second crash followed by force-recreation proves the files do not live
     // in the disposable container layer or /tmp tmpfs.
     const oldId = inspectService(service).Id;
-    killNode();
-    await waitStopped(service, 137);
+    const secondCrash = await killServiceProcess(service, entry);
+    await waitStopped(service, 137, secondCrash);
     compose(['up', '-d', '--no-build', '--force-recreate', '--no-deps', service], 60000);
     await waitReady(url);
     assert(inspectService(service).Id !== oldId, `${service} was not recreated`);
@@ -386,7 +468,7 @@ try {
       const recoveredAudit = await (await request(`${host}/v1/tenants/container-check/security-audit`, { headers: { Authorization: `Bearer ${tenantKey}` } })).json();
       assert(recovered.summary.events === 1 && recoveredAudit.count === 1 && recoveredAudit.violations[0].id === audit.violations[0].id, 'host crash recovery lost telemetry or audit data');
     }
-    record(`${service}-crash-recovery`, `SIGKILL exit 137: ${metric}=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot ${metric}=0 and consumes marker${service === 'navi-mcp' ? '; active Chromium session torn down' : '; telemetry and audit retained'}`);
+    record(`${service}-crash-recovery`, `SIGKILL exit 137 (${crash}; then ${secondCrash}): ${metric}=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot ${metric}=0 and consumes marker${service === 'navi-mcp' ? '; active Chromium session torn down' : '; telemetry and audit retained'}`);
   }
   // The containment guard is the shipped default, independent of the fixture
   // override this deployment adds: drive stdio MCP in a container that carries

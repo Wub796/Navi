@@ -709,6 +709,29 @@ test('the pipeline cannot publish without container verification on both archite
   // CI verifies the image itself against the development file; the two configurations are
   // different evidence and write different receipts.
   expect(stepRuns(ci.jobs.containers.steps)).toContain('npm run test:containers');
+  // Every job that launches Chromium on the runner has to lift Ubuntu 24.04's AppArmor
+  // restriction on unprivileged user namespaces first. Without it the browser installs and
+  // still cannot sandbox itself, so 62 tests fail with "No usable sandbox!" — a runner
+  // defect that reads like a product failure. The step is asserted, not trusted, and asserted
+  // to sit before the browser work rather than anywhere in the job.
+  const smoke = parse(await readFile(join(root, '.github/workflows/smoke.yml'), 'utf8'));
+  const userns = 'kernel.apparmor_restrict_unprivileged_userns';
+  for (const [label, front, launch] of [
+    ['ci quality', ci.jobs.quality.steps, 'npm test'],
+    ['ci benchmark', ci.jobs.benchmark.steps, 'npm run benchmark'],
+    ['release verify-release', release.jobs['verify-release'].steps, 'npm run verify:release'],
+    ['smoke external', smoke.jobs.external.steps, 'npm run test:smoke']
+  ]) {
+    const runs = stepRuns(front);
+    const lifted = runs.findIndex(run => run.includes(userns));
+    expect(lifted, `${label} must set ${userns}`).toBeGreaterThan(-1);
+    expect(lifted, `${label} must set ${userns} before it launches Chromium`).toBeLessThan(runs.findIndex(run => run.includes(launch)));
+    // The knob is set and then read back, and a kernel without it is tolerated rather than
+    // failed — an image that never had the restriction must not be reported as broken.
+    expect(runs[lifted]).toContain('sysctl -n');
+    // Lifting the restriction is the fix; disabling the browser's sandbox is not.
+    expect(runs[lifted]).not.toContain('--no-sandbox');
+  }
   // Both released architectures, each built and verified on its own hardware: an
   // emulated leg refuses at the renderer sandbox, so it would prove nothing about the
   // architecture it claims to cover.

@@ -93,6 +93,20 @@ jobs:
       # The documented command, not a copy of what it expands to: `npm run verify:release`
       # is what a maintainer runs in this checkout, so the job runs the same entry point
       # and a script that stopped working locally would stop working here too.
+      # The release gate runs the browser suite on the runner, so it needs the same
+      # unprivileged user namespaces Ubuntu 24.04 restricts by default; without this the
+      # gate reports dozens of failures that are the runner's kernel, not the release.
+      - name: Allow unprivileged user namespaces for the Chromium sandbox
+        run: |
+          knob=kernel.apparmor_restrict_unprivileged_userns
+          if ! sysctl -n "$knob" >/dev/null 2>&1; then
+            echo "no $knob on this kernel: unprivileged user namespaces are not restricted"
+            exit 0
+          fi
+          sudo sysctl -w "$knob=0"
+          test "$(sysctl -n "$knob")" = "0"
+          echo "$knob=0: the Chromium zygote can sandbox itself"
+
       - name: Verify the release
         env:
           CREATE_TAG: ${{ inputs.create_tag }}

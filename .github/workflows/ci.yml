@@ -69,6 +69,24 @@ jobs:
       - name: Typecheck (strict JavaScript)
         run: npm run typecheck
 
+      # ubuntu-latest now resolves to Ubuntu 24.04, which ships
+      # kernel.apparmor_restrict_unprivileged_userns=1: Chromium's zygote cannot create the
+      # user namespace its sandbox needs, and every browser-launching test dies with "No
+      # usable sandbox!" even though the install step succeeded. Restore the upstream
+      # behaviour rather than weakening the browser — --no-sandbox would delete the very
+      # guarantee this suite exists to prove. The step asserts the value it set, and a kernel
+      # without the knob is left as it is rather than failed.
+      - name: Allow unprivileged user namespaces for the Chromium sandbox
+        run: |
+          knob=kernel.apparmor_restrict_unprivileged_userns
+          if ! sysctl -n "$knob" >/dev/null 2>&1; then
+            echo "no $knob on this kernel: unprivileged user namespaces are not restricted"
+            exit 0
+          fi
+          sudo sysctl -w "$knob=0"
+          test "$(sysctl -n "$knob")" = "0"
+          echo "$knob=0: the Chromium zygote can sandbox itself"
+
       - name: Run the Chromium regression and distribution suite
         run: npm test
 
@@ -207,6 +225,18 @@ jobs:
           fi
           curl -fsS -o /dev/null http://127.0.0.1:4173/navi.min.js
           echo "serving the built bundle"
+
+      # Same reason as the quality job: this job launches Chromium on a host runner.
+      - name: Allow unprivileged user namespaces for the Chromium sandbox
+        run: |
+          knob=kernel.apparmor_restrict_unprivileged_userns
+          if ! sysctl -n "$knob" >/dev/null 2>&1; then
+            echo "no $knob on this kernel: unprivileged user namespaces are not restricted"
+            exit 0
+          fi
+          sudo sysctl -w "$knob=0"
+          test "$(sysctl -n "$knob")" = "0"
+          echo "$knob=0: the Chromium zygote can sandbox itself"
 
       - name: Run the competitive benchmark
         run: npm run benchmark
