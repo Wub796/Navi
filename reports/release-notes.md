@@ -58,6 +58,13 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 
 ### Verification
 
+Provenance: `evidence.revision` is `5ee8055de433a9adedb295572aead1638d4e692c` and `evidence.sourceTree` is `sha256:a1f8bc237722ed7aa4278116c3c7339f5f2d6e7c4a5b33617e53ddc64457f801` — a digest of every tracked
+path outside `reports/`. This receipt is published by the generated-reports commit that follows the
+gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
+commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
+nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
+does not match the tagged tree.
+
 Recorded by `npm run verify:release` at 2026-10-14T00:32:20.648Z: **11/11 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |

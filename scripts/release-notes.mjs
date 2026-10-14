@@ -91,6 +91,39 @@ export function canaryAttestation(canary) {
 }
 
 /**
+ * The provenance the verification section opens with: the revision the receipt names and the
+ * digest of the source tree it verified.
+ *
+ * The second half is the one that carries weight. A receipt cannot name the commit that
+ * publishes it — that commit does not exist when the gate writes the file — so
+ * `evidence.revision` always names the revision one step behind the tag. `evidence.sourceTree`
+ * digests every tracked path outside `reports/`, which is what lets a reader check the thing
+ * that actually matters: that the tagged commit carries exactly the source tree the gate
+ * verified, with the report refresh that followed it the only permitted difference.
+ *
+ * A receipt that records no digest is said to be missing one rather than quietly described by
+ * its revision alone, because the revision on its own proves nothing about the tagged tree.
+ * @param {Record<string, any> | null | undefined} receipt
+ * @returns {string}
+ */
+export function sourceTreeAttestation(receipt) {
+  const revision = typeof receipt?.evidence?.revision === 'string' ? receipt.evidence.revision : null;
+  const sourceTree = typeof receipt?.evidence?.sourceTree === 'string' ? receipt.evidence.sourceTree : null;
+  if (!sourceTree) {
+    return '> [!WARNING]\n> This receipt records no `evidence.sourceTree`, so the tagged commit cannot be shown to carry the source tree the gate verified; re-run `npm run verify:release` on the revision being released.';
+  }
+  const named = revision ? `\`evidence.revision\` is \`${revision}\`` : 'no revision is recorded';
+  return [
+    `Provenance: ${named} and \`evidence.sourceTree\` is \`${sourceTree}\` — a digest of every tracked`,
+    'path outside `reports/`. This receipt is published by the generated-reports commit that follows the',
+    'gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged',
+    'commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and',
+    'nothing else. The publish preflight refuses on any other difference, and on a recorded digest that',
+    'does not match the tagged tree.'
+  ].join('\n');
+}
+
+/**
  * @param {{build: Record<string, any>, receipt: Record<string, any>, version: string, tag: string, protocol: string, containers?: Array<Record<string, any>>, canary?: Record<string, any>}} input
  * @returns {string} markdown
  */
@@ -153,6 +186,8 @@ teardown. Every row is read out of \`evidence.canary\` in the verification recei
 ${canaryAttestation(canary)}
 
 ### Verification
+
+${sourceTreeAttestation(receipt)}
 
 ${checks.length ? `Recorded by \`npm run verify:release\`${verifiedAt ? ` at ${verifiedAt}` : ''}: **${checks.filter(/** @returns {boolean} */ (check) => check.ok).length}/${checks.length} checks passed**, receipt \`ok: ${receipt.ok}\`.
 

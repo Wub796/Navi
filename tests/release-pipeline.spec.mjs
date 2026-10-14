@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { CANARY_CHECKS_FLOOR, CONTAINER_CHECKS_FLOOR, evaluatePublish, resolveProvenance } from '../scripts/publish-preflight.mjs';
-import { canaryAttestation, renderReleaseNotes } from '../scripts/release-notes.mjs';
+import { canaryAttestation, renderReleaseNotes, sourceTreeAttestation } from '../scripts/release-notes.mjs';
 import { readContainerReceipts, summarizeContainer } from '../scripts/container-evidence.mjs';
 import { MIN_PASSING_TESTS, sourceTreeDigest } from '../scripts/verify-release.mjs';
 import { evaluateUnpackedPackage, REQUIRED_PACKAGE_FILES, verifyCleanRoomPackage } from '../scripts/verify-registry-package.mjs';
@@ -406,7 +406,7 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(200);
+  expect(MIN_PASSING_TESTS).toBe(202);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.1.md', 'docs/CONTAINERS.md']) {
     const text = await readFile(join(root, document), 'utf8');
@@ -458,6 +458,24 @@ test('release notes state only what the receipts recorded', () => {
   const short = canaryAttestation({ ...readyCanary, passed: 5, total: 5, checks: readyCanary.checks.slice(0, 5) });
   expect(short).toContain('> [!WARNING]');
   expect(short).toContain(`${CANARY_CHECKS_FLOOR}/${CANARY_CHECKS_FLOOR}`);
+
+  // The provenance the verification section opens with: the revision the receipt names and the
+  // digest of the source tree it verified. The revision alone would be the weaker claim — it is
+  // always one step behind the tag — so the digest is what a reader checks, and a receipt that
+  // records none says so rather than being described by its revision as if that were enough.
+  expect(notes).toContain('> [!WARNING]');
+  expect(notes).toContain('records no `evidence.sourceTree`');
+  const withProvenance = renderReleaseNotes({ ...input, receipt: { ...input.receipt, evidence: { revision: 'abc123def456', sourceTree: 'sha256:' + 'a'.repeat(64) } } });
+  expect(withProvenance).toContain('`evidence.revision` is `abc123def456`');
+  expect(withProvenance).toContain(`\`evidence.sourceTree\` is \`sha256:${'a'.repeat(64)}\``);
+  expect(withProvenance).toContain('path outside `reports/`');
+  // The paragraph itself carries no warning once a digest is recorded; the canary section of
+  // this fixture still does, which is a different attestation and is asserted separately.
+  expect(sourceTreeAttestation({ evidence: { revision: 'abc123def456', sourceTree: 'sha256:abcd' } })).not.toContain('[!WARNING]');
+  // A digest with no revision beside it is still a provenance statement; an empty one is not.
+  expect(sourceTreeAttestation({ evidence: { sourceTree: 'sha256:abc' } })).toContain('no revision is recorded');
+  expect(sourceTreeAttestation({})).toContain('> [!WARNING]');
+  expect(sourceTreeAttestation(undefined)).toContain('> [!WARNING]');
 
   // The container attestation is read out of the container receipts, so it can state the
   // runtime identity, the capabilities actually held, the store the host served and the
@@ -527,6 +545,10 @@ test('the generated notes and the release collateral carry the canary attestatio
   // the release note a reader opens states the canary verdicts beside its container matrix.
   const committed = await readFile(join(root, 'reports/release-notes.md'), 'utf8');
   expect(committed).toContain('### Clean-Room Package Canary Attestation');
+  // The provenance the publish rests on, printed from the same receipt the preflight checks.
+  expect(notes).toContain(`\`evidence.revision\` is \`${receipt.evidence.revision}\``);
+  expect(notes).toContain(`\`evidence.sourceTree\` is \`${receipt.evidence.sourceTree}\``);
+  expect(committed, 'the committed notes must carry the provenance paragraph').toContain(`\`evidence.sourceTree\` is \`${receipt.evidence.sourceTree}\``);
   expect(committed).toContain('| Platform | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
   expect(committed).toContain(recorded.map(check => `| \`${check.id}\` | ${check.detail} | Passed |`).join('\n'));
   const release = await readFile(join(root, 'docs/RELEASES/v0.6.1.md'), 'utf8');
