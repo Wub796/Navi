@@ -32,10 +32,10 @@ running container under the deployment's own restrictions. Each released archite
 built and exercised natively on its own runner, and every value below is read from those
 container receipts rather than restated here.
 
-| Platform | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |
-|---|---|---|---|---|---|---:|
-| linux/arm64 | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
-| linux/arm64 | `docker-compose.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
+| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |
+|---|---|---|---|---|---|---:|---:|
+| linux/arm64 | `sha256:f84e26a11f1328ff68e49aa41f812a3dbef3e382f7722aa3caafae2d6429d5af` | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
+| linux/arm64 | `sha256:f84e26a11f1328ff68e49aa41f812a3dbef3e382f7722aa3caafae2d6429d5af` | `docker-compose.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
 
 ### Clean-Room Package Canary Attestation
 
@@ -58,20 +58,20 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 
 ### Verification
 
-Provenance: `evidence.revision` is `4dfe5fb7f6e14a905e18d62b77c3cf6e321abb68` and `evidence.sourceTree` is `sha256:1cae16a33773c43cb55db0f6fc5407603d0f14a22eeeab440b1b1d38a0d2d1f1` — a digest of every tracked
+Provenance: `evidence.revision` is `b190247578dcefdf38d025c632da391a64150ed2` and `evidence.sourceTree` is `sha256:55115b0a53c963126fda8063d998b7abd11c7f58bb913ba278700e3aaf0374cb` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-14T23:08:34.366Z: **11/11 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-14T23:21:58.798Z: **11/11 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 7 generated path(s) |
+| `git-clean` | pass | clean apart from 11 generated path(s) |
 | `version-tag` | pass | v0.6.1 does not exist yet (create it with --tag once this gate is green) |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |

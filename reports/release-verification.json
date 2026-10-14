@@ -1,11 +1,11 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-14T23:08:34.366Z",
+  "recordedAt": "2026-10-14T23:21:58.798Z",
   "evidence": {
-    "revision": "4dfe5fb7f6e14a905e18d62b77c3cf6e321abb68",
+    "revision": "b190247578dcefdf38d025c632da391a64150ed2",
     "branch": "main",
-    "sourceTree": "sha256:1cae16a33773c43cb55db0f6fc5407603d0f14a22eeeab440b1b1d38a0d2d1f1",
+    "sourceTree": "sha256:55115b0a53c963126fda8063d998b7abd11c7f58bb913ba278700e3aaf0374cb",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
@@ -18,7 +18,8 @@
       {
         "architecture": "linux/arm64",
         "compose": "deploy/docker-compose.prod.yml",
-        "recordedAt": "2026-10-14T23:01:40.394Z",
+        "imageId": "sha256:f84e26a11f1328ff68e49aa41f812a3dbef3e382f7722aa3caafae2d6429d5af",
+        "recordedAt": "2026-10-14T23:17:05.663Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -26,7 +27,8 @@
       {
         "architecture": "linux/arm64",
         "compose": "docker-compose.yml",
-        "recordedAt": "2026-10-14T22:53:24.762Z",
+        "imageId": "sha256:f84e26a11f1328ff68e49aa41f812a3dbef3e382f7722aa3caafae2d6429d5af",
+        "recordedAt": "2026-10-14T23:16:51.120Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -86,7 +88,7 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 7 generated path(s)"
+      "detail": "clean apart from 11 generated path(s)"
     },
     {
       "id": "version-tag",
