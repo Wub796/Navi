@@ -56,11 +56,14 @@ export function containerAttestation(containers) {
     const lifecycle = checks.filter(check => /-crash-recovery$/.test(String(check.check)));
     const recovered = lifecycle.length === 2 && lifecycle.every(check => check.ok);
     const passed = checks.filter(check => check.ok).length;
-    return `| ${container.architecture ?? 'not recorded'} | \`${container.compose ?? 'not recorded'}\` | ${typeof posture?.uid === 'number' ? `uid ${posture.uid} (${posture.node ?? 'node not recorded'})` : 'not recorded'} | ${capabilities} | ${store?.ok ? 'sqlite, `-wal` sidecar present' : 'not recorded'} | ${recovered ? 'SIGKILL 137 → counter 1; graceful stop → 0' : 'not recorded'} | ${passed}/${checks.length} ${container.ok ? 'pass' : 'FAIL'} |`;
+    // The digest is printed in full rather than shortened: a truncated digest cannot be
+    // compared against an image a reader has, which is the only reason to print one.
+    const image = typeof container.imageId === 'string' && container.imageId ? `\`${container.imageId}\`` : 'not recorded';
+    return `| ${container.architecture ?? 'not recorded'} | ${image} | \`${container.compose ?? 'not recorded'}\` | ${typeof posture?.uid === 'number' ? `uid ${posture.uid} (${posture.node ?? 'node not recorded'})` : 'not recorded'} | ${capabilities} | ${store?.ok ? 'sqlite, `-wal` sidecar present' : 'not recorded'} | ${recovered ? 'SIGKILL 137 → counter 1; graceful stop → 0' : 'not recorded'} | ${passed}/${checks.length} ${container.ok ? 'pass' : 'FAIL'} |`;
   });
   return [
-    '| Platform | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |',
-    '|---|---|---|---|---|---|---:|',
+    '| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |',
+    '|---|---|---|---|---|---|---:|---:|',
     ...rows
   ].join('\n');
 }

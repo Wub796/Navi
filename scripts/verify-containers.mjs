@@ -96,6 +96,15 @@ async function assertBootMetric(url, metric, expected) {
 let started = false;
 /** The platform the verified image was built for, recorded as evidence. @type {string | null} */
 let architecture = null;
+/**
+ * The image the checks actually ran against, by local config id, recorded as evidence.
+ * `compose` and `architecture` say which deployment and platform were proved but not
+ * which bytes: an image rebuilt under the same tag between two runs leaves both fields
+ * identical. The id is the content digest of that image's configuration, which is what a
+ * reader needs to tie the verdicts to the artifact they describe.
+ * @type {string | null}
+ */
+let imageId = null;
 /** @type {Client | undefined} */
 let client;
 try {
@@ -105,7 +114,8 @@ try {
   const metadata = JSON.parse(docker(['image', 'inspect', image]))[0];
   assert(metadata.Config.User === 'pwuser:pwuser', 'image must run as pwuser:pwuser');
   architecture = `${metadata.Os}/${metadata.Architecture}`;
-  record('image', `${metadata.Id}; ${architecture}; user ${metadata.Config.User}`);
+  imageId = metadata.Id;
+  record('image', `${imageId}; ${architecture}; user ${metadata.Config.User}`);
   started = true;
   // Fail on occupied requested ports; do not stop or replace their owners.
   // Only the isolated verification deployment allows its private fixture hosts.
@@ -411,8 +421,9 @@ try {
     catch { checks.push({ check: 'cleanup', ok: false, detail: `Could not clean isolated Compose project ${project}` }); process.exitCode = 1; }
   }
   await mkdir('reports', { recursive: true });
-  // The receipt names the deployment configuration and the platform it proves, beside the
-  // verdicts themselves, so a reader of the evidence does not have to infer either from
-  // the file name it happens to sit in.
-  await writeFile(receiptPath, JSON.stringify({ recordedAt: new Date().toISOString(), compose: composeFile, architecture, ok: checks.length > 0 && checks.every(check => check.ok), checks }, null, 2) + '\n');
+  // The receipt names the deployment configuration, the platform and the image digest it
+  // proves, beside the verdicts themselves, so a reader of the evidence does not have to
+  // infer any of the three from the file name it happens to sit in or the tag it was run
+  // with.
+  await writeFile(receiptPath, JSON.stringify({ recordedAt: new Date().toISOString(), compose: composeFile, architecture, imageId, ok: checks.length > 0 && checks.every(check => check.ok), checks }, null, 2) + '\n');
 }

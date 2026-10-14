@@ -483,6 +483,7 @@ test('release notes state only what the receipts recorded', () => {
   const arm64 = {
     architecture: 'linux/arm64',
     compose: 'deploy/docker-compose.prod.yml',
+    imageId: 'sha256:5d3c1f0e',
     ok: true,
     checks: [
       { check: 'image', ok: true, detail: 'sha256:abc; linux/arm64; user pwuser:pwuser' },
@@ -493,7 +494,12 @@ test('release notes state only what the receipts recorded', () => {
     ]
   };
   const withContainers = renderReleaseNotes({ ...input, containers: [arm64] });
-  expect(withContainers).toContain('| linux/arm64 | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 5/5 pass |');
+  expect(withContainers).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
+  expect(withContainers).toContain('| linux/arm64 | `sha256:5d3c1f0e` | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 5/5 pass |');
+  // A receipt written before the field existed reads as `null` — which is what a reader
+  // of one produces — and says so instead of borrowing the tag's authority: the note must
+  // not name an image it cannot show was the one verified.
+  expect(renderReleaseNotes({ ...input, containers: [{ ...arm64, imageId: null }] })).toContain('| linux/arm64 | not recorded | `deploy/docker-compose.prod.yml` |');
   // No receipt is not a pass: the section says so instead of being omitted.
   expect(notes).toContain('No container receipt was found on this revision');
   // A leg that failed is printed as FAIL with the count it actually passed, and its
@@ -521,7 +527,7 @@ test('the generated notes and the release collateral carry the canary attestatio
   // Both attestations, each under its own section, in one document.
   expect(notes).toContain('### Container verification');
   expect(notes).toContain('### Clean-Room Package Canary Attestation');
-  expect(notes).toContain('| Platform | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
+  expect(notes).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
   expect(notes).toContain('| Check | Description | Status |');
   // A green record is rendered as a table, with no warning above it.
   expect(notes).not.toContain('[!WARNING]');
@@ -549,7 +555,7 @@ test('the generated notes and the release collateral carry the canary attestatio
   expect(notes).toContain(`\`evidence.revision\` is \`${receipt.evidence.revision}\``);
   expect(notes).toContain(`\`evidence.sourceTree\` is \`${receipt.evidence.sourceTree}\``);
   expect(committed, 'the committed notes must carry the provenance paragraph').toContain(`\`evidence.sourceTree\` is \`${receipt.evidence.sourceTree}\``);
-  expect(committed).toContain('| Platform | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
+  expect(committed).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
   expect(committed).toContain(recorded.map(check => `| \`${check.id}\` | ${check.detail} | Passed |`).join('\n'));
   const release = await readFile(join(root, 'docs/RELEASES/v0.6.1.md'), 'utf8');
   expect(release).toContain('## Container verification matrix');
@@ -565,7 +571,7 @@ test('container receipts are discovered by target, not by the path they sit in',
     // A per-architecture artifact the release workflow downloaded, an older local receipt
     // for the same target, and a receipt that predates the architecture stamp.
     await writeFile(join(downloaded, 'production-container-verification.json'), JSON.stringify({
-      recordedAt: '2026-10-13T02:00:00.000Z', compose: 'deploy/docker-compose.prod.yml', architecture: 'linux/amd64', ok: true,
+      recordedAt: '2026-10-13T02:00:00.000Z', compose: 'deploy/docker-compose.prod.yml', architecture: 'linux/amd64', imageId: 'sha256:abc', ok: true,
       checks: [{ check: 'image', ok: true, detail: 'sha256:abc; linux/amd64; user pwuser:pwuser' }]
     }) + '\n');
     await writeFile(join(workspace, 'reports', 'production-container-verification.json'), JSON.stringify({
@@ -581,11 +587,17 @@ test('container receipts are discovered by target, not by the path they sit in',
     expect(receipts).toHaveLength(2);
     const amd64 = receipts.find(receipt => receipt.architecture === 'linux/amd64');
     expect(amd64?.recordedAt).toBe('2026-10-13T02:00:00.000Z');
+    // The image digest is carried through the summary so the release receipt names the
+    // bytes it verified, not only the tag and the platform they were built under.
     expect(summarizeContainer(/** @type {any} */ (amd64))).toEqual({
-      architecture: 'linux/amd64', compose: 'deploy/docker-compose.prod.yml', recordedAt: '2026-10-13T02:00:00.000Z', ok: true, passed: 1, checks: 1
+      architecture: 'linux/amd64', compose: 'deploy/docker-compose.prod.yml', imageId: 'sha256:abc', recordedAt: '2026-10-13T02:00:00.000Z', ok: true, passed: 1, checks: 1
     });
+    // A receipt that predates the digest is read as unstamped, not as a failure and not
+    // as a guess: its verdicts are still evidence, and the missing digest is visible.
+    const unstamped = receipts.find(receipt => receipt.architecture === null);
+    expect(summarizeContainer(/** @type {any} */ (unstamped)).imageId).toBeNull();
     // An unstamped receipt is kept and reported as unstamped rather than dropped or guessed.
-    expect(receipts.some(receipt => receipt.architecture === null && receipt.compose === null)).toBe(true);
+    expect(unstamped?.compose).toBeNull();
     // A receipt that cannot be parsed is an error: a quieter release is not an option.
     await writeFile(join(workspace, 'reports', 'container-verification', 'broken.json'), '{ not json');
     await expect(readContainerReceipts(workspace)).rejects.toThrow();

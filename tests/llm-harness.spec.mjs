@@ -422,6 +422,17 @@ test('the CLI writes live token, latency and TCR artifacts without touching fixt
       expect(summary.latency.meanTurnMs).toBeGreaterThan(0);
     }
     for (const trial of report.trials) expect(trial.turnLatenciesMs).toHaveLength(trial.requests);
+    // A refusal is recorded with the call that produced it, verbatim. The bucket alone
+    // says what the harness thought went wrong, not what the model actually sent, so a
+    // root-cause audit would have to replay the model to learn it.
+    const refusals = report.trials.flatMap(/** @param {any} trial */ trial => trial.failures).filter(/** @param {any} failure */ failure => failure.tool !== undefined);
+    expect(refusals, 'a refused tool call must be recorded with the call that produced it').not.toHaveLength(0);
+    for (const refusal of refusals) {
+      expect(refusal.tool).toBe('navi_preflight_probe');
+      // Kept as emitted and unparsed, so malformed arguments stay visible as the model
+      // wrote them rather than as this harness's own parse error.
+      expect(refusal.rawArgs).toBe('{"value":"ok"}');
+    }
     expect(await readFile(join(workspace, 'reports/LLM-TCR-BENCHMARK-LIVE.md'), 'utf8')).toContain('0.0%');
     expect(await Promise.all(baselineFiles.map(name => readFile(join(workspace, 'reports', name))))).toEqual(before);
   } finally {

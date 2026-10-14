@@ -18,7 +18,7 @@ export const LOCAL_RECEIPTS = ['reports/container-verification.json', 'reports/p
 
 /**
  * @typedef {{check: string, ok: boolean, detail: string}} ContainerCheck
- * @typedef {{path: string, architecture: string | null, compose: string | null, recordedAt: string | null, ok: boolean, checks: ContainerCheck[]}} ContainerReceipt
+ * @typedef {{path: string, architecture: string | null, compose: string | null, imageId: string | null, recordedAt: string | null, ok: boolean, checks: ContainerCheck[]}} ContainerReceipt
  */
 
 /**
@@ -34,6 +34,10 @@ export async function readContainerReceipt(path) {
     path,
     architecture: typeof parsed.architecture === 'string' ? parsed.architecture : null,
     compose: typeof parsed.compose === 'string' ? parsed.compose : null,
+    // The image digest is carried through as recorded, and a receipt written before the
+    // field existed is read as unstamped rather than rejected: the verdicts it holds are
+    // still evidence, and the missing digest is visible as `null` instead of implied.
+    imageId: typeof parsed.imageId === 'string' && parsed.imageId ? parsed.imageId : null,
     recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : null,
     ok: parsed.ok,
     checks: parsed.checks.filter((/** @type {unknown} */ check) => typeof (/** @type {ContainerCheck} */ (check))?.check === 'string')
@@ -81,12 +85,13 @@ export async function readContainerReceipts(root = '.') {
  * The compact form a release receipt records: which platform and configuration were
  * verified, and the verdict, without copying every check detail into a second file.
  * @param {ContainerReceipt} receipt
- * @returns {{architecture: string | null, compose: string | null, recordedAt: string | null, ok: boolean, passed: number, checks: number}}
+ * @returns {{architecture: string | null, compose: string | null, imageId: string | null, recordedAt: string | null, ok: boolean, passed: number, checks: number}}
  */
 export function summarizeContainer(receipt) {
   return {
     architecture: receipt.architecture,
     compose: receipt.compose,
+    imageId: receipt.imageId,
     recordedAt: receipt.recordedAt,
     ok: receipt.ok,
     passed: receipt.checks.filter(check => check.ok).length,
