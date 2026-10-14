@@ -14,23 +14,23 @@
       "integrity": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv"
     },
     "dist/index.mjs": {
-      "bytes": 41537,
-      "gzipBytes": 10295,
+      "bytes": 42942,
+      "gzipBytes": 10549,
       "minified": false
     },
     "dist/index.cjs": {
-      "bytes": 42834,
-      "gzipBytes": 10633,
+      "bytes": 44263,
+      "gzipBytes": 10890,
       "minified": false
     },
     "dist/cli.mjs": {
-      "bytes": 50396,
-      "gzipBytes": 12962,
+      "bytes": 51803,
+      "gzipBytes": 13211,
       "minified": false
     },
     "dist/mcp.mjs": {
-      "bytes": 115188,
-      "gzipBytes": 31192,
+      "bytes": 116895,
+      "gzipBytes": 31563,
       "minified": false
     },
     "dist/index.d.ts": {

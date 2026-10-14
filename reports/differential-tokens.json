@@ -1,12 +1,12 @@
 {
-  "recordedAt": "2026-10-14T00:40:27.365Z",
+  "recordedAt": "2026-10-14T22:34:13.420Z",
   "node": "v22.23.3",
   "tokenizer": "cl100k_base",
   "cadence": "three observations per action on both paths",
   "trials": [
     {
       "mode": "full",
-      "tokens": 8694,
+      "tokens": 8667,
       "observations": 21,
       "success": true
     },
@@ -17,5 +17,5 @@
       "success": true
     }
   ],
-  "reduction": 0.6687370600414079
+  "reduction": 0.667705088265836
 }

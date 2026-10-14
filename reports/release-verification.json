@@ -1,17 +1,17 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-14T00:41:43.140Z",
+  "recordedAt": "2026-10-14T22:35:21.342Z",
   "evidence": {
-    "revision": "59d5ee3a1dee5f9885869a44b273360e1d854bf7",
+    "revision": "edb93a80e6389c4130969ef7cf4cb4aa1d12318c",
     "branch": "main",
-    "sourceTree": "sha256:aa61e6f15893902c76d4d7dcf00146255fd848a56d35dcce1a4b644154a00854",
+    "sourceTree": "sha256:f35756f6d6306d69440678e21d69ace71b510d41496a8a0395d0d69c6bdc3cc4",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
     "floor": 202,
     "tests": [
-      202,
+      206,
       0
     ],
     "containers": [
@@ -86,7 +86,7 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 5 generated path(s)"
+      "detail": "clean apart from 8 generated path(s)"
     },
     {
       "id": "version-tag",
@@ -106,7 +106,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "202 passed, 0 failed (floor 202)"
+      "detail": "206 passed, 0 failed (floor 202)"
     },
     {
       "id": "ci-gates",
