@@ -11,7 +11,11 @@
 // driver against the page, so the shipped browser bundle gains no bytes:
 //
 //   mutation_settle  the document (and its open shadow roots and same-origin
-//                    frames) records no DOM mutation for a quiet window;
+//                    frames) records no DOM mutation for a quiet window. An
+//                    action that replaces the document outright, a full-page
+//                    navigation, settles it too: the observers go down with the
+//                    document they were watching, so the wait reports the
+//                    replacement rather than an unsettled timeout;
 //   navigation       the top-level URL changed, or the document reloaded;
 //   target_hidden    the dispatched target left the action map, or Navi now
 //                    reports it as invisible or occluded (a dismissed modal).
@@ -47,6 +51,7 @@ const NAVIGATION_POLL_MS = 50;
  * @typedef {object} SettlePageLike
  * @property {() => string} url
  * @property {(fn: any, arg?: any) => Promise<any>} evaluate
+ * @property {((state: string) => Promise<unknown>) | undefined} [waitForLoadState]
  */
 
 /**
@@ -96,8 +101,12 @@ export async function prepareSettle(page, plan) {
     return { token, beforeUrl: page.url(), armed: true };
   }
   if (plan.waitFor === 'mutation_settle') {
+    // The same document marker the navigation wait uses: if the observers die with
+    // the document, this tells the replacement apart from "nothing happened" even
+    // when the new document keeps the same URL.
+    const token = randomUUID();
     try {
-      await page.evaluate(/** @param {{quietMs: number}} arg */ arg => {
+      await page.evaluate(/** @param {{quietMs: number, token: string}} arg */ arg => {
         const scope = /** @type {any} */ (globalThis);
         if (scope.__naviSettle) {
           for (const observer of scope.__naviSettle.observers) observer.disconnect();
@@ -129,14 +138,54 @@ export async function prepareSettle(page, plan) {
         };
         walk(document);
         scope.__naviSettle = state;
-      }, { quietMs: plan.quietMs });
+        scope.__naviSettleToken = arg.token;
+      }, { quietMs: plan.quietMs, token });
     } catch {
       return { token: null, beforeUrl: null, armed: false };
     }
-    return { token: null, beforeUrl: null, armed: true };
+    return { token, beforeUrl: page.url(), armed: true };
   }
   // target_hidden needs no setup: it reads live Navi state after the dispatch.
   return { token: null, beforeUrl: null, armed: true };
+}
+
+/**
+ * Did the document this wait was armed on get replaced while the wait was running?
+ *
+ * A destroyed execution context is the only way a `mutation_settle` can fail once the
+ * action has committed: the observers went down with the document they were watching.
+ * That is evidence of the effect rather than of a broken wait, but it is only evidence,
+ * so this asks the page instead of assuming. Only positive evidence settles it - a URL
+ * that changed, or a document that no longer carries the marker the wait was armed with -
+ * and the poll runs until that evidence appears or the budget is spent. A marker that is
+ * still there, or a document that cannot be asked yet, is a replacement that has not
+ * landed, which is exactly what the rest of the deadline is for. Nothing observable
+ * replaced means false, so a context that dies for some other reason stays a reported
+ * failure rather than being settled by a blanket rule.
+ * @param {SettlePageLike} page
+ * @param {SettlePreparation} prepared
+ * @param {number} budgetMs
+ * @returns {Promise<boolean>}
+ */
+async function documentReplaced(page, prepared, budgetMs) {
+  const deadline = Date.now() + Math.max(0, budgetMs);
+  try {
+    // A navigation that has not committed yet is not a failed wait: give the load the
+    // replacement is still in time to become the document this asks.
+    await page.waitForLoadState?.('domcontentloaded');
+  } catch { /* a page that will not answer is polled below */ }
+  for (;;) {
+    if (prepared.beforeUrl !== null && page.url() !== prepared.beforeUrl) return true;
+    let token = null;
+    let readable = false;
+    try {
+      token = await page.evaluate(() => /** @type {any} */ (globalThis).__naviSettleToken);
+      readable = true;
+    } catch { readable = false; }
+    if (readable && token !== prepared.token) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise(resolve => setTimeout(resolve, NAVIGATION_POLL_MS));
+  }
 }
 
 /**
@@ -178,25 +227,46 @@ export async function completeSettle(page, plan, targetId, prepared) {
 
     if (plan.waitFor === 'mutation_settle') {
       if (!prepared.armed) return { settled: false, elapsedMs: 0, reason: 'arm_failed' };
-      const outcome = /** @type {SettleOutcome} */ (await page.evaluate(async (/** @type {{timeoutMs: number}} */ arg) => {
-        const scope = /** @type {any} */ (globalThis);
-        const state = scope.__naviSettle;
-        if (!state) return { settled: false, elapsedMs: 0, reason: 'not_armed' };
-        const start = performance.now();
-        const deadline = start + arg.timeoutMs;
-        try {
-          for (;;) {
-            const now = performance.now();
-            if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start };
-            if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: 'timeout' };
-            await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - now))));
+      const started = Date.now();
+      /** @type {SettleOutcome} */
+      let failed;
+      try {
+        const outcome = /** @type {SettleOutcome} */ (await page.evaluate(async (/** @type {{timeoutMs: number}} */ arg) => {
+          const scope = /** @type {any} */ (globalThis);
+          const state = scope.__naviSettle;
+          if (!state) return { settled: false, elapsedMs: 0, reason: 'not_armed' };
+          const start = performance.now();
+          const deadline = start + arg.timeoutMs;
+          try {
+            for (;;) {
+              const now = performance.now();
+              if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start };
+              if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: 'timeout' };
+              await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - now))));
+            }
+          } finally {
+            for (const observer of state.observers) observer.disconnect();
+            delete scope.__naviSettle;
           }
-        } finally {
-          for (const observer of state.observers) observer.disconnect();
-          delete scope.__naviSettle;
-        }
-      }, { timeoutMs: plan.timeoutMs }));
-      return outcome;
+        }, { timeoutMs: plan.timeoutMs }));
+        // The wait can land on a document that is not the one it was armed on: when the
+        // dispatch navigated, the observers are absent from whatever document answers, and
+        // the page reports that as a settled:false `not_armed`. That is the same
+        // replacement a destroyed context reports, so it is reconciled below rather than
+        // returned as an unsettled wait the caller cannot act on.
+        if (outcome.settled || outcome.reason !== 'not_armed') return outcome;
+        failed = outcome;
+      } catch (error) {
+        // A context that died mid-wait reports the same replacement less politely: the
+        // observers went down with the document they were armed on.
+        failed = { settled: false, elapsedMs: 0, reason: `settle_failed: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      const elapsedMs = Date.now() - started;
+      // Either way, the wait is settled only by a replacement it can actually observe.
+      if (await documentReplaced(page, prepared, plan.timeoutMs - elapsedMs)) {
+        return { settled: true, elapsedMs, reason: 'document_replaced' };
+      }
+      return { ...failed, elapsedMs };
     }
 
     const outcome = /** @type {SettleOutcome} */ (await page.evaluate(async (/** @type {{targetId: string, timeoutMs: number, pollMs: number}} */ arg) => {

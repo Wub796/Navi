@@ -469,7 +469,7 @@ export const TOOLS = [
         },
         settle: {
           type: 'object',
-          description: 'Optional deterministic settlement. mutation_settle waits for DOM silence (>=100ms with no mutation, including open shadow roots and same-origin frames); navigation waits for a URL change or document reload; target_hidden waits for the target to be removed, invisible or occluded. A timeout reports settled:false and never re-runs the action.',
+          description: 'Deterministic post-action settlement. Optional and omittable: a call without it executes and returns no receipt. mutation_settle waits for DOM silence (>=100ms with no mutation, including open shadow roots and same-origin frames); navigation waits for a URL change or document reload; target_hidden waits for the target to be removed, invisible or occluded. An action that replaces the document, a full-page navigation, settles mutation_settle too and reports settled:true with settle_reason document_replaced, because the effect it was observing committed as a new document. A timeout reports settled:false and never re-runs the action.',
           properties: {
             timeout_ms: { type: 'number', description: `Settlement deadline in milliseconds, 1-${MAX_SETTLE_TIMEOUT_MS}. Default ${DEFAULT_SETTLE_TIMEOUT_MS}.` },
             wait_for: { type: 'string', enum: [...SETTLE_MODES], description: 'Which condition to wait for. Default "mutation_settle".' }

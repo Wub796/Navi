@@ -49,9 +49,10 @@ async function prepareSettle(page, plan) {
     return { token, beforeUrl: page.url(), armed: true };
   }
   if (plan.waitFor === "mutation_settle") {
+    const token = randomUUID();
     try {
       await page.evaluate(
-        /** @param {{quietMs: number}} arg */
+        /** @param {{quietMs: number, token: string}} arg */
         (arg) => {
           const scope = (
             /** @type {any} */
@@ -94,15 +95,40 @@ async function prepareSettle(page, plan) {
           };
           walk(document);
           scope.__naviSettle = state;
+          scope.__naviSettleToken = arg.token;
         },
-        { quietMs: plan.quietMs }
+        { quietMs: plan.quietMs, token }
       );
     } catch {
       return { token: null, beforeUrl: null, armed: false };
     }
-    return { token: null, beforeUrl: null, armed: true };
+    return { token, beforeUrl: page.url(), armed: true };
   }
   return { token: null, beforeUrl: null, armed: true };
+}
+async function documentReplaced(page, prepared, budgetMs) {
+  const deadline = Date.now() + Math.max(0, budgetMs);
+  try {
+    await page.waitForLoadState?.("domcontentloaded");
+  } catch {
+  }
+  for (; ; ) {
+    if (prepared.beforeUrl !== null && page.url() !== prepared.beforeUrl) return true;
+    let token = null;
+    let readable = false;
+    try {
+      token = await page.evaluate(() => (
+        /** @type {any} */
+        globalThis.__naviSettleToken
+      ));
+      readable = true;
+    } catch {
+      readable = false;
+    }
+    if (readable && token !== prepared.token) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve3) => setTimeout(resolve3, NAVIGATION_POLL_MS));
+  }
 }
 async function completeSettle(page, plan, targetId, prepared) {
   try {
@@ -129,31 +155,43 @@ async function completeSettle(page, plan, targetId, prepared) {
     }
     if (plan.waitFor === "mutation_settle") {
       if (!prepared.armed) return { settled: false, elapsedMs: 0, reason: "arm_failed" };
-      const outcome2 = (
-        /** @type {SettleOutcome} */
-        await page.evaluate(async (arg) => {
-          const scope = (
-            /** @type {any} */
-            globalThis
-          );
-          const state = scope.__naviSettle;
-          if (!state) return { settled: false, elapsedMs: 0, reason: "not_armed" };
-          const start = performance.now();
-          const deadline = start + arg.timeoutMs;
-          try {
-            for (; ; ) {
-              const now = performance.now();
-              if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start };
-              if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: "timeout" };
-              await new Promise((resolve3) => setTimeout(resolve3, Math.min(50, Math.max(1, deadline - now))));
+      const started = Date.now();
+      let failed2;
+      try {
+        const outcome2 = (
+          /** @type {SettleOutcome} */
+          await page.evaluate(async (arg) => {
+            const scope = (
+              /** @type {any} */
+              globalThis
+            );
+            const state = scope.__naviSettle;
+            if (!state) return { settled: false, elapsedMs: 0, reason: "not_armed" };
+            const start = performance.now();
+            const deadline = start + arg.timeoutMs;
+            try {
+              for (; ; ) {
+                const now = performance.now();
+                if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start };
+                if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: "timeout" };
+                await new Promise((resolve3) => setTimeout(resolve3, Math.min(50, Math.max(1, deadline - now))));
+              }
+            } finally {
+              for (const observer of state.observers) observer.disconnect();
+              delete scope.__naviSettle;
             }
-          } finally {
-            for (const observer of state.observers) observer.disconnect();
-            delete scope.__naviSettle;
-          }
-        }, { timeoutMs: plan.timeoutMs })
-      );
-      return outcome2;
+          }, { timeoutMs: plan.timeoutMs })
+        );
+        if (outcome2.settled || outcome2.reason !== "not_armed") return outcome2;
+        failed2 = outcome2;
+      } catch (error) {
+        failed2 = { settled: false, elapsedMs: 0, reason: `settle_failed: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      const elapsedMs = Date.now() - started;
+      if (await documentReplaced(page, prepared, plan.timeoutMs - elapsedMs)) {
+        return { settled: true, elapsedMs, reason: "document_replaced" };
+      }
+      return { ...failed2, elapsedMs };
     }
     const outcome = (
       /** @type {SettleOutcome} */
@@ -300,7 +338,7 @@ var init_adapter = __esm({
               }
             }, { targetId, actionType, payload, expected });
           } catch (error) {
-            if (!plan || plan.waitFor !== "navigation" || !prepared) throw error;
+            if (!plan || !prepared) throw error;
             const receipt = await completeSettle(this.page, plan, targetId, prepared);
             if (!receipt.settled) throw error;
             return {
@@ -1664,7 +1702,7 @@ var TOOLS = [
         },
         settle: {
           type: "object",
-          description: "Optional deterministic settlement. mutation_settle waits for DOM silence (>=100ms with no mutation, including open shadow roots and same-origin frames); navigation waits for a URL change or document reload; target_hidden waits for the target to be removed, invisible or occluded. A timeout reports settled:false and never re-runs the action.",
+          description: "Deterministic post-action settlement. Optional and omittable: a call without it executes and returns no receipt. mutation_settle waits for DOM silence (>=100ms with no mutation, including open shadow roots and same-origin frames); navigation waits for a URL change or document reload; target_hidden waits for the target to be removed, invisible or occluded. An action that replaces the document, a full-page navigation, settles mutation_settle too and reports settled:true with settle_reason document_replaced, because the effect it was observing committed as a new document. A timeout reports settled:false and never re-runs the action.",
           properties: {
             timeout_ms: { type: "number", description: `Settlement deadline in milliseconds, 1-${MAX_SETTLE_TIMEOUT_MS}. Default ${DEFAULT_SETTLE_TIMEOUT_MS}.` },
             wait_for: { type: "string", enum: [...SETTLE_MODES], description: 'Which condition to wait for. Default "mutation_settle".' }

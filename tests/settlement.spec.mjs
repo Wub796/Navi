@@ -42,6 +42,55 @@ test('navigation does not report a destroyed execution context as a committed de
   expect(page.url()).toBe('https://shop.example/complete');
 });
 
+test('mutation_settle settles when the action replaced the document it was observing', async () => {
+  // The observers are armed on a document, so a full-page navigation takes them down
+  // with it: the wait surfaces as a destroyed execution context at the moment the
+  // effect commits, which is a settlement and not an unsettled failure.
+  const page = {
+    url: () => 'https://shop.example/checkout/complete',
+    evaluate: async () => { throw new Error('Execution context was destroyed, most likely because of a navigation'); },
+    waitForLoadState: async () => undefined
+  };
+  const outcome = await completeSettle(page, { waitFor: 'mutation_settle', timeoutMs: 1000, quietMs: 100 }, 'place-order',
+    { token: 'old-document', beforeUrl: 'https://shop.example/checkout', armed: true });
+  expect(outcome.settled).toBe(true);
+  expect(outcome.reason).toBe('document_replaced');
+});
+
+test('a reload that keeps the URL settles on the document marker', async () => {
+  let reads = 0;
+  const page = {
+    url: () => 'https://shop.example/cart',
+    evaluate: async () => {
+      // First read: the armed wait died with the document. Second: the marker on the
+      // document that replaced it, where the armed marker is gone.
+      if (++reads === 1) throw new Error('Execution context was destroyed, most likely because of a navigation');
+      return undefined;
+    },
+    waitForLoadState: async () => undefined
+  };
+  const outcome = await completeSettle(page, { waitFor: 'mutation_settle', timeoutMs: 1000, quietMs: 100 }, 'review',
+    { token: 'old-document', beforeUrl: page.url(), armed: true });
+  expect(outcome.settled).toBe(true);
+  expect(outcome.reason).toBe('document_replaced');
+  expect(reads).toBe(2);
+});
+
+test('a destroyed context with no replacement document stays an honest failure', async () => {
+  // A destroyed context is evidence of a navigation, not proof of one, so a page that
+  // never becomes a different document keeps the reported failure rather than being
+  // settled by a blanket rule.
+  const page = {
+    url: () => 'https://shop.example/cart',
+    evaluate: async () => { throw new Error('Execution context was destroyed'); },
+    waitForLoadState: async () => undefined
+  };
+  const outcome = await completeSettle(page, { waitFor: 'mutation_settle', timeoutMs: 150, quietMs: 100 }, 'review',
+    { token: 'old-document', beforeUrl: 'https://shop.example/cart', armed: true });
+  expect(outcome.settled).toBe(false);
+  expect(outcome.reason).toContain('settle_failed');
+});
+
 test.describe('settlement receipts from the adapter', () => {
   test('mutation_settle waits for the DOM insert an action makes', async ({ page, baseURL }) => {
     await page.goto(`${baseURL}/settlement.html`);
@@ -110,6 +159,21 @@ test.describe('settlement receipts from the adapter', () => {
     expect(result.settle?.settled).toBe(true);
     expect(result.settle?.final_url).toContain('step=2');
     expect(page.url()).toContain('step=2');
+  });
+
+  test('the same navigating click settles a mutation wait instead of failing it', async ({ page, baseURL }) => {
+    await page.goto(`${baseURL}/settlement.html`);
+    const adapter = new NaviPlaywrightAdapter(page);
+    // The click applied and replaced the document the observers were armed on. Either
+    // the DOM went quiet before the navigation committed, or the replacement was
+    // observed; both are settlements, and neither is reported as an unsettled action.
+    const result = await adapter.execute('go-step', 'click', {}, { wait_for: 'mutation_settle', timeout_ms: 5000 });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    expect(result.result?.dispatched).toBe(true);
+    expect(result.settle?.mode).toBe('mutation_settle');
+    expect(result.settle?.settled).toBe(true);
+    expect(result.settle?.final_url).toContain('step=2');
+    expect([undefined, 'document_replaced']).toContain(result.settle?.reason);
   });
 
   test('an invalid settle request is refused before anything is dispatched', async ({ page, baseURL }) => {

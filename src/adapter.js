@@ -147,10 +147,13 @@ export class NaviPlaywrightAdapter {
         }, { targetId, actionType, payload, expected });
       } catch (error) {
         // A navigating action can take the execution context down before the
-        // in-page settle returns. When the caller asked to wait for navigation,
-        // that navigation is the receipt: surfacing the transport error instead
-        // would tell an agent to retry a click that already applied.
-        if (!plan || plan.waitFor !== 'navigation' || !prepared) throw error;
+        // in-page settle returns. For the modes whose condition a navigation is,
+        // that navigation is the receipt: `navigation` was waiting for exactly it,
+        // and `mutation_settle` was observing a document the navigation replaced.
+        // Surfacing the transport error instead would tell an agent to retry a
+        // click that already applied. `target_hidden` observes live Navi state that
+        // a destroyed context cannot answer for, so it still rethrows.
+        if (!plan || !prepared) throw error;
         const receipt = await completeSettle(this.page, plan, targetId, prepared);
         if (!receipt.settled) throw error;
         return {

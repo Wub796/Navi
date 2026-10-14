@@ -138,7 +138,7 @@ An action returns when it is *dispatched*, which is not the same moment as the p
 
 | `wait_for` | Waits until |
 |---|---|
-| `mutation_settle` (default) | the document, its open shadow roots and same-origin frames record no DOM mutation for 100 ms |
+| `mutation_settle` (default) | the document, its open shadow roots and same-origin frames record no DOM mutation for 100 ms, or the action replaces the document outright, which settles as `settle_reason: "document_replaced"` |
 | `navigation` | the top-level URL changed, or the document reloaded |
 | `target_hidden` | the dispatched target left the action map, or Navi now reports it invisible or occluded (a dismissed modal) |
 

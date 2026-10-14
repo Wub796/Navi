@@ -82,7 +82,7 @@ const PREFLIGHT_PROBE_TIMEOUT_MS = 120000;
 /** The one tool the capability probe offers, so a reply that calls something else is visible. */
 const PROBE_TOOL_NAME = 'navi_preflight_probe';
 /** @typedef {{baseUrl: string, model: string, apiKey?: string, iterations: number, maxTurns: number, inputPrice?: number, outputPrice?: number, fixture?: string, preset?: string}} Config */
-/** @typedef {{path: string, iteration: number, success: boolean, steps: number, requests: number, inputTokens: number, outputTokens: number, cachedTokens: number, usageComplete: boolean, cachedComplete: boolean, wallMs: number, turnLatenciesMs: number[], failures: {category: string, detail: string}[]}} Trial */
+/** @typedef {{path: string, iteration: number, success: boolean, steps: number, requests: number, inputTokens: number, outputTokens: number, cachedTokens: number, usageComplete: boolean, cachedComplete: boolean, wallMs: number, turnLatenciesMs: number[], failures: {category: string, detail: string, tool?: string, rawArgs?: string}[]}} Trial */
 /** @typedef {{ok: true, endpoint: string, models: string[], probeMs: number} | {ok: false, code: string, detail: string, instructions: string[]}} Preflight */
 /** @param {unknown} condition @param {string} message */
 function assert(condition, message) { if (!condition) throw new Error(message); }
@@ -425,7 +425,13 @@ async function runTrial(path, iteration, origin, config) {
               cursor = output.state_version;
             } else {
               if (call.function.name !== 'navi_execute_action') throw fail('UNKNOWN_TOOL', `Unknown tool ${call.function.name}`);
-              if (!args.settle) throw fail('INVALID_SETTLE', 'Settlement request required');
+              // The advertised schema makes `settle` optional and documents
+              // mutation_settle as the default `wait_for`, so a call that omits it is
+              // conforming and must not be refused as a schema violation. Apply the
+              // documented default instead: an omitted settle asks for the default
+              // wait, and the receipt still reports what that wait observed.
+              if (args.settle === undefined) args.settle = { wait_for: 'mutation_settle' };
+              else if (!args.settle || typeof args.settle !== 'object' || Array.isArray(args.settle)) throw fail('INVALID_SETTLE', 'settle must be an object with wait_for and optional timeout_ms');
               output = await mcp(call.function.name, args);
               // A receipt that says the action did not settle is a different
               // outcome from a refusal: it dispatched and never confirmed, which
@@ -433,7 +439,10 @@ async function runTrial(path, iteration, origin, config) {
               if (!(output.executed && output.dispatched && output.settled)) {
                 throw fail('UNSETTLED', String(output.settle_reason ?? 'the action never confirmed'), { reason: output.settle_reason, settled: output.settled === true });
               }
-              if (output.settle === 'navigation') {
+              // A replaced document invalidates the remembered action map exactly as a
+              // navigation wait does, whether the model asked for that wait or took the
+              // default, so the session is re-pointed and the cursor reset either way.
+              if (output.settle === 'navigation' || output.settle_reason === 'document_replaced') {
                 if (new URL(finalUrl).origin !== origin) throw fail('OUT_OF_SCOPE', 'Navigation left task origin');
                 await mcp('navi_navigate', { url: finalUrl }); cursor = undefined;
               }
@@ -466,7 +475,12 @@ async function runTrial(path, iteration, origin, config) {
           const detail = error instanceof Error ? error.message : String(error);
           const observed = /** @type {{code?: unknown, reason?: unknown, settled?: boolean}} */ (error);
           const category = classifyFailure({ path, code: observed?.code, reason: observed?.reason, detail, settled: observed?.settled });
-          trial.failures.push({ category, detail }); output = { error: category, detail };
+          // The verbatim call belongs in the record: a failure that names only its
+          // bucket forces a root-cause audit to replay the model to learn what was
+          // actually sent. rawArgs is the string the model emitted, kept unparsed, so
+          // malformed arguments are visible as emitted rather than as a parse error.
+          trial.failures.push({ category, detail, tool: call.function.name, rawArgs: call.function.arguments });
+          output = { error: category, detail };
         }
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(output) });
       }

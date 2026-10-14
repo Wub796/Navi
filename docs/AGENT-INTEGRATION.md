@@ -114,7 +114,7 @@ const settled = await tools.execute('open-modal', 'click', {}, { wait_for: 'muta
 
 | `wait_for` | Holds when |
 |---|---|
-| `mutation_settle` | the document, its open shadow roots and same-origin frames record no mutation for 100 ms |
+| `mutation_settle` | the document, its open shadow roots and same-origin frames record no mutation for 100 ms, or the action replaces the document outright (`settle_reason: 'document_replaced'`) |
 | `navigation` | the top-level URL changed, or the document reloaded (a reload that destroys the dispatch context is treated as the receipt) |
 | `target_hidden` | the target left the action map, or Navi reports it invisible or occluded |
 
