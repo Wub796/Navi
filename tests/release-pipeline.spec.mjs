@@ -1,13 +1,14 @@
 import { test, expect } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { CANARY_CHECKS_FLOOR, CONTAINER_CHECKS_FLOOR, evaluatePublish } from '../scripts/publish-preflight.mjs';
+import { CANARY_CHECKS_FLOOR, CONTAINER_CHECKS_FLOOR, evaluatePublish, resolveProvenance } from '../scripts/publish-preflight.mjs';
 import { canaryAttestation, renderReleaseNotes } from '../scripts/release-notes.mjs';
 import { readContainerReceipts, summarizeContainer } from '../scripts/container-evidence.mjs';
-import { MIN_PASSING_TESTS } from '../scripts/verify-release.mjs';
+import { MIN_PASSING_TESTS, sourceTreeDigest } from '../scripts/verify-release.mjs';
 import { evaluateUnpackedPackage, REQUIRED_PACKAGE_FILES, verifyCleanRoomPackage } from '../scripts/verify-registry-package.mjs';
 
 /**
@@ -61,6 +62,35 @@ const readyArtifacts = { sri: 'sha384-AAAA', bundleBytes: 14929, loaderBytes: 68
 const blockedBy = checks => checks.filter(check => !check.ok && check.blocking).map(check => check.id);
 
 /**
+ * The provenance facts a checkout resolves when the receipt names the very revision the tag
+ * points at: there is nothing to compare, so parity is established by the revision alone.
+ * @param {string} revision
+ * @returns {{head: string, ancestor: null, changedPaths: null, digest: null, error: null}}
+ */
+const provenanceAtHead = revision => ({ head: revision, ancestor: null, changedPaths: null, digest: null, error: null });
+
+/**
+ * @typedef {{licenseFile: string | null, receipt: Record<string, any> | null, tag: string | null, artifacts: {sri: string | null, bundleBytes: number | null, loaderBytes: number | null}, provenance: ReturnType<typeof provenanceAtHead>}} PublishContext
+ */
+
+/**
+ * The publish context with every fact a real run resolves filled in, so each test below can
+ * break exactly one thing instead of failing for want of an input it is not about. The git
+ * facts are injected rather than resolved because `evaluatePublish` is pure by design — the
+ * resolving lives in `resolveProvenance`, which is exercised separately against a real repo.
+ * @param {Record<string, any>} [overrides]
+ * @returns {PublishContext}
+ */
+const publishContext = (overrides = {}) => ({
+  licenseFile: 'LICENSE',
+  receipt: readyReceipt,
+  tag: 'v0.5.0',
+  artifacts: readyArtifacts,
+  provenance: provenanceAtHead(readyReceipt.evidence.revision),
+  ...overrides
+});
+
+/**
  * The rules a committed receipt must satisfy on its own terms, with no dependence on
  * which run wrote the file or how that run ended.
  *
@@ -110,12 +140,9 @@ const receiptViolations = (receipt, { artifacts, floor }) => {
  * @returns {{ok: boolean, detail: string}}
  */
 const containerCheck = containers => {
-  const checks = evaluatePublish(readyManifest, {
-    licenseFile: 'LICENSE',
-    receipt: { ...readyReceipt, evidence: { ...readyReceipt.evidence, containers } },
-    tag: 'v0.5.0',
-    artifacts: readyArtifacts
-  });
+  const checks = evaluatePublish(readyManifest, publishContext({
+    receipt: { ...readyReceipt, evidence: { ...readyReceipt.evidence, containers } }
+  }));
   const check = checks.find(candidate => candidate.id === 'container-evidence');
   if (!check) throw new Error('the preflight records no container-evidence check');
   return check;
@@ -127,12 +154,9 @@ const containerCheck = containers => {
  * @returns {{ok: boolean, detail: string}}
  */
 const canaryCheck = canary => {
-  const checks = evaluatePublish(readyManifest, {
-    licenseFile: 'LICENSE',
-    receipt: { ...readyReceipt, evidence: { ...readyReceipt.evidence, canary } },
-    tag: 'v0.5.0',
-    artifacts: readyArtifacts
-  });
+  const checks = evaluatePublish(readyManifest, publishContext({
+    receipt: { ...readyReceipt, evidence: { ...readyReceipt.evidence, canary } }
+  }));
   const check = checks.find(candidate => candidate.id === 'canary-evidence');
   if (!check) throw new Error('the preflight records no canary-evidence check');
   return check;
@@ -141,41 +165,43 @@ const canaryCheck = canary => {
 test('the publish preflight refuses to publish until the license decision is made', () => {
   // The real manifest in this repository declares no license and has no LICENSE
   // file, which is precisely the state the preflight exists to stop.
-  const withoutLicense = evaluatePublish({ ...readyManifest, license: undefined }, { licenseFile: null, receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts });
+  const withoutLicense = evaluatePublish({ ...readyManifest, license: undefined }, publishContext({ licenseFile: null }));
   expect(blockedBy(withoutLicense)).toEqual(['license-file', 'license-field']);
   expect(withoutLicense.find(check => check.id === 'license-file')?.detail).toContain('no LICENSE');
 
   // One of the two is not enough: the package would still declare nothing a
   // consumer can rely on.
-  expect(blockedBy(evaluatePublish({ ...readyManifest, license: undefined }, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['license-field']);
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: null, receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['license-file']);
+  expect(blockedBy(evaluatePublish({ ...readyManifest, license: undefined }, publishContext()))).toEqual(['license-field']);
+  expect(blockedBy(evaluatePublish(readyManifest, publishContext({ licenseFile: null })))).toEqual(['license-file']);
 
   // With every decision made, nothing blocks.
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual([]);
+  expect(blockedBy(evaluatePublish(readyManifest, publishContext()))).toEqual([]);
 
   // The settings npm's side of the contract depends on are checked too, because a
   // publish without provenance or with the wrong access cannot be corrected later.
-  expect(blockedBy(evaluatePublish({ ...readyManifest, private: true }, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['not-private']);
-  expect(blockedBy(evaluatePublish({ ...readyManifest, publishConfig: { access: 'restricted', provenance: true } }, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['public-access']);
-  expect(blockedBy(evaluatePublish({ ...readyManifest, publishConfig: { access: 'public' } }, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['provenance']);
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.4.0', artifacts: readyArtifacts }))).toEqual(['tag-matches-version']);
-  // A missing receipt cites nothing at all — not the bytes, and not the container
-  // verification the bytes are going to run as — so every rule that reads evidence fires.
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: null, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['verification-receipt', 'receipt-matches-artifacts', 'container-evidence', 'canary-evidence']);
+  expect(blockedBy(evaluatePublish({ ...readyManifest, private: true }, publishContext()))).toEqual(['not-private']);
+  expect(blockedBy(evaluatePublish({ ...readyManifest, publishConfig: { access: 'restricted', provenance: true } }, publishContext()))).toEqual(['public-access']);
+  expect(blockedBy(evaluatePublish({ ...readyManifest, publishConfig: { access: 'public' } }, publishContext()))).toEqual(['provenance']);
+  expect(blockedBy(evaluatePublish(readyManifest, publishContext({ tag: 'v0.4.0' })))).toEqual(['tag-matches-version']);
+  // A missing receipt cites nothing at all — not the bytes, not the revision whose code is
+  // being published, and not the container verification the bytes are going to run as — so
+  // every rule that reads evidence fires.
+  expect(blockedBy(evaluatePublish(readyManifest, publishContext({ receipt: null })))).toEqual(['verification-receipt', 'receipt-matches-artifacts', 'provenance-parity', 'container-evidence', 'canary-evidence']);
 });
 
 test('a receipt that no longer describes the artifacts cannot authorise a publish', () => {
   // Freshness is checked against the bytes, not against a timestamp: rebuilding
   // after verification produces different bytes, and the receipt must stop applying.
-  const stale = evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: { ...readyArtifacts, sri: 'sha384-BBBB' } });
+  const stale = evaluatePublish(readyManifest, publishContext({ artifacts: { ...readyArtifacts, sri: 'sha384-BBBB' } }));
   expect(blockedBy(stale)).toEqual(['receipt-matches-artifacts']);
   expect(stale.find(check => check.id === 'receipt-matches-artifacts')?.detail).toContain('no longer match');
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: { ...readyArtifacts, loaderBytes: 690 } }))).toEqual(['receipt-matches-artifacts']);
+  expect(blockedBy(evaluatePublish(readyManifest, publishContext({ artifacts: { ...readyArtifacts, loaderBytes: 690 } })))).toEqual(['receipt-matches-artifacts']);
   // A failing receipt blocks on its own verdict, before any artifact comparison.
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: { ...readyReceipt, ok: false }, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['verification-receipt']);
+  expect(blockedBy(evaluatePublish(readyManifest, publishContext({ receipt: { ...readyReceipt, ok: false } })))).toEqual(['verification-receipt']);
   // A receipt from before these checks existed cannot be shown to describe anything: it
-  // names no bytes and no container verification, so it authorises neither.
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: { ok: true, checks: [] }, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual(['receipt-matches-artifacts', 'container-evidence', 'canary-evidence']);
+  // names no bytes, no revision whose code was verified, and no container verification, so
+  // it authorises none of them.
+  expect(blockedBy(evaluatePublish(readyManifest, publishContext({ receipt: { ok: true, checks: [] } })))).toEqual(['receipt-matches-artifacts', 'provenance-parity', 'container-evidence', 'canary-evidence']);
 });
 
 test('a publish needs green container verification of a configuration this release ships', () => {
@@ -183,7 +209,7 @@ test('a publish needs green container verification of a configuration this relea
   // rather than a note: the preflight reads it out of the receipt instead of trusting that
   // a container job ran somewhere. Nothing else is blocking here, so the verdict below is
   // about the container evidence alone.
-  expect(blockedBy(evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: readyReceipt, tag: 'v0.5.0', artifacts: readyArtifacts }))).toEqual([]);
+  expect(blockedBy(evaluatePublish(readyManifest, publishContext()))).toEqual([]);
   expect(containerCheck(readyContainers).ok).toBe(true);
   expect(containerCheck(readyContainers).detail).toContain('deploy/docker-compose.prod.yml on linux/arm64 is 18/18');
 
@@ -237,13 +263,150 @@ test('a publish needs green container verification of a configuration this relea
   expect(canaryCheck({ ...readyCanary, passed: 5, total: 5, checks: readyCanary.checks.slice(0, 5) }).detail).toContain(`${CANARY_CHECKS_FLOOR}/${CANARY_CHECKS_FLOOR}`);
 });
 
+test('a publish cannot proceed on a receipt that describes different code than the tag', () => {
+  // The receipt cannot name the commit that carries it — that commit does not exist when the
+  // gate writes it — so the released shape is "the gate's revision, plus generated reports".
+  // That shape is proved here rather than assumed: outside reports/, the tagged tree must be
+  // the verified tree, so a report commit that quietly carried a source edit is refused.
+  /** @param {any} provenance @returns {any} */
+  const parityCheck = provenance => {
+    const checks = evaluatePublish(readyManifest, publishContext({ provenance }));
+    const check = checks.find(candidate => candidate.id === 'provenance-parity');
+    if (!check) throw new Error('the preflight records no provenance-parity check');
+    return check;
+  };
+
+  // Naming HEAD is the strongest case: nothing stands between the receipt and the tag.
+  const atHead = parityCheck(provenanceAtHead(readyReceipt.evidence.revision));
+  expect(atHead.ok).toBe(true);
+  expect(atHead.detail).toContain('names HEAD');
+
+  // The released shape: an ancestor revision with no non-report path differing, which is
+  // exactly a generated-reports commit on top of a verified tree.
+  const parent = parityCheck({ head: 'ffffffffffffffff', ancestor: true, changedPaths: [], digest: null, error: null });
+  expect(parent.ok).toBe(true);
+  expect(parent.detail).toContain('outside reports/');
+
+  // A source-tree attestation that matches proves the same thing without walking history —
+  // the case a shallow CI clone leaves, where ancestry cannot be resolved at all.
+  const attested = evaluatePublish(readyManifest, publishContext({
+    receipt: { ...readyReceipt, evidence: { ...readyReceipt.evidence, sourceTree: 'sha256:attested' } },
+    provenance: { head: 'ffffffffffffffff', ancestor: null, changedPaths: null, digest: 'sha256:attested', error: null }
+  })).find(candidate => candidate.id === 'provenance-parity');
+  expect(attested?.ok).toBe(true);
+  expect(attested?.detail).toContain('source-tree attestation');
+
+  // One changed path outside reports/ is refused, and the refusal names it.
+  const drifted = parityCheck({ head: 'ffffffffffffffff', ancestor: true, changedPaths: ['scripts/verify-release.mjs'], digest: null, error: null });
+  expect(drifted.ok).toBe(false);
+  expect(drifted.detail).toContain('scripts/verify-release.mjs');
+  expect(drifted.detail).toContain('not the tree the gate verified');
+
+  // A revision that is not an ancestor, with no attestation to fall back on, is evidence about
+  // some other branch and cannot authorise this publish.
+  const unrelated = parityCheck({ head: 'ffffffffffffffff', ancestor: false, changedPaths: null, digest: null, error: null });
+  expect(unrelated.ok).toBe(false);
+  expect(unrelated.detail).toContain('not an ancestor');
+  expect(unrelated.detail).toContain('is absent');
+
+  // A recorded attestation that disagrees with the tree at HEAD is refused even when the paths
+  // happen to line up: the receipt itself says it describes other code.
+  const contradicted = evaluatePublish(readyManifest, publishContext({
+    receipt: { ...readyReceipt, evidence: { ...readyReceipt.evidence, sourceTree: 'sha256:stale' } },
+    provenance: { head: 'ffffffffffffffff', ancestor: true, changedPaths: [], digest: 'sha256:current', error: null }
+  })).find(candidate => candidate.id === 'provenance-parity');
+  expect(contradicted?.ok).toBe(false);
+  expect(contradicted?.detail).toContain('does not match the tracked tree at HEAD');
+
+  // Facts that could not be resolved are a refusal, not a pass: not knowing whether the tagged
+  // code is the verified code is the very question this check exists to answer.
+  const unresolved = parityCheck({ head: null, ancestor: null, changedPaths: null, digest: null, error: 'git rev-parse HEAD failed' });
+  expect(unresolved.ok).toBe(false);
+  expect(unresolved.detail).toContain('could not be compared');
+  expect(parityCheck(undefined).ok).toBe(false);
+
+  // A receipt that records no revision cites nothing to compare at all.
+  const anonymous = evaluatePublish(readyManifest, publishContext({ receipt: { ok: true, checks: [] } })).find(candidate => candidate.id === 'provenance-parity');
+  expect(anonymous?.ok).toBe(false);
+  expect(anonymous?.detail).toContain('no evidence.revision');
+
+  // The rule is also fed by facts a real checkout resolved, not only by shapes this test
+  // invented: the resolver reads git, and the rule accepts what it returns.
+  const head = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const realFacts = resolveProvenance({ evidence: { revision: head } });
+  expect(realFacts.head).toBe(head);
+  expect(realFacts.digest).toBe(sourceTreeDigest('HEAD'));
+  expect(realFacts.ancestor).toBeNull();
+  const realCheck = evaluatePublish(readyManifest, publishContext({
+    receipt: { ...readyReceipt, evidence: { ...readyReceipt.evidence, revision: head } },
+    provenance: realFacts
+  })).find(candidate => candidate.id === 'provenance-parity');
+  expect(realCheck?.ok).toBe(true);
+  // No revision means no facts to resolve, and nothing to prove.
+  expect(resolveProvenance(null)).toEqual({ head: null, ancestor: null, changedPaths: null, digest: null, error: null });
+});
+
+test('the source-tree attestation identifies the code and tolerates the reports it must', async () => {
+  // The attestation exists to survive one specific commit: the generated-reports commit that
+  // carries the receipt. It has to be blind to reports/ and sensitive to everything else, or
+  // it would either block every release or attest to nothing — so both halves are checked on a
+  // real repository rather than asserted by construction.
+  const repo = await mkdtemp(join(tmpdir(), 'navi-source-tree-'));
+  /** @param {...string} args @returns {string} */
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  try {
+    git('init', '--quiet');
+    git('config', 'user.email', 'release@example.com');
+    git('config', 'user.name', 'Release');
+    await mkdir(join(repo, 'scripts'), { recursive: true });
+    await mkdir(join(repo, 'reports'), { recursive: true });
+    await writeFile(join(repo, 'scripts', 'verify-release.mjs'), 'export const value = 1;\n');
+    await writeFile(join(repo, 'reports', 'release-verification.json'), '{}\n');
+    git('add', '-A');
+    git('commit', '--quiet', '-m', 'the verified revision');
+    const verified = sourceTreeDigest('HEAD', repo);
+    expect(verified).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+    // The report refresh every release adds: a rewritten receipt, a new report beside it.
+    // Reports are the only thing the attestation tolerates, because they are the only thing
+    // the release process rewrites after the gate has run.
+    await writeFile(join(repo, 'reports', 'release-verification.json'), '{"ok":true}\n');
+    await writeFile(join(repo, 'reports', 'release-notes.md'), '# notes\n');
+    git('add', '-A');
+    git('commit', '--quiet', '-m', 'refresh generated reports');
+    expect(sourceTreeDigest('HEAD', repo), 'a report refresh must not move the attestation').toBe(verified);
+
+    // The shipped bundle is verified code rather than generated noise — the gate hashes it —
+    // so a rebuilt dist/ must move the attestation like any other source path.
+    await mkdir(join(repo, 'dist'), { recursive: true });
+    await writeFile(join(repo, 'dist', 'navi.min.js'), '// rebuilt bundle\n');
+    git('add', '-A');
+    git('commit', '--quiet', '-m', 'a rebuilt bundle');
+    expect(sourceTreeDigest('HEAD', repo)).not.toBe(verified);
+
+    // And one changed byte of source, which is the drift this attestation exists to catch: a
+    // version of it that ignored everything would attest to nothing.
+    await writeFile(join(repo, 'scripts', 'verify-release.mjs'), 'export const value = 2;\n');
+    git('add', '-A');
+    git('commit', '--quiet', '-m', 'a source change');
+    expect(sourceTreeDigest('HEAD', repo)).not.toBe(verified);
+
+    // Deterministic across calls, and a revision git cannot resolve is null rather than a
+    // digest of nothing — two empty digests would compare equal and prove nothing.
+    expect(sourceTreeDigest('HEAD', repo)).toBe(sourceTreeDigest('HEAD', repo));
+    expect(sourceTreeDigest('no-such-revision', repo)).toBeNull();
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test('the published test floor is one number, stated everywhere it is promised', async () => {
   // The floor is a promise about the suite's coverage, and it appears in the gate, in the
   // documents a contributor reads, and in the release note. Pinning it here means moving it
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(199);
+  expect(MIN_PASSING_TESTS).toBe(200);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.1.md', 'docs/CONTAINERS.md']) {
     const text = await readFile(join(root, document), 'utf8');
@@ -437,7 +600,7 @@ test('the committed receipt describes the committed artifacts', async () => {
   // itself applies, rather than only through a second hand-written comparison that
   // could drift from it. It holds whatever the run's verdict was, which is what makes
   // it safe to assert against a file that a failing run may have rewritten.
-  const coupling = evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt, tag: null, artifacts });
+  const coupling = evaluatePublish(readyManifest, publishContext({ receipt, tag: null, artifacts, provenance: resolveProvenance(receipt) }));
   expect(coupling.find(check => check.id === 'receipt-matches-artifacts')?.ok).toBe(true);
 });
 
@@ -464,7 +627,7 @@ test('a failing gate run cannot wedge the suite through the receipt it leaves be
     ],
     evidence: { revision: '245f0850517c1351101b0d3bf6ef7916c87b0cef', branch: 'main', ...readyArtifacts, floor: 88, tests: null, containers: readyContainers, canary: readyCanary }
   };
-  const checks = evaluatePublish(readyManifest, { licenseFile: 'LICENSE', receipt: poisoned, tag: 'v0.5.0', artifacts: readyArtifacts });
+  const checks = evaluatePublish(readyManifest, publishContext({ receipt: poisoned, provenance: provenanceAtHead(String(poisoned.evidence.revision)) }));
   // The bytes still match, so the artifact coupling is not what refused it...
   expect(checks.find(check => check.id === 'receipt-matches-artifacts')?.ok).toBe(true);
   // ...the run's own verdict is, and it is the only thing that blocks. Tolerating a

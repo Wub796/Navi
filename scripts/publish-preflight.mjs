@@ -6,14 +6,17 @@
 // A registry publish is the one action here that cannot be undone: an npm version
 // is immutable, and provenance attaches a signed statement to it. So this refuses
 // to proceed while a decision is still missing — no license file, no `license`
-// field, a receipt that does not describe this revision, or a receipt that cites no
-// green container verification of a configuration this repository deploys — even
-// though those are the kind of details a person is tempted to fill in "later".
+// field, a receipt that does not describe this revision, a receipt whose code is not
+// the code the tag points at, or a receipt that cites no green container verification
+// of a configuration this repository deploys — even though those are the kind of details
+// a person is tempted to fill in "later".
 //
 // Usage: node scripts/publish-preflight.mjs [--tag v0.5.0]
 // Exit codes: 0 ready to publish, 1 not ready (the reasons are printed), 2 usage.
+import { spawnSync } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { sourceTreeDigest } from './verify-release.mjs';
 
 /** Files npm accepts as the license text, in the order npm looks for them. */
 const LICENSE_FILES = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE'];
@@ -38,6 +41,61 @@ export const CONTAINER_CHECKS_FLOOR = 18;
  */
 export const CANARY_CHECKS_FLOOR = 6;
 
+/** Repository root, so every git command below answers the same way from any cwd. */
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+/** The one directory a release rewrites after the gate has run. */
+const GENERATED_REPORT_DIR = 'reports/';
+
+/**
+ * @param {string[]} args
+ * @returns {{status: number, output: string}}
+ */
+function git(args) {
+  const result = spawnSync('git', ['-C', REPO_ROOT, ...args], { encoding: 'utf8' });
+  return { status: result.status ?? 1, output: `${result.stdout ?? ''}${result.stderr ?? ''}`.trim() };
+}
+
+/**
+ * The git facts the provenance check is about, resolved once so the rule itself stays pure
+ * and a test can hand it shapes no repository would produce.
+ *
+ * `evidence.revision` cannot be the commit that carries the receipt — that commit does not
+ * exist yet when the gate writes it — so a released revision is always "the revision the
+ * receipt names, plus generated reports". These facts are what turn that sentence from an
+ * excuse into a checkable property: ancestry, the changed paths outside `reports/`, and the
+ * source-tree digest the receipt recorded, against the same digest taken at HEAD.
+ * @param {Record<string, any> | null} receipt
+ * @returns {{head: string | null, ancestor: boolean | null, changedPaths: string[] | null, digest: string | null, error: string | null}}
+ */
+export function resolveProvenance(receipt) {
+  /** @type {{head: string | null, ancestor: boolean | null, changedPaths: string[] | null, digest: string | null, error: string | null}} */
+  const facts = { head: null, ancestor: null, changedPaths: null, digest: null, error: null };
+  const revision = typeof receipt?.evidence?.revision === 'string' ? receipt.evidence.revision : null;
+  if (!revision) return facts;
+  const head = git(['rev-parse', 'HEAD']);
+  if (head.status !== 0 || !head.output) {
+    facts.error = `git rev-parse HEAD failed${head.output ? `: ${head.output}` : ''}`;
+    return facts;
+  }
+  facts.head = head.output;
+  facts.digest = sourceTreeDigest('HEAD');
+  if (facts.head === revision) return facts;
+  const ancestry = git(['merge-base', '--is-ancestor', revision, 'HEAD']);
+  if (ancestry.status !== 0 && ancestry.status !== 1) {
+    facts.error = `${revision} cannot be compared with HEAD${ancestry.output ? `: ${ancestry.output}` : ''}`;
+    return facts;
+  }
+  facts.ancestor = ancestry.status === 0;
+  if (!facts.ancestor) return facts;
+  const diff = git(['diff', '--name-only', revision, 'HEAD', '--', '.', `:!${GENERATED_REPORT_DIR.replace(/\/$/, '')}`]);
+  if (diff.status !== 0) {
+    facts.error = `git diff ${revision}..HEAD failed${diff.output ? `: ${diff.output}` : ''}`;
+    return facts;
+  }
+  facts.changedPaths = diff.output.split('\n').filter(line => line.trim().length > 0);
+  return facts;
+}
+
 /** @param {URL | string} path @returns {Promise<boolean>} */
 const exists = async path => stat(path).then(() => true, () => false);
 
@@ -51,7 +109,7 @@ function option(argv, flag) {
 
 /**
  * @param {Record<string, any>} manifest
- * @param {{licenseFile: string | null, receipt: Record<string, any> | null, tag: string | null, artifacts?: {sri: string | null, bundleBytes: number | null, loaderBytes: number | null}}} context
+ * @param {{licenseFile: string | null, receipt: Record<string, any> | null, tag: string | null, artifacts?: {sri: string | null, bundleBytes: number | null, loaderBytes: number | null}, provenance?: {head: string | null, ancestor: boolean | null, changedPaths: string[] | null, digest: string | null, error: string | null}}} context
  * @returns {PreflightCheck[]}
  */
 export function evaluatePublish(manifest, context) {
@@ -61,6 +119,7 @@ export function evaluatePublish(manifest, context) {
   const tagMatches = context.tag === null ? null : context.tag === expectedTag;
   const containers = containerEvidence(context.receipt);
   const canary = canaryEvidence(context.receipt);
+  const provenance = provenanceEvidence(context.receipt, context.provenance);
   return [
     {
       id: 'license-file',
@@ -115,6 +174,16 @@ export function evaluatePublish(manifest, context) {
       id: 'receipt-matches-artifacts',
       ok: receiptDescribes(context.receipt, context.artifacts),
       detail: receiptArtifactDetail(context.receipt, context.artifacts),
+      blocking: true
+    },
+    {
+      // The receipt is written before the commit that carries it exists, so its
+      // `evidence.revision` is one step behind the tag by construction. That is a
+      // scheduling fact, not a licence: outside `reports/`, the tagged tree must be the
+      // tree the gate verified, and this is where that is proved rather than assumed.
+      id: 'provenance-parity',
+      ok: provenance.ok,
+      detail: provenance.detail,
       blocking: true
     },
     {
@@ -180,6 +249,71 @@ function containerEvidence(receipt) {
     };
   }
   return { ok: true, detail: `${describeContainerRecord(green)}; the shipped image was verified against a configuration this repository deploys` };
+}
+
+/**
+ * The parity a publish must show between the code the receipt describes and the code the tag
+ * points at. Naming HEAD outright passes; so does a source-tree attestation that matches
+ * HEAD's; otherwise the receipt's revision must be an ancestor of HEAD with every non-report
+ * path identical across the two — which is exactly the shape a release has, where the
+ * receipt is committed by the generated-reports commit that follows the gate run.
+ *
+ * Anything else is a refusal, because a receipt that cannot be tied to the tagged tree is
+ * evidence about some other revision, and publishing it would attach provenance to code no
+ * gate has seen.
+ * @param {Record<string, any> | null} receipt
+ * @param {{head: string | null, ancestor: boolean | null, changedPaths: string[] | null, digest: string | null, error: string | null} | undefined} facts
+ * @returns {{ok: boolean, detail: string}}
+ */
+function provenanceEvidence(receipt, facts) {
+  /** @param {string} sha @returns {string} */
+  const short = sha => sha.slice(0, 12);
+  const revision = typeof receipt?.evidence?.revision === 'string' ? receipt.evidence.revision : null;
+  const recorded = typeof receipt?.evidence?.sourceTree === 'string' ? receipt.evidence.sourceTree : null;
+  if (!revision) {
+    return {
+      ok: false,
+      detail: 'reports/release-verification.json records no evidence.revision, so the receipt cannot be tied to a revision at all; run `npm run verify:release` on the revision being released.'
+    };
+  }
+  if (!facts || facts.error) {
+    return {
+      ok: false,
+      detail: `${short(revision)} could not be compared with the current HEAD${facts?.error ? ` (${facts.error})` : ''}, so a publish cannot show that the tagged code is the verified code`
+    };
+  }
+  if (facts.head === revision) {
+    return { ok: true, detail: `the receipt names HEAD (${short(revision)}), so the tagged code is the code the gate verified` };
+  }
+  if (recorded && facts.digest && recorded === facts.digest) {
+    return {
+      ok: true,
+      detail: `the receipt's source-tree attestation (${recorded.slice(0, 14)}…) matches the tracked tree at HEAD, so the receipt and the tag describe the same code`
+    };
+  }
+  if (facts.ancestor === true) {
+    const changed = facts.changedPaths ?? [];
+    if (changed.length) {
+      return {
+        ok: false,
+        detail: `${short(revision)}..HEAD changes ${changed.length} path(s) outside ${GENERATED_REPORT_DIR} (${changed.slice(0, 5).join(', ')}${changed.length > 5 ? ', …' : ''}), so the tagged tree is not the tree the gate verified; re-run \`npm run verify:release\` on the revision being released`
+      };
+    }
+    if (recorded && facts.digest && recorded !== facts.digest) {
+      return {
+        ok: false,
+        detail: `the receipt's source-tree attestation (${recorded.slice(0, 14)}…) does not match the tracked tree at HEAD (${facts.digest.slice(0, 14)}…), so the receipt describes code other than the code being published`
+      };
+    }
+    return {
+      ok: true,
+      detail: `${short(revision)} is an ancestor of HEAD (${short(facts.head ?? '')}) and no path outside ${GENERATED_REPORT_DIR} differs, so HEAD is the gate's revision plus generated reports`
+    };
+  }
+  return {
+    ok: false,
+    detail: `${short(revision)} is not an ancestor of HEAD and the receipt's source-tree attestation ${recorded ? 'does not match the tracked tree at HEAD' : 'is absent'}, so the receipt cannot be shown to describe the code this tag points at`
+  };
 }
 
 /**
@@ -279,7 +413,7 @@ export async function main(argv = process.argv.slice(2)) {
     artifacts.loaderBytes = (await stat(new URL('../dist/loader.min.js', import.meta.url))).size;
   } catch { /* reported by the check below */ }
 
-  const checks = evaluatePublish(manifest, { licenseFile, receipt, tag, artifacts });
+  const checks = evaluatePublish(manifest, { licenseFile, receipt, tag, artifacts, provenance: resolveProvenance(receipt) });
   const blocking = checks.filter(check => !check.ok && check.blocking);
   process.stdout.write(`publish preflight for ${manifest.name}@${manifest.version}${tag ? ` (${tag})` : ''}\n`);
   for (const check of checks) process.stdout.write(`  ${check.ok ? 'ok  ' : 'fail'} ${check.id}: ${check.detail}\n`);

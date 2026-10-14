@@ -17,12 +17,19 @@
  *
  * Every run also writes its receipt to reports/release-verification.json: the
  * check ids, their detail lines and the verdict, plus the evidence the verdict was
- * about — the revision, the SRI and artifact sizes, and the container verification
- * receipts found on this revision. The receipt is a generated report, so
- * GENERATED_PATHS tolerates it exactly as it tolerates dist/ and
+ * about — the revision, the source-tree digest, the SRI and artifact sizes, and the
+ * container verification receipts found on this revision. The receipt is a generated
+ * report, so GENERATED_PATHS tolerates it exactly as it tolerates dist/ and
  * reports/build.json — a fresh run rewrites it, and that is expected. That container
  * evidence is what the publish preflight requires: a release whose receipt cites no
  * green container run cannot be published from this checkout.
+ *
+ * The receipt cannot name the commit that carries it. The gate writes the receipt, the
+ * receipt is committed, and that commit is by definition one the gate has never seen —
+ * so a released revision is always "the revision this receipt names, plus generated
+ * reports". evidence.sourceTree narrows that gap to nothing: it digests every tracked
+ * path outside reports/, so the publish preflight can show that the tree a tag points at
+ * is byte-identical to the tree this gate verified, report refreshes aside.
  *
  * Usage:
  *   node scripts/verify-release.mjs             # verify a candidate release
@@ -42,11 +49,11 @@ import { verifyCleanRoomPackage } from './verify-registry-package.mjs';
 
 /**
  * Published floor for the suite: the release must not shrink its own coverage. It is
- * stated in README.md, docs/ACCEPTANCE.md and the release note beside it, and
- * tests/release-pipeline.spec.mjs pins the three together, so raising it is a deliberate
- * change to all of them rather than a silent drift in one.
+ * stated in README.md, docs/ACCEPTANCE.md, docs/CONTAINERS.md and the release note beside
+ * them, and tests/release-pipeline.spec.mjs pins those documents together, so raising it
+ * is a deliberate change to all of them rather than a silent drift in one.
  */
-export const MIN_PASSING_TESTS = 199;
+export const MIN_PASSING_TESTS = 200;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
 export const LOADER_BUDGET_BYTES = 700;
@@ -55,6 +62,10 @@ export const LOADER_BUDGET_BYTES = 700;
  * be committed: a release must be reproducible from the tag.
  */
 export const GENERATED_PATHS = [/^dist\//, /^reports\//, /^test-results\//, /^playwright-report\//];
+/** Repository root, so the git commands below answer the same way from any cwd. */
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+/** The one directory the release process rewrites after the gate has run. */
+const GENERATED_REPORT_DIR = 'reports/';
 
 /** @typedef {{id: string, ok: boolean, detail: string}} Check */
 
@@ -81,6 +92,33 @@ function attempt(command, args) {
  */
 function tail(output, lines = 6) {
   return output.trim().split('\n').filter(line => line.trim()).slice(-lines).join('\n');
+}
+
+/**
+ * A content digest of the tracked tree at `revision`, excluding generated reports.
+ *
+ * This is the attestation that closes the receipt-versus-tag gap. A receipt is committed
+ * by a later commit than the one it names, so `evidence.revision` always points one step
+ * behind the released tag; the digest of the tracked paths says the thing that actually
+ * matters — that outside `reports/`, the tagged tree is byte-for-byte the tree the gate
+ * verified — and it is deliberately blind to the report refresh that follows every gate
+ * run, because a digest that moved whenever a JSON file was rewritten would attest to
+ * nothing at all.
+ *
+ * `git ls-tree` does not accept exclude pathspec magic, so the exclusion is applied to
+ * the listed paths here, where it is visible and unit-tested, rather than left to git.
+ * @param {string} [revision]
+ * @param {string} [root] repository to read; overridable so a test can drive a fixture
+ * @returns {string | null} `sha256:<hex>`, or null when git cannot answer
+ */
+export function sourceTreeDigest(revision = 'HEAD', root = REPO_ROOT) {
+  const listed = attempt('git', ['-C', root, 'ls-tree', '-r', revision]);
+  if (!listed.ok) return null;
+  const lines = listed.output
+    .split('\n')
+    .filter(line => line.trim().length > 0)
+    .filter(line => !line.slice(line.indexOf('\t') + 1).startsWith(GENERATED_REPORT_DIR));
+  return `sha256:${createHash('sha256').update(lines.join('\n')).digest('hex')}`;
 }
 
 /**
@@ -288,6 +326,9 @@ export async function main(argv) {
   const evidence = {
     revision: revisionOf('git', ['rev-parse', 'HEAD']),
     branch: revisionOf('git', ['rev-parse', '--abbrev-ref', 'HEAD']),
+    // What this receipt is about, in a form that survives the report commit that will
+    // carry it: the digest of every tracked path outside reports/.
+    sourceTree: sourceTreeDigest('HEAD'),
     ...artifacts,
     // The floor this run was actually measured against. It travels with the
     // measurement so a later reader can tell whether the floor has moved since,
