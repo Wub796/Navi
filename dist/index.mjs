@@ -204,7 +204,15 @@ async function completeSettle(page, plan, targetId, prepared) {
           /** @type {any} */
           globalThis.Navi
         );
-        if (!navi) return { settled: false, elapsedMs: 0, reason: "no_sdk" };
+        if (!navi) {
+          const target = document.querySelector(arg.targetId);
+          if (!target || !target.isConnected) return { settled: true, elapsedMs: 0 };
+          const rect = target.getBoundingClientRect();
+          const style = getComputedStyle(target);
+          const hidden = rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0 || target.getAttribute("aria-hidden") === "true";
+          if (hidden) return { settled: true, elapsedMs: 0 };
+          return { settled: false, elapsedMs: 0, reason: "visible" };
+        }
         const start = performance.now();
         const deadline = start + arg.timeoutMs;
         for (; ; ) {
@@ -244,6 +252,123 @@ __export(adapter_exports, {
   NaviPlaywrightAdapter: () => NaviPlaywrightAdapter,
   naviAdapter: () => naviAdapter
 });
+function collectTargets(options = {}) {
+  const documentRef = document;
+  const escape = (value) => CSS.escape(value);
+  const unique = (selector) => {
+    try {
+      return documentRef.querySelectorAll(selector).length === 1;
+    } catch {
+      return false;
+    }
+  };
+  const selectorFor = (element) => {
+    for (
+      const [attribute, scoped] of
+      /** @type {[string, boolean][]} */
+      [["data-navi-id", false], ["data-testid", false], ["name", true], ["aria-label", true]]
+    ) {
+      const value = element.getAttribute(attribute);
+      if (!value?.trim()) continue;
+      const roleValue = element.getAttribute("role");
+      const role = attribute === "aria-label" && roleValue ? `[role="${roleValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]` : "";
+      const selector = `${scoped ? element.localName : ""}${role}[${attribute}="${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`;
+      if (unique(selector)) return selector;
+    }
+    if (element.id && unique(`#${escape(element.id)}`)) return `#${escape(element.id)}`;
+    for (const className of element.classList) {
+      if (!className || /[a-f0-9]{8,}/i.test(className) || /^_[A-Za-z0-9_-]{5,}$/.test(className)) continue;
+      const selector = `${element.localName}.${escape(className)}`;
+      if (unique(selector)) return selector;
+    }
+    const parent = element.parentElement?.closest("[id]");
+    const anchor = parent && unique(`#${escape(parent.id)}`) ? parent : documentRef.body;
+    const parts = [];
+    for (let node = (
+      /** @type {HTMLElement | null} */
+      element
+    ); node && node !== anchor; node = node.parentElement) {
+      const siblings = node.parentElement ? [...node.parentElement.children].filter((child) => child.localName === node.localName) : [];
+      parts.unshift(`${node.localName}:nth-of-type(${siblings.indexOf(node) + 1})`);
+    }
+    return `${anchor?.id ? `#${escape(anchor.id)}` : "body"} > ${parts.join(" > ")}`;
+  };
+  const nodes = [...documentRef.querySelectorAll('button,input:not([type="hidden"]),textarea,select,a[href],[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],[role="switch"],[role="textbox"],[role="searchbox"],[role="combobox"],[contenteditable="true"]')].filter((element) => element instanceof HTMLElement);
+  const actions = [];
+  const limit = options.limit ?? 5e3;
+  for (const element of nodes) {
+    if (!element.isConnected || element.getClientRects().length === 0) continue;
+    const style = getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0 || element.closest('[hidden],[inert],[aria-hidden="true"]')) continue;
+    const rect = element.getBoundingClientRect();
+    const inViewport = rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
+    if (options.viewportOnly !== false && !inViewport) continue;
+    const id = selectorFor(element);
+    const inputType = element instanceof HTMLInputElement ? element.type.toLowerCase() : "";
+    const explicitRole = element.getAttribute("role");
+    const role = element.matches('a[href],[role="link"]') ? "link" : explicitRole || (inputType === "checkbox" || inputType === "radio" ? inputType : ["button", "submit", "reset", "image"].includes(inputType) ? "button" : element.isContentEditable || element.matches("input,textarea") ? "textbox" : element.localName === "select" ? "combobox" : "button");
+    const control = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement ? element : null;
+    const label = element.getAttribute("aria-label") || control?.labels?.[0]?.textContent || element.getAttribute("placeholder") || (element.isContentEditable ? "" : element.textContent) || element.getAttribute("name") || element.localName;
+    const point = documentRef.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const isVisible = rect.width > 0 && rect.height > 0;
+    const isOccluded = isVisible && inViewport && !(point === element || element.contains(point));
+    const action = role === "textbox" || role === "searchbox" || element.isContentEditable ? "type" : element instanceof HTMLSelectElement ? "select" : "click";
+    const optionsForSelect = element instanceof HTMLSelectElement ? [...element.options].filter((option) => !option.disabled && !option.closest("optgroup:disabled")).slice(0, 20).map((option) => {
+      const optionLabel = option.label.trim() || option.textContent?.trim() || option.value;
+      return optionLabel === option.value ? optionLabel : `${optionLabel}=${option.value}`;
+    }) : void 0;
+    actions.push({
+      target_id: id,
+      role,
+      name: String(label).trim().replace(/\s+/g, " ").slice(0, 160),
+      action,
+      selector: id,
+      disabled: element.matches(":disabled") || element.getAttribute("aria-disabled") === "true" || element.hasAttribute("readonly"),
+      ...control?.required ? { required: true } : {},
+      ...inputType ? { input_type: inputType } : {},
+      ...optionsForSelect ? { options: optionsForSelect } : {},
+      state: { is_visible: isVisible, is_enabled: !element.matches(":disabled") && element.getAttribute("aria-disabled") !== "true" && !element.hasAttribute("readonly"), is_in_viewport: inViewport, is_occluded: isOccluded },
+      coordinates: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      suggested_action: action
+    });
+    if (actions.length >= limit) break;
+  }
+  return { version: "zero-config", state_version: 0, reset: true, truncated: nodes.length > actions.length, actions };
+}
+function executeTarget(arg) {
+  const candidates = [...document.querySelectorAll('button,input:not([type="hidden"]),textarea,select,a[href],[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],[role="switch"],[role="textbox"],[role="searchbox"],[role="combobox"],[contenteditable="true"]')].filter((element2) => element2 instanceof HTMLElement);
+  let matches;
+  try {
+    matches = [...document.querySelectorAll(arg.targetId)].filter((element2) => element2 instanceof HTMLElement).filter((element2) => candidates.includes(element2));
+  } catch {
+    matches = [];
+  }
+  if (matches.length !== 1) throw Object.assign(new Error("Missing or ambiguous target"), { code: matches.length ? "AMBIGUOUS" : "NOT_FOUND" });
+  const element = matches[0];
+  const style = getComputedStyle(element);
+  if (!element.isConnected || element.getClientRects().length === 0 || style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0 || element.closest('[hidden],[inert],[aria-hidden="true"]')) throw Object.assign(new Error("Target is unavailable"), { code: "UNAVAILABLE" });
+  if (element.matches(":disabled") || element.getAttribute("aria-disabled") === "true" || !element.isConnected) throw Object.assign(new Error("Target is disabled or detached"), { code: "UNAVAILABLE" });
+  if (arg.actionType === "type" && element instanceof HTMLInputElement && !["button", "submit", "reset", "image", "checkbox", "radio", "file", "hidden"].includes(element.type.toLowerCase())) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(element, arg.payload.text ?? "");
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  } else if (arg.actionType === "type" && element instanceof HTMLTextAreaElement) {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(element, arg.payload.text ?? "");
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  } else if (arg.actionType === "click") element.click();
+  else if (arg.actionType === "select" && element instanceof HTMLSelectElement) {
+    const option = [...element.options].find((candidate) => candidate.value === arg.payload.value && !candidate.disabled && !candidate.closest("optgroup:disabled"));
+    if (!option) throw Object.assign(new Error("No enabled select option has that value"), { code: "INVALID_ACTION" });
+    element.value = arg.payload.value ?? "";
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  } else if (arg.actionType === "type" && element.isContentEditable) {
+    element.textContent = arg.payload.text ?? "";
+    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: arg.payload.text ?? "" }));
+  } else throw Object.assign(new Error("Action does not match target"), { code: "INVALID_ACTION" });
+  return { target_id: arg.targetId, action: arg.actionType, dispatched: true };
+}
 function naviAdapter(page, options) {
   return new NaviPlaywrightAdapter(page, options);
 }
@@ -284,15 +409,16 @@ var init_adapter = __esm({
             /** @type {any} */
             globalThis.Navi
           );
-          if (!navi) throw new Error("Navi is not installed on this page");
+          if (!navi) return void 0;
           if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
           return navi.actions({ limit: arg.limit ?? 5e3, coordinateSpace: "top", viewportOnly: arg.viewportOnly, since_version: arg.since_version });
         }, { expected, viewportOnly: options.viewportOnly, limit: options.limit, since_version: options.since_version });
-        if (!snapshot || typeof snapshot !== "object") throw new Error("Navi returned no action map");
-        if (snapshot.truncated) throw new Error("Incomplete action map; raise the limit or narrow the page");
+        const resolved = snapshot ?? await this.page.evaluate(collectTargets, { viewportOnly: options.viewportOnly, limit: options.limit });
+        if (!resolved || typeof resolved !== "object") throw new Error("Action map unavailable");
+        if (resolved.truncated) throw new Error("Incomplete action map; raise the limit or narrow the page");
         return (
           /** @type {NaviActionMap} */
-          snapshot
+          resolved
         );
       }
       /**
@@ -333,7 +459,7 @@ var init_adapter = __esm({
                 /** @type {any} */
                 globalThis.Navi
               );
-              if (!navi) throw new Error("Navi is not installed on this page");
+              if (!navi) return void 0;
               if (navi.version !== arg.expected) throw new Error(`Unsupported Navi protocol ${navi.version}; expected ${arg.expected}`);
               try {
                 return { ok: true, result: await navi.execute(arg.targetId, arg.actionType, arg.payload) };
@@ -350,6 +476,10 @@ var init_adapter = __esm({
                 } };
               }
             }, { targetId, actionType, payload, expected });
+            if (response === void 0) {
+              const result = await this.page.evaluate(executeTarget, { targetId, actionType, payload });
+              response = { ok: true, result };
+            }
           } catch (error) {
             if (!plan || !prepared) throw error;
             const receipt = await completeSettle(this.page, plan, targetId, prepared);

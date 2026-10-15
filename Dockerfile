@@ -46,6 +46,7 @@ COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY bin ./bin
 COPY server ./server
+COPY src/crawler-payload.js ./src/crawler-payload.js
 COPY scripts/check-sandbox.mjs ./scripts/check-sandbox.mjs
 COPY scripts/docker-entrypoint.sh /usr/local/bin/navi-entrypoint
 RUN chmod 0555 /usr/local/bin/navi-entrypoint

@@ -7,6 +7,7 @@
 //   GET  /v1/navi.js?key=<tenant_key>   serve the shipped browser bundle
 //   GET  /v1/loader.js                  serve the tenant embed loader
 //   POST /v1/telemetry                  ingest one navigator.sendBeacon payload
+//   POST /v1/sitemap/update             ingest a tenant's semantic action map
 //   GET  /v1/telemetry?key=<tenant_key> read that tenant's aggregate
 //   POST /v1/telemetry/violations       ingest one containment violation
 //   GET  /v1/tenants/<id>/security-audit read that tenant's blocked destinations
@@ -44,6 +45,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { beginProcessLifecycle, createStore, DEFAULT_RETENTION_DAYS, DEFAULT_VIOLATION_LIMIT, MAX_RETENTION_DAYS, MAX_VIOLATION_LIMIT } from './store.js';
 import { loadTenants, tenantFor, tenantIds } from './tenants.js';
+import { validateCrawlerPayload } from '../src/crawler-payload.js';
 
 /** Process boot timestamp, shared by every listener in this process. */
 const START_TIME_SECONDS = Math.floor(Date.now() / 1000);
@@ -570,7 +572,7 @@ function validateViolation(payload, allowedTenantIds, keyTenantId) {
 /**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
  * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: Map<string, string>, limiter: RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
  */
@@ -883,6 +885,38 @@ export async function createNaviHostServer(options = {}) {
     if (path === '/metrics') {
       if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /metrics.');
       return sendMetrics(res, await renderMetrics());
+    }
+
+    if (path === '/v1/sitemap/update') {
+      if (method !== 'POST') return sendJson(res, 404, { error: 'Not found' });
+      const authorization = req.headers.authorization;
+      const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
+      const siteId = match ? tenantFor(tenants, match[1]) : null;
+      if (!siteId) return sendJson(res, 401, { error: 'Unauthorized' });
+      await new Promise(/** @param {(value?: void) => void} resolveBody */ resolveBody => readBody(req, 2 * 1024 * 1024, result => {
+        if (result.tooLarge || result.raw === null) {
+          sendJson(res, 400, { error: 'Invalid payload' });
+          resolveBody();
+          return;
+        }
+        let payload;
+        try { payload = JSON.parse(result.raw); }
+        catch {
+          sendJson(res, 400, { error: 'Invalid payload' });
+          resolveBody();
+          return;
+        }
+        if (!validateCrawlerPayload(payload)) {
+          sendJson(res, 400, { error: 'Invalid payload' });
+          resolveBody();
+          return;
+        }
+        void store.upsertNavigationMap(siteId, payload.url, payload)
+          .then(() => sendJson(res, 200, { ok: true, url: payload.url, targets: payload.actions.length }))
+          .catch(() => sendJson(res, 500, { error: 'Internal server error' }))
+          .finally(() => resolveBody());
+      }));
+      return;
     }
 
     if (path === '/v1/navi.js') {

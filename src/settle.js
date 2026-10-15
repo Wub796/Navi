@@ -271,7 +271,15 @@ export async function completeSettle(page, plan, targetId, prepared) {
 
     const outcome = /** @type {SettleOutcome} */ (await page.evaluate(async (/** @type {{targetId: string, timeoutMs: number, pollMs: number}} */ arg) => {
       const navi = /** @type {any} */ (globalThis).Navi;
-      if (!navi) return { settled: false, elapsedMs: 0, reason: 'no_sdk' };
+      if (!navi) {
+        const target = document.querySelector(arg.targetId);
+        if (!target || !target.isConnected) return { settled: true, elapsedMs: 0 };
+        const rect = target.getBoundingClientRect();
+        const style = getComputedStyle(target);
+        const hidden = rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0 || target.getAttribute('aria-hidden') === 'true';
+        if (hidden) return { settled: true, elapsedMs: 0 };
+        return { settled: false, elapsedMs: 0, reason: 'visible' };
+      }
       const start = performance.now();
       const deadline = start + arg.timeoutMs;
       for (;;) {

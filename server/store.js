@@ -40,6 +40,7 @@ import { createInterface } from 'node:readline';
  * @typedef {{url_origin: string, events: number}} OriginBucket
  * @typedef {{events: number, totals: TelemetryTotals, byTenant: TenantBucket[], byOrigin: OriginBucket[]}} TelemetrySummary
  * @typedef {{tenant_id?: string}} SummaryFilter
+ * @typedef {{site_id: string, url: string, payload: object, updated_at: string}} NavigationMapRecord
  * @typedef {{tenant_id: string, session_id?: string | null, category: string, target_url: string, resolved_ip?: string | null, created_at?: string}} ViolationInput
  * @typedef {{id: number, tenant_id: string, session_id: string | null, category: string, target_url: string, resolved_ip: string | null, created_at: string}} ContainmentViolation
  * @typedef {{tenant_id: string, limit?: number, since?: string}} ViolationFilter
@@ -48,7 +49,7 @@ import { createInterface } from 'node:readline';
  * @typedef {{busy: number, log: number, checkpointed: number}} CheckpointResult
  * @typedef {{truncate?: boolean}} CheckpointOptions
  * @typedef {{journal_mode: string, synchronous: number, auto_vacuum: number}} StorePragmas
- * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
+ * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
  */
 
 /** Default number of violation rows one query returns. */
@@ -279,6 +280,15 @@ function createSqliteStore(path, sqlite) {
     created_at TEXT NOT NULL
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS idx_violations_tenant_created ON containment_violations(tenant_id, created_at)');
+  db.exec(`CREATE TABLE IF NOT EXISTS navigation_maps (
+    site_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (site_id, url)
+  )`);
+  const upsertNavigationMap = db.prepare('INSERT INTO navigation_maps (site_id, url, payload, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(site_id, url) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at');
+  const selectNavigationMap = db.prepare('SELECT site_id, url, payload, updated_at FROM navigation_maps WHERE site_id = ? AND url = ?');
   const insert = db.prepare('INSERT INTO telemetry (tenant_id, url_origin, actions_indexed, actions_executed, execution_failures, received_at) VALUES (?, ?, ?, ?, ?, ?)');
   const insertViolation = db.prepare('INSERT INTO containment_violations (tenant_id, session_id, category, target_url, resolved_ip, created_at) VALUES (?, ?, ?, ?, ?, ?)');
   const lastViolationId = db.prepare('SELECT last_insert_rowid() AS id');
@@ -300,6 +310,14 @@ function createSqliteStore(path, sqlite) {
     pragmas,
     async append(record) {
       insert.run(record.tenant_id, record.url_origin, record.actions_indexed, record.actions_executed, record.execution_failures, record.received_at);
+    },
+    async upsertNavigationMap(siteId, url, payload) {
+      upsertNavigationMap.run(siteId, url, JSON.stringify(payload), new Date().toISOString());
+    },
+    async readNavigationMap(siteId, url) {
+      const row = /** @type {{site_id?: unknown, url?: unknown, payload?: unknown, updated_at?: unknown} | undefined} */ (selectNavigationMap.get(siteId, url));
+      if (!row) return null;
+      return { site_id: String(row.site_id), url: String(row.url), payload: JSON.parse(String(row.payload)), updated_at: String(row.updated_at) };
     },
     async summarize(filter = {}) {
       const where = filter.tenant_id ? 'WHERE tenant_id = ?' : '';
@@ -356,6 +374,7 @@ function createSqliteStore(path, sqlite) {
     async reset() {
       db.exec('DELETE FROM telemetry');
       db.exec('DELETE FROM containment_violations');
+      db.exec('DELETE FROM navigation_maps');
     },
     async close() {
       if (closed) return;
@@ -402,6 +421,7 @@ function createLogStore(path) {
         continue;
       }
       if (!parsed || typeof parsed !== 'object') continue;
+      if (parsed.kind === 'navigation_map') continue;
       if (parsed.kind === STORE_META_KIND) {
         sequence = Math.max(sequence, asNumber(parsed.violation_sequence));
         continue;
@@ -480,6 +500,23 @@ function createLogStore(path) {
     async summarize(filter = {}) {
       return summarizeRecords(await readRecords(), filter);
     },
+    async upsertNavigationMap(siteId, url, payload) {
+      const record = { kind: 'navigation_map', site_id: siteId, url, payload, updated_at: new Date().toISOString() };
+      await serial(() => appendFile(path, `${JSON.stringify(record)}\n`, 'utf8'));
+    },
+    async readNavigationMap(siteId, url) {
+      const text = await readFile(path, 'utf8').catch(() => '');
+      for (const line of text.split('\n').reverse()) {
+        if (!line.trim()) continue;
+        try {
+          const record = JSON.parse(line);
+          if (record.kind === 'navigation_map' && record.site_id === siteId && record.url === url) {
+            return { site_id: siteId, url, payload: record.payload, updated_at: record.updated_at };
+          }
+        } catch { /* ignore torn and malformed lines */ }
+      }
+      return null;
+    },
     async recordViolation(violation) {
       const record = normalizeViolation(violation);
       return serial(async () => {
@@ -546,6 +583,7 @@ function createLogStore(path) {
               continue;
             }
             if (!parsed || typeof parsed !== 'object') continue;
+            if (parsed.kind === 'navigation_map') continue;
             if (parsed.kind === STORE_META_KIND) {
               // The old mark is superseded by the one written at the end, which
               // carries whatever this file has seen since.

@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "allowJs": true,
+    "allowImportingTsExtensions": true,
     "checkJs": true,
     "noEmit": true,
     "strict": true,
@@ -9,5 +10,5 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*.js", "server/**/*.js", "types/**/*.d.ts", "scripts/**/*.mjs", "tests/**/*.mjs", "tests/**/*.js", "bin/**/*.js", "playwright.config.mjs", "playwright.smoke.config.mjs"]
+  "include": ["src/**/*.js", "src/**/*.ts", "server/**/*.js", "types/**/*.d.ts", "scripts/**/*.mjs", "tests/**/*.mjs", "tests/**/*.js", "bin/**/*.js", "playwright.config.mjs", "playwright.smoke.config.mjs"]
 }
