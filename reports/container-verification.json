@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-10-14T23:16:51.120Z",
+  "recordedAt": "2026-10-14T23:54:57.209Z",
   "compose": "docker-compose.yml",
   "architecture": "linux/arm64",
   "imageId": "sha256:f84e26a11f1328ff68e49aa41f812a3dbef3e382f7722aa3caafae2d6429d5af",
@@ -23,7 +23,7 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"120\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"130\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "lifecycle-volume",
@@ -83,17 +83,17 @@
     {
       "check": "navi-host-crash-recovery",
       "ok": true,
-      "detail": "SIGKILL exit 137: navi_host_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_host_unclean_shutdowns_total=0 and consumes marker; telemetry and audit retained"
+      "detail": "SIGKILL exit 137 (SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es); then SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es)): navi_host_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_host_unclean_shutdowns_total=0 and consumes marker; telemetry and audit retained"
     },
     {
       "check": "navi-mcp-crash-recovery",
       "ok": true,
-      "detail": "SIGKILL exit 137: navi_mcp_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_mcp_unclean_shutdowns_total=0 and consumes marker; active Chromium session torn down"
+      "detail": "SIGKILL exit 137 (SIGKILL sent to navi-mcp pid 7 (node bin/navi-mcp.js --transport sse --host 0.0.0.0 --port 3001 --max-sessions 2 --idle-timeout 300) among 1 match(es); then SIGKILL sent to navi-mcp pid 7 (node bin/navi-mcp.js --transport sse --host 0.0.0.0 --port 3001 --max-sessions 2 --idle-timeout 300) among 1 match(es)): navi_mcp_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_mcp_unclean_shutdowns_total=0 and consumes marker; active Chromium session torn down"
     },
     {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-14T23:16:50.777Z\",\"session_id\":\"f7698d00-4d11-4d79-8a6b-d0339394e1d9\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-14T23:54:56.830Z\",\"session_id\":\"7a41a2cd-e896-4ee9-832e-ebacc506cbfd\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }

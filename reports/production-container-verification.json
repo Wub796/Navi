@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-10-14T23:17:05.663Z",
+  "recordedAt": "2026-10-14T23:55:11.784Z",
   "compose": "deploy/docker-compose.prod.yml",
   "architecture": "linux/arm64",
   "imageId": "sha256:f84e26a11f1328ff68e49aa41f812a3dbef3e382f7722aa3caafae2d6429d5af",
@@ -23,7 +23,7 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"125\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532960]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"128\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532960]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "lifecycle-volume",
@@ -83,17 +83,17 @@
     {
       "check": "navi-host-crash-recovery",
       "ok": true,
-      "detail": "SIGKILL exit 137: navi_host_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_host_unclean_shutdowns_total=0 and consumes marker; telemetry and audit retained"
+      "detail": "SIGKILL exit 137 (SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es); then SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es)): navi_host_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_host_unclean_shutdowns_total=0 and consumes marker; telemetry and audit retained"
     },
     {
       "check": "navi-mcp-crash-recovery",
       "ok": true,
-      "detail": "SIGKILL exit 137: navi_mcp_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_mcp_unclean_shutdowns_total=0 and consumes marker; active Chromium session torn down"
+      "detail": "SIGKILL exit 137 (SIGKILL sent to navi-mcp pid 7 (node bin/navi-mcp.js --transport sse --host 0.0.0.0 --port 3001 --max-sessions 2 --idle-timeout 300) among 1 match(es); then SIGKILL sent to navi-mcp pid 7 (node bin/navi-mcp.js --transport sse --host 0.0.0.0 --port 3001 --max-sessions 2 --idle-timeout 300) among 1 match(es)): navi_mcp_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_mcp_unclean_shutdowns_total=0 and consumes marker; active Chromium session torn down"
     },
     {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-14T23:17:05.294Z\",\"session_id\":\"9086d61d-ede7-4f73-8b32-2083520f6533\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-14T23:55:11.391Z\",\"session_id\":\"4d662f39-4126-4c01-b36c-1e5f5f6adede\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }
