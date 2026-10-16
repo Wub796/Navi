@@ -102,9 +102,9 @@ const postViolation = (base, key, payload = violation()) => fetch(`${base}/v1/te
  * @param {string} base @param {string} key @param {Record<string, unknown>} [payload]
  * @returns {Promise<Response>}
  */
-const postBeacon = (base, key, payload = { tenant_id: 'tenant-alpha', url_origin: 'https://shop.example.com', actions_indexed: 1, actions_executed: 0, execution_failures: 0 }) => fetch(`${base}/v1/telemetry?key=${key}`, {
+const postBeacon = (base, key, payload = { tenant_id: 'tenant-alpha', url_origin: 'https://shop.example.com', actions_indexed: 1, actions_executed: 0, execution_failures: 0 }) => fetch(`${base}/v1/telemetry`, {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
   body: JSON.stringify(payload)
 });
 
@@ -427,21 +427,26 @@ test('an ingest burst is capped per tenant, on both ingest routes', async () => 
   expect((await postBeacon(base, 'key-beta', { tenant_id: 'tenant-beta', url_origin: 'https://other.example.com', actions_indexed: 1, actions_executed: 0, execution_failures: 0 })).status).toBe(202);
 });
 
-test('an unauthenticated beacon is charged to the tenant it names, after validation', async () => {
+test('an authenticated beacon is charged to the tenant it names, after validation', async () => {
   const host = await startHost({ rateLimiter: createRateLimiter({ perMinute: 120, burst: 2, timer: false }) });
   const base = `http://127.0.0.1:${host.port}`;
 
+  // An unauthenticated request is rejected before validation or rate-limit charging.
+  const unauthenticated = await fetch(`${base}/v1/telemetry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tenant_id: 'tenant-alpha' }) });
+  expect(unauthenticated.status).toBe(401);
+  expect(await unauthenticated.json()).toEqual({ error: 'Unauthorized' });
+
   // A malformed payload is still a payload error, not a quota answer.
-  const malformed = await fetch(`${base}/v1/telemetry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tenant_id: 'tenant-alpha' }) });
+  const malformed = await fetch(`${base}/v1/telemetry`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-alpha' }, body: JSON.stringify({ tenant_id: 'tenant-alpha' }) });
   expect(malformed.status).toBe(400);
   expect((await malformed.json()).error.code).toBe('INVALID_PAYLOAD');
 
-  expect((await postBeacon(base, 'unused-key')).status).toBe(202);
-  expect((await postBeacon(base, 'unused-key')).status).toBe(202);
-  const refused = await postBeacon(base, 'unused-key');
+  expect((await postBeacon(base, 'key-alpha')).status).toBe(202);
+  expect((await postBeacon(base, 'key-alpha')).status).toBe(202);
+  const refused = await postBeacon(base, 'key-alpha');
   expect(refused.status).toBe(429);
   expect(refused.headers.get('retry-after')).toBe('1');
-  // The same tenant's key-authenticated route shares the bucket, so a page cannot
+  // The same tenant's violation route shares the bucket, so a caller cannot
   // escape its tenant's ceiling by switching routes.
   const violationResponse = await postViolation(base, 'key-alpha');
   expect(violationResponse.status).toBe(429);

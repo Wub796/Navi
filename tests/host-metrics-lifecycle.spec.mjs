@@ -289,7 +289,7 @@ test('SIGTERM drains the host CLI, checkpoints the store and exits 0', async () 
   const file = tempFile('db');
   const cli = await startHostCli(file);
   const beacon = { tenant_id: 'tenant-alpha', url_origin: 'https://shop.example.com', actions_indexed: 1, actions_executed: 0, execution_failures: 0 };
-  expect((await fetch(`http://127.0.0.1:${cli.port}/v1/telemetry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(beacon) })).status).toBe(202);
+  expect((await fetch(`http://127.0.0.1:${cli.port}/v1/telemetry`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-alpha' }, body: JSON.stringify(beacon) })).status).toBe(202);
 
   const startedAt = Date.now();
   cli.child.kill('SIGTERM');

@@ -442,12 +442,14 @@ function isCanonicalOrigin(value) {
 
 /**
  * Strict payload validation. Only the five documented fields are accepted, the
- * tenant must be registered, and the origin must be canonical.
+ * tenant must be registered and match the authenticated Bearer token, and the
+ * origin must be canonical.
  * @param {unknown} payload
  * @param {Set<string>} allowedTenantIds
+ * @param {string} [authenticatedTenantId]
  * @returns {{ok: true, record: {tenant_id: string, url_origin: string, actions_indexed: number, actions_executed: number, execution_failures: number}} | {ok: false, status: number, code: string, message: string}}
  */
-function validateTelemetry(payload, allowedTenantIds) {
+function validateTelemetry(payload, allowedTenantIds, authenticatedTenantId) {
   const invalid = (/** @type {string} */ message) => /** @type {{ok: false, status: number, code: string, message: string}} */ ({ ok: false, status: 400, code: 'INVALID_PAYLOAD', message });
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return invalid('The body must be a JSON object with tenant_id, url_origin, actions_indexed, actions_executed and execution_failures.');
@@ -463,6 +465,9 @@ function validateTelemetry(payload, allowedTenantIds) {
   }
   if (!allowedTenantIds.has(tenantId)) {
     return { ok: false, status: 401, code: 'UNKNOWN_TENANT', message: `tenant_id "${tenantId}" is not a registered tenant. Check the tenant key used to serve the script.` };
+  }
+  if (authenticatedTenantId && tenantId !== authenticatedTenantId) {
+    return { ok: false, status: 401, code: 'UNAUTHORIZED', message: `The body names tenant "${tenantId}" while the presented Bearer token resolves to "${authenticatedTenantId}".` };
   }
   if (!isCanonicalOrigin(record.url_origin)) {
     return invalid('url_origin must be a canonical origin such as "https://shop.example.com": no path, query string, fragment, trailing slash or embedded credentials.');
@@ -836,6 +841,17 @@ export async function createNaviHostServer(options = {}) {
   });
 
   /**
+   * Resolve the tenant id from a strict `Authorization: Bearer <token>` header.
+   * @param {import('node:http').IncomingMessage} req
+   * @returns {string | null}
+   */
+  function bearerTenant(req) {
+    const authorization = req.headers.authorization;
+    const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
+    return match ? tenantFor(tenants, match[1]) : null;
+  }
+
+  /**
    * @param {import('node:http').IncomingMessage} req
    * @param {import('node:http').ServerResponse} res
    */
@@ -889,9 +905,7 @@ export async function createNaviHostServer(options = {}) {
 
     if (path === '/v1/sitemap/update') {
       if (method !== 'POST') return sendJson(res, 404, { error: 'Not found' });
-      const authorization = req.headers.authorization;
-      const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
-      const siteId = match ? tenantFor(tenants, match[1]) : null;
+      const siteId = bearerTenant(req);
       if (!siteId) return sendJson(res, 401, { error: 'Unauthorized' });
       await new Promise(/** @param {(value?: void) => void} resolveBody */ resolveBody => readBody(req, 2 * 1024 * 1024, result => {
         if (result.tooLarge || result.raw === null) {
@@ -1170,6 +1184,11 @@ export async function createNaviHostServer(options = {}) {
       }
       if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/telemetry.');
 
+      const keyTenantId = bearerTenant(req);
+      if (!keyTenantId) {
+        return sendJson(res, 401, { error: 'Unauthorized' });
+      }
+
       const contentType = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
       if (contentType !== 'application/json' && contentType !== 'text/plain') {
         return sendError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Send the beacon as application/json, or as a text/plain JSON string the way navigator.sendBeacon does by default.');
@@ -1201,16 +1220,16 @@ export async function createNaviHostServer(options = {}) {
             resolveBody();
             return;
           }
-          const verdict = validateTelemetry(payload, allowedTenantIds);
+          const verdict = validateTelemetry(payload, allowedTenantIds, keyTenantId);
           if (!verdict.ok) {
-            sendError(res, verdict.status, verdict.code, verdict.message);
+            if (verdict.status === 401 && verdict.code === 'UNAUTHORIZED') {
+              sendJson(res, 401, { error: 'Unauthorized' });
+            } else {
+              sendError(res, verdict.status, verdict.code, verdict.message);
+            }
             resolveBody();
             return;
           }
-          // The beacon route is unauthenticated by design, so the tenant is only
-          // known from the payload: the charge follows validation and precedes the
-          // write, which is the only ordering that both refuses a flood and tells a
-          // malformed request apart from a rate-limited one.
           const charge = chargeIngest(res, verdict.record.tenant_id);
           if (!charge) {
             resolveBody();

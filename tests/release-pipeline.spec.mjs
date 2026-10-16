@@ -508,7 +508,7 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(216);
+  expect(MIN_PASSING_TESTS).toBe(217);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.1.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
@@ -853,6 +853,20 @@ test('the pipeline cannot publish without container verification on both archite
   expect(stepValues(containerGate.steps, 'name')).toContain('release-container-receipt-${{ matrix.arch }}');
   expect(stepValues(containerGate.steps, 'path')).toContain('reports/production-container-verification.json');
   expect(stepValues(release.jobs.publish.steps, 'pattern')).toContain('release-container-receipt-*');
+
+  // Keyless OIDC Trusted Publishing: the publish job is bound to the `release` environment,
+  // requests `id-token: write` and `contents: write`, upgrades npm to >= 11.5.1 before
+  // publishing, and never references a static NPM_TOKEN secret.
+  expect(release.jobs.publish.environment).toBe('release');
+  expect(release.jobs.publish.permissions).toEqual({ contents: 'write', 'id-token': 'write' });
+  const publishRuns = stepRuns(release.jobs.publish.steps);
+  const upgradeStep = publishRuns.findIndex(run => run.includes('npm install -g npm@') && run.includes('npm --version'));
+  const publishStep = publishRuns.findIndex(run => run.includes('npm publish --provenance --access public'));
+  expect(upgradeStep, 'publish job must upgrade npm for OIDC trusted publishing').toBeGreaterThan(-1);
+  expect(upgradeStep).toBeLessThan(publishStep);
+  const publishStepConfig = release.jobs.publish.steps[publishStep];
+  expect(publishStepConfig?.env?.NODE_AUTH_TOKEN).toBeUndefined();
+  expect(JSON.stringify(release)).not.toContain('NPM_TOKEN');
 });
 
 test('clean-room package verifier enforces manifest layout, SRI byte parity, zero leaks, and stdio MCP handshake', async () => {

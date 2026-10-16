@@ -41,11 +41,15 @@ const validPayload = (overrides = {}) => ({
 /**
  * @param {unknown} body
  * @param {string} [contentType]
+ * @param {string | null} [key]
  * @returns {Promise<Response>}
  */
-const post = (body, contentType = 'application/json') => fetch(`${state.base}/v1/telemetry`, {
+const post = (body, contentType = 'application/json', key = DEV_TENANT_KEY) => fetch(`${state.base}/v1/telemetry`, {
   method: 'POST',
-  headers: { 'Content-Type': contentType },
+  headers: {
+    'Content-Type': contentType,
+    ...(key === null ? {} : { Authorization: `Bearer ${key}` })
+  },
   body: typeof body === 'string' ? body : JSON.stringify(body)
 });
 
@@ -89,6 +93,64 @@ test('refuses to distribute the bundle without a valid tenant key', async () => 
     const body = await response.json();
     expect(body.error.code).toBe('UNAUTHORIZED');
     expect(body.error.message).toContain('key');
+  }
+});
+
+test('enforces strict Bearer authentication on POST /v1/telemetry and rejects unauthenticated or mismatched tenant payloads with 401', async () => {
+  const host = await createNaviHostServer({
+    port: 0,
+    storeFile: join(tmpdir(), `navi-telemetry-auth-${process.pid}-${Date.now()}.db`),
+    tenants: new Map([['key-alpha', 'tenant-alpha'], ['key-beta', 'tenant-beta']])
+  });
+  const base = `http://127.0.0.1:${host.port}`;
+  try {
+    const payload = validPayload({ tenant_id: 'tenant-alpha' });
+    // Unauthenticated request supplying only tenant_id in the payload
+    let response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Unauthorized' });
+
+    // Query-string key without Bearer header
+    response = await fetch(`${base}/v1/telemetry?key=key-alpha`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Unauthorized' });
+
+    // Invalid Bearer token
+    response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer wrong-token' },
+      body: JSON.stringify(payload)
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Unauthorized' });
+
+    // Cross-tenant token mismatch (Bearer token for tenant-beta, payload for tenant-alpha)
+    response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-beta' },
+      body: JSON.stringify(payload)
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Unauthorized' });
+
+    // Authorized ingestion with matching Bearer token
+    response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-alpha' },
+      body: JSON.stringify(payload)
+    });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ ok: true, accepted: true, tenant_id: 'tenant-alpha' });
+  } finally {
+    await host.close();
   }
 });
 

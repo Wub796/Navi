@@ -262,7 +262,7 @@ try {
   assert(Buffer.from(await (await request(`${host}/v1/loader.js`)).arrayBuffer()).equals(await readFile('dist/loader.min.js')), 'loader mismatch');
   record('distribution', 'SDK and loader byte-identical; missing tenant key rejected');
   const beacon = { tenant_id: 'container-check', url_origin: 'https://container.example', actions_indexed: 7, actions_executed: 2, execution_failures: 0 };
-  assert((await request(`${host}/v1/telemetry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(beacon) })).status === 202, 'telemetry rejected');
+  assert((await request(`${host}/v1/telemetry`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tenantKey}` }, body: JSON.stringify(beacon) })).status === 202, 'telemetry rejected');
   compose(['restart', 'navi-host'], 30000);
   // Restart is not readiness: bounded HTTP poll until the host answers again.
   let summary;
