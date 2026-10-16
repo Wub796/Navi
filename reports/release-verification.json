@@ -1,25 +1,25 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-15T23:22:37.675Z",
+  "recordedAt": "2026-10-16T00:18:39.847Z",
   "evidence": {
-    "revision": "ef458f9eb94ef30f7334a6a94ef2341b6c956ad1",
+    "revision": "5282ef6bfefe3824631888ffe13f46d76ef62314",
     "branch": "main",
-    "sourceTree": "sha256:ccb46831058010d781ddb3e671fa45012cbf160bd88c429760d978d895d15727",
+    "sourceTree": "sha256:627baf2e3572e22b7d90e48f37c1753b01343f2093b7432d6d42d43249c428de",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
-    "floor": 215,
+    "floor": 216,
     "tests": [
-      215,
+      216,
       0
     ],
     "containers": [
       {
         "architecture": "linux/arm64",
         "compose": "deploy/docker-compose.prod.yml",
-        "imageId": "sha256:903ac43b57e10b8ba08f2f982cded383c8d8abaee1c314290f1ad6480d63543b",
-        "recordedAt": "2026-10-15T23:02:09.026Z",
+        "imageId": "sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991",
+        "recordedAt": "2026-10-16T00:14:27.784Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -27,8 +27,8 @@
       {
         "architecture": "linux/arm64",
         "compose": "docker-compose.yml",
-        "imageId": "sha256:903ac43b57e10b8ba08f2f982cded383c8d8abaee1c314290f1ad6480d63543b",
-        "recordedAt": "2026-10-15T23:01:53.472Z",
+        "imageId": "sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991",
+        "recordedAt": "2026-10-16T00:14:08.151Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -88,7 +88,7 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 9 generated path(s)"
+      "detail": "clean apart from 7 generated path(s)"
     },
     {
       "id": "version-tag",
@@ -108,7 +108,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "215 passed, 0 failed (floor 215)"
+      "detail": "216 passed, 0 failed (floor 216)"
     },
     {
       "id": "ci-gates",

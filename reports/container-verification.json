@@ -1,14 +1,14 @@
 {
-  "recordedAt": "2026-10-15T23:01:53.472Z",
+  "recordedAt": "2026-10-16T00:14:08.151Z",
   "compose": "docker-compose.yml",
   "architecture": "linux/arm64",
-  "imageId": "sha256:903ac43b57e10b8ba08f2f982cded383c8d8abaee1c314290f1ad6480d63543b",
+  "imageId": "sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991",
   "ok": true,
   "checks": [
     {
       "check": "image",
       "ok": true,
-      "detail": "sha256:903ac43b57e10b8ba08f2f982cded383c8d8abaee1c314290f1ad6480d63543b; linux/arm64; user pwuser:pwuser"
+      "detail": "sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991; linux/arm64; user pwuser:pwuser"
     },
     {
       "check": "compose-health",
@@ -23,7 +23,7 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"126\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"122\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "lifecycle-volume",
@@ -83,7 +83,7 @@
     {
       "check": "navi-host-crash-recovery",
       "ok": true,
-      "detail": "SIGKILL exit 137 (SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es); then docker compose --project-name navi-check-30769 -f docker-compose.yml -f .freebuff/navi-check-30769.override.yml exec -T navi-host node -e const fs = require('fs'); const entry = \"server/index.js\"; const self = process.pid; const matches = fs.readdirSync('/proc').filter(p => /^\\d+$/.test(p)).filter(p => Number(p) !== self).filter(p => { try { return fs.readFileSync('/proc/' + p + '/cmdline', 'utf8').split('\\0').some(arg => arg === entry || arg.endsWith('/' + entry)); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ESRCH') return false; throw e; } }); if (!matches.length) { console.log(JSON.stringify({ found: 0 })); process.exit(0); } const pid = Number(matches[0]); const argv = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8').split('\\0').filter(Boolean); console.log(JSON.stringify({ found: matches.length, pid, argv })); process.kill(pid, 'SIGKILL');  failed: exit code 1 after 66ms\nstdout: (empty)\nstderr: service \"navi-host\" is not running): navi_host_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_host_unclean_shutdowns_total=0 and consumes marker; telemetry and audit retained"
+      "detail": "SIGKILL exit 137 (SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es); then SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es)): navi_host_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_host_unclean_shutdowns_total=0 and consumes marker; telemetry and audit retained"
     },
     {
       "check": "navi-mcp-crash-recovery",
@@ -93,7 +93,7 @@
     {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-15T23:01:53.055Z\",\"session_id\":\"125bc572-4c09-4e1d-97f6-22ca658a6f55\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-16T00:14:07.775Z\",\"session_id\":\"91143e66-6a3a-481d-8fe9-373df03d4ae4\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }

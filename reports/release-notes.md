@@ -34,8 +34,8 @@ container receipts rather than restated here.
 
 | Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |
 |---|---|---|---|---|---|---:|---:|
-| linux/arm64 | `sha256:903ac43b57e10b8ba08f2f982cded383c8d8abaee1c314290f1ad6480d63543b` | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
-| linux/arm64 | `sha256:903ac43b57e10b8ba08f2f982cded383c8d8abaee1c314290f1ad6480d63543b` | `docker-compose.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
+| linux/arm64 | `sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991` | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
+| linux/arm64 | `sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991` | `docker-compose.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
 
 ### Clean-Room Package Canary Attestation
 
@@ -58,24 +58,24 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 
 ### Verification
 
-Provenance: `evidence.revision` is `ef458f9eb94ef30f7334a6a94ef2341b6c956ad1` and `evidence.sourceTree` is `sha256:ccb46831058010d781ddb3e671fa45012cbf160bd88c429760d978d895d15727` — a digest of every tracked
+Provenance: `evidence.revision` is `5282ef6bfefe3824631888ffe13f46d76ef62314` and `evidence.sourceTree` is `sha256:627baf2e3572e22b7d90e48f37c1753b01343f2093b7432d6d42d43249c428de` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-15T23:22:37.675Z: **11/11 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-16T00:18:39.847Z: **11/11 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 9 generated path(s) |
+| `git-clean` | pass | clean apart from 7 generated path(s) |
 | `version-tag` | pass | v0.6.1 does not exist yet (create it with --tag once this gate is green) |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
-| `test-suite` | pass | 215 passed, 0 failed (floor 215) |
+| `test-suite` | pass | 216 passed, 0 failed (floor 216) |
 | `ci-gates` | pass | All selected gates passed. |
 | `pack-check` | pass | every published path is an intended release artifact |
 | `cleanroom-package-canary` | pass | 6/6 clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake) |
