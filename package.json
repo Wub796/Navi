@@ -3,6 +3,14 @@
   "version": "0.6.1",
   "description": "Navi protocol: deterministic action maps and guarded execution tools for browser agents.",
   "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wub796/Navi.git"
+  },
+  "homepage": "https://github.com/Wub796/Navi#readme",
+  "bugs": {
+    "url": "https://github.com/Wub796/Navi/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -25,8 +33,8 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "navi": "./bin/navi-agent.js",
-    "navi-mcp": "./bin/navi-mcp.js"
+    "navi": "bin/navi-agent.js",
+    "navi-mcp": "bin/navi-mcp.js"
   },
   "files": [
     "dist",

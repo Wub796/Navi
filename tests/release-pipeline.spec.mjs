@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
-import { CANARY_CHECKS_FLOOR, CONTAINER_CHECKS_FLOOR, evaluatePublish, resolveProvenance } from '../scripts/publish-preflight.mjs';
+import { CANARY_CHECKS_FLOOR, CONTAINER_CHECKS_FLOOR, evaluatePublish, repositorySlug, resolveProvenance, resolveRepository } from '../scripts/publish-preflight.mjs';
 import { canaryAttestation, renderReleaseNotes, sourceTreeAttestation } from '../scripts/release-notes.mjs';
 import { readContainerReceipts, summarizeContainer } from '../scripts/container-evidence.mjs';
 import { MIN_PASSING_TESTS, sourceTreeDigest } from '../scripts/verify-release.mjs';
@@ -29,6 +29,7 @@ const readyManifest = {
   name: 'navi-interaction-bridge',
   version: '0.5.0',
   license: 'MIT',
+  repository: { type: 'git', url: 'git+https://github.com/example-org/navi-interaction-bridge.git' },
   publishConfig: { access: 'public', provenance: true }
 };
 /** A green container verification of the file an operator deploys, as the receipt records it. */
@@ -70,7 +71,7 @@ const blockedBy = checks => checks.filter(check => !check.ok && check.blocking).
 const provenanceAtHead = revision => ({ head: revision, ancestor: null, changedPaths: null, digest: null, error: null });
 
 /**
- * @typedef {{licenseFile: string | null, receipt: Record<string, any> | null, tag: string | null, artifacts: {sri: string | null, bundleBytes: number | null, loaderBytes: number | null}, provenance: ReturnType<typeof provenanceAtHead>}} PublishContext
+ * @typedef {{licenseFile: string | null, receipt: Record<string, any> | null, tag: string | null, artifacts: {sri: string | null, bundleBytes: number | null, loaderBytes: number | null}, provenance: ReturnType<typeof provenanceAtHead>, repository: string | null}} PublishContext
  */
 
 /**
@@ -87,6 +88,7 @@ const publishContext = (overrides = {}) => ({
   tag: 'v0.5.0',
   artifacts: readyArtifacts,
   provenance: provenanceAtHead(readyReceipt.evidence.revision),
+  repository: 'https://github.com/example-org/navi-interaction-bridge.git',
   ...overrides
 });
 
@@ -187,6 +189,106 @@ test('the publish preflight refuses to publish until the license decision is mad
   // being published, and not the container verification the bytes are going to run as — so
   // every rule that reads evidence fires.
   expect(blockedBy(evaluatePublish(readyManifest, publishContext({ receipt: null })))).toEqual(['verification-receipt', 'receipt-matches-artifacts', 'provenance-parity', 'container-evidence', 'canary-evidence']);
+});
+
+test('a provenance publish must declare the repository the statement will name', async () => {
+  // npm binds a provenance statement to the repository the workflow ran in and validates the
+  // manifest against it after the bundle has already been signed. An empty `repository.url`
+  // therefore cost a whole run and a published attestation, with the refusal arriving as
+  // `422 ... package.json: "repository.url" is "", expected to match "https://github.com/…"`
+  // from the registry. The same comparison is made here, before the token is spent.
+  /** @param {Record<string, any>} manifest @param {string | null} repository @returns {{ok: boolean, blocking: boolean, detail: string}} */
+  const repositoryCheck = (manifest, repository) => {
+    const checks = evaluatePublish({ ...readyManifest, ...manifest }, publishContext({ repository }));
+    const check = checks.find(candidate => candidate.id === 'repository-url');
+    if (!check) throw new Error('the preflight records no repository-url check');
+    return check;
+  };
+  const origin = 'https://github.com/example-org/navi-interaction-bridge.git';
+
+  // Ready state: the declaration names the repository this run publishes from.
+  expect(repositoryCheck({}, origin).ok).toBe(true);
+  expect(repositoryCheck({}, origin).detail).toContain('the repository this release is built from');
+  expect(blockedBy(evaluatePublish(readyManifest, publishContext()))).toEqual([]);
+
+  // The defect that reached the registry. Absent, empty and string-empty are one unknown to
+  // npm, and each blocks a provenance publish on its own.
+  for (const repository of [undefined, null, '', '   ', { type: 'git', url: '' }]) {
+    const check = repositoryCheck({ repository }, origin);
+    expect(check.ok, JSON.stringify(repository)).toBe(false);
+    expect(check.blocking).toBe(true);
+    expect(check.detail).toContain('names no repository');
+    // The refusal names the 422 a reader will otherwise have to discover from the registry.
+    expect(check.detail).toContain('Failed to validate repository information');
+  }
+  expect(blockedBy(evaluatePublish({ ...readyManifest, repository: undefined }, publishContext()))).toEqual(['repository-url']);
+
+  // A statement is bound to one repository, so a declaration naming another is refused, and
+  // both are named so the reader does not have to diff them.
+  const elsewhere = repositoryCheck({ repository: 'https://github.com/someone-else/navi.git' }, origin);
+  expect(elsewhere.ok).toBe(false);
+  expect(elsewhere.detail).toContain('github.com/someone-else/navi');
+  expect(elsewhere.detail).toContain('github.com/example-org/navi-interaction-bridge');
+
+  // The spellings npm itself accepts for one repository are not disagreements: a declaration
+  // written differently from the checkout's origin is still the same repository, and a check
+  // that read them as different would refuse publishes npm would have accepted.
+  for (const declaration of [
+    'git+https://github.com/example-org/navi-interaction-bridge.git',
+    'https://github.com/example-org/navi-interaction-bridge',
+    'https://github.com/example-org/navi-interaction-bridge/',
+    'git://github.com/example-org/navi-interaction-bridge.git',
+    'git@github.com:example-org/navi-interaction-bridge.git',
+    'ssh://git@github.com/example-org/navi-interaction-bridge.git',
+    'git+ssh://git@github.com/example-org/navi-interaction-bridge.git',
+    'github:example-org/navi-interaction-bridge',
+    'example-org/navi-interaction-bridge',
+    'example-org/navi-interaction-bridge.git'
+  ]) {
+    expect(repositoryCheck({ repository: { type: 'git', url: declaration } }, origin).ok, declaration).toBe(true);
+  }
+  // ...including the `owner/name` shorthand GitHub states in the environment, and the string
+  // form of the field npm also accepts.
+  expect(repositoryCheck({}, 'example-org/navi-interaction-bridge').ok).toBe(true);
+  expect(repositoryCheck({ repository: 'git@github.com:example-org/navi-interaction-bridge.git' }, 'example-org/navi-interaction-bridge').ok).toBe(true);
+
+  // A repository that cannot be resolved is a refusal rather than a pass, for the same reason
+  // an unresolved revision is: not knowing whether the two agree is the question being asked.
+  const unresolved = repositoryCheck({}, null);
+  expect(unresolved.ok).toBe(false);
+  expect(unresolved.detail).toContain('could not be resolved');
+
+  // Without provenance there is no statement for npm to validate, so the field is not required
+  // and cannot block a publish that makes no claim.
+  const withoutProvenance = evaluatePublish({ ...readyManifest, publishConfig: { access: 'public' }, repository: undefined }, publishContext({ repository: null }));
+  expect(withoutProvenance.find(check => check.id === 'repository-url')?.blocking).toBe(false);
+  expect(blockedBy(withoutProvenance)).toEqual(['provenance']);
+
+  // The normalisation is the one npm compares in, so it is pinned directly and not only through
+  // the rule: one repository reduces to one slug however it is written, and a value that names
+  // no repository reduces to none rather than to something that could compare equal to it.
+  for (const spelling of [
+    'git+https://github.com/Wub796/Navi.git',
+    'https://github.com/Wub796/Navi',
+    'git@github.com:Wub796/Navi.git',
+    'ssh://git@github.com/Wub796/Navi.git',
+    'git://github.com/Wub796/Navi.git',
+    'github:Wub796/Navi',
+    'Wub796/Navi',
+    'https://x-access-token:ghs_token@github.com/Wub796/Navi'
+  ]) {
+    expect(repositorySlug(spelling), spelling).toBe('github.com/wub796/navi');
+  }
+  expect(repositorySlug('https://gitlab.com/Wub796/Navi.git')).toBe('gitlab.com/wub796/navi');
+  for (const value of ['', '   ', null, undefined, 'not a url at all', 'https://github.com/']) expect(repositorySlug(value)).toBeNull();
+
+  // The rule is fed by the repository this checkout actually has, so the resolver is exercised
+  // against it rather than only against fixtures — and the committed manifest is held to the
+  // invariant the publish depends on, which is the defect this test exists for: whatever
+  // spelling the field is written in, it names the repository the release is published from.
+  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  expect(repositorySlug(resolveRepository())).not.toBeNull();
+  expect(repositorySlug(manifest.repository?.url)).toBe(repositorySlug(resolveRepository()));
 });
 
 test('a receipt that no longer describes the artifacts cannot authorise a publish', () => {
@@ -406,7 +508,7 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(215);
+  expect(MIN_PASSING_TESTS).toBe(216);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.1.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');

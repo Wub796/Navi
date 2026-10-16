@@ -6,7 +6,8 @@
 // A registry publish is the one action here that cannot be undone: an npm version
 // is immutable, and provenance attaches a signed statement to it. So this refuses
 // to proceed while a decision is still missing — no license file, no `license`
-// field, a receipt that does not describe this revision, a receipt whose code is not
+// field, no `repository.url` for the provenance statement to agree with, a receipt that
+// does not describe this revision, a receipt whose code is not
 // the code the tag points at, or a receipt that cites no green container verification
 // of a configuration this repository deploys — even though those are the kind of details
 // a person is tempted to fill in "later".
@@ -96,6 +97,53 @@ export function resolveProvenance(receipt) {
   return facts;
 }
 
+/**
+ * The repository this publish belongs to, as `owner/name` where one can be resolved.
+ *
+ * npm binds a provenance statement to the repository the workflow ran in, and GitHub states
+ * that repository in the environment. `origin` is the fallback so the check is meaningful in a
+ * local run too, and both are normalised through the same `repositorySlug` the manifest is, so
+ * the two are compared in the form npm compares them in rather than as raw strings.
+ * @returns {string | null} the expected repository, or null when neither source names one
+ */
+export function resolveRepository() {
+  const fromEnvironment = process.env.GITHUB_REPOSITORY?.trim();
+  if (fromEnvironment) return fromEnvironment;
+  const remote = git(['remote', 'get-url', 'origin']);
+  return remote.status === 0 && remote.output ? remote.output : null;
+}
+
+/**
+ * Reduce a repository reference to `host/owner/name` in lower case.
+ *
+ * npm accepts a good many spellings for one repository — `git+https://`, a bare `owner/name`
+ * shorthand, an `ssh://git@…` clone URL, each with or without a trailing `.git` — and compares
+ * the manifest against the provenance statement after normalising them. A check that spelled
+ * the comparison differently would either refuse a publish npm accepts or wave through the one
+ * npm rejects, which is how an empty `repository.url` cost a signed attestation and a run.
+ * @param {unknown} value
+ * @returns {string | null} the canonical slug, or null when the value names no repository
+ */
+export function repositorySlug(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return null;
+  // The `owner/name` shorthand. The owner is required to be dot-free so a hostname cannot be
+  // mistaken for one and prefixes itself to the slug.
+  const shorthand = /^([\w-]+)\/([\w.-]+?)(?:\.git)?$/.exec(text);
+  if (shorthand) return `github.com/${shorthand[1]}/${shorthand[2]}`.toLowerCase();
+  const candidate = text
+    .replace(/^git\+/, '')
+    .replace(/^git:\/\//, 'https://')
+    .replace(/^ssh:\/\/git@/, 'https://')
+    .replace(/^git@([^:/]+):/, 'https://$1/')
+    .replace(/^github:/, 'https://github.com/');
+  let url;
+  try { url = new URL(candidate); } catch { return null; }
+  const path = url.pathname.replace(/\.git$/, '').replace(/\/+$/, '').replace(/^\/+/, '');
+  if (!path) return null;
+  return `${url.hostname}${url.port ? `:${url.port}` : ''}/${path}`.toLowerCase();
+}
+
 /** @param {URL | string} path @returns {Promise<boolean>} */
 const exists = async path => stat(path).then(() => true, () => false);
 
@@ -109,7 +157,7 @@ function option(argv, flag) {
 
 /**
  * @param {Record<string, any>} manifest
- * @param {{licenseFile: string | null, receipt: Record<string, any> | null, tag: string | null, artifacts?: {sri: string | null, bundleBytes: number | null, loaderBytes: number | null}, provenance?: {head: string | null, ancestor: boolean | null, changedPaths: string[] | null, digest: string | null, error: string | null}}} context
+ * @param {{licenseFile: string | null, receipt: Record<string, any> | null, tag: string | null, artifacts?: {sri: string | null, bundleBytes: number | null, loaderBytes: number | null}, provenance?: {head: string | null, ancestor: boolean | null, changedPaths: string[] | null, digest: string | null, error: string | null}, repository?: string | null}} context
  * @returns {PreflightCheck[]}
  */
 export function evaluatePublish(manifest, context) {
@@ -120,6 +168,7 @@ export function evaluatePublish(manifest, context) {
   const containers = containerEvidence(context.receipt);
   const canary = canaryEvidence(context.receipt);
   const provenance = provenanceEvidence(context.receipt, context.provenance);
+  const repository = repositoryEvidence(manifest, context.repository);
   return [
     {
       id: 'license-file',
@@ -154,6 +203,18 @@ export function evaluatePublish(manifest, context) {
         ? 'publishConfig.provenance is true, so the workflow passes --provenance (which also requires a public source repository and id-token: write)'
         : 'publishConfig.provenance is not true, so the published tarball would carry no provenance statement',
       blocking: true
+    },
+    {
+      // npm checks the manifest's `repository.url` against the repository in the signed
+      // provenance statement and rejects the upload with a 422 when it names another — or none
+      // at all, which is how an empty url reached the registry with a validly signed bundle
+      // behind it. That check happens after the token is spent, so it is made here instead,
+      // where it costs nothing and can be read before the run. Required only under provenance:
+      // without a statement there is nothing for npm to compare against.
+      id: 'repository-url',
+      ok: repository.ok,
+      detail: repository.detail,
+      blocking: publishConfig.provenance === true
     },
     {
       id: 'tag-matches-version',
@@ -217,6 +278,41 @@ function describeContainerRecord(record) {
   const platform = typeof record.architecture === 'string' ? record.architecture : 'an unstamped platform';
   const verdict = record.ok === true ? `${record.passed}/${record.checks}` : 'not green';
   return `${record.compose} on ${platform} is ${verdict}`;
+}
+
+/**
+ * Whether the manifest's `repository.url` is the repository the provenance statement will
+ * name. The declaration is read from either the string or the object form npm accepts, and
+ * compared as a normalised slug so the spellings npm itself accepts are not read as a
+ * disagreement.
+ * @param {Record<string, any>} manifest
+ * @param {string | null | undefined} expected
+ * @returns {{ok: boolean, detail: string}}
+ */
+function repositoryEvidence(manifest, expected) {
+  const declared = typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url;
+  const declaration = typeof declared === 'string' && declared.trim() ? `"${declared.trim()}"` : 'nothing';
+  const expectedSlug = repositorySlug(expected);
+  if (!expectedSlug) {
+    return {
+      ok: false,
+      detail: `package.json declares repository.url ${declaration}, but the repository this publish belongs to could not be resolved — neither GITHUB_REPOSITORY nor \`git remote get-url origin\` named one — so the two cannot be compared`
+    };
+  }
+  const declaredSlug = repositorySlug(declared);
+  if (!declaredSlug) {
+    return {
+      ok: false,
+      detail: `package.json declares repository.url ${declaration}, which names no repository. A provenance publish must declare the repository it is built from (${expectedSlug}), because npm validates the manifest against the signed statement and refuses the upload with 422 "Failed to validate repository information"`
+    };
+  }
+  if (declaredSlug !== expectedSlug) {
+    return {
+      ok: false,
+      detail: `package.json repository.url is ${declaration}, which is ${declaredSlug}, but this release is built from ${expectedSlug}; npm refuses a provenance publish whose manifest names another repository`
+    };
+  }
+  return { ok: true, detail: `package.json declares repository.url ${declaration}, which is the repository this release is built from (${expectedSlug})` };
 }
 
 /**
@@ -413,7 +509,7 @@ export async function main(argv = process.argv.slice(2)) {
     artifacts.loaderBytes = (await stat(new URL('../dist/loader.min.js', import.meta.url))).size;
   } catch { /* reported by the check below */ }
 
-  const checks = evaluatePublish(manifest, { licenseFile, receipt, tag, artifacts, provenance: resolveProvenance(receipt) });
+  const checks = evaluatePublish(manifest, { licenseFile, receipt, tag, artifacts, provenance: resolveProvenance(receipt), repository: resolveRepository() });
   const blocking = checks.filter(check => !check.ok && check.blocking);
   process.stdout.write(`publish preflight for ${manifest.name}@${manifest.version}${tag ? ` (${tag})` : ''}\n`);
   for (const check of checks) process.stdout.write(`  ${check.ok ? 'ok  ' : 'fail'} ${check.id}: ${check.detail}\n`);

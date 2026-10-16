@@ -109,7 +109,15 @@ test('published types describe the adapter, flow schema and exports map', async 
   expect(manifest.types).toBe('./dist/index.d.ts');
   expect(manifest.main).toBe('./dist/index.cjs');
   expect(manifest.module).toBe('./dist/index.mjs');
-  expect(manifest.bin).toEqual({ navi: './bin/navi-agent.js', 'navi-mcp': './bin/navi-mcp.js' });
+  // npm normalises each `bin` target as it publishes and logs `bin[…] script name was
+  // cleaned` for a path that needed it, so the manifest carries the published form rather
+  // than one the publish step has to rewrite — and each target is a real file on disk, so a
+  // cleaned name cannot silently point at nothing.
+  expect(manifest.bin).toEqual({ navi: 'bin/navi-agent.js', 'navi-mcp': 'bin/navi-mcp.js' });
+  for (const target of Object.values(manifest.bin)) {
+    expect(target.startsWith('./'), `${target} must be in the form npm publishes`).toBe(false);
+    expect((await readFile(target, 'utf8')).length).toBeGreaterThan(0);
+  }
   expect(manifest.exports['.'].import).toBe('./dist/index.mjs');
   expect(manifest.exports['.'].require).toBe('./dist/index.cjs');
   expect(manifest.exports['./navi.min.js'].default).toBe('./dist/navi.min.js');
