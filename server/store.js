@@ -49,7 +49,9 @@ import { createInterface } from 'node:readline';
  * @typedef {{busy: number, log: number, checkpointed: number}} CheckpointResult
  * @typedef {{truncate?: boolean}} CheckpointOptions
  * @typedef {{journal_mode: string, synchronous: number, auto_vacuum: number}} StorePragmas
- * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
+ * @typedef {{tenant_id: string, max_events_per_window: number, window_seconds?: number}} QuotaOptions
+ * @typedef {{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}} QuotaVerdict
+ * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, consumeQuota(options: QuotaOptions): Promise<QuotaVerdict>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
  */
 
 /** Default number of violation rows one query returns. */
@@ -287,8 +289,15 @@ function createSqliteStore(path, sqlite) {
     updated_at TEXT NOT NULL,
     PRIMARY KEY (site_id, url)
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS tenant_quotas (
+    tenant_id TEXT PRIMARY KEY,
+    window_start_ms INTEGER NOT NULL,
+    event_count INTEGER NOT NULL
+  )`);
   const upsertNavigationMap = db.prepare('INSERT INTO navigation_maps (site_id, url, payload, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(site_id, url) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at');
   const selectNavigationMap = db.prepare('SELECT site_id, url, payload, updated_at FROM navigation_maps WHERE site_id = ? AND url = ?');
+  const selectTenantQuota = db.prepare('SELECT window_start_ms, event_count FROM tenant_quotas WHERE tenant_id = ?');
+  const upsertTenantQuota = db.prepare('INSERT INTO tenant_quotas (tenant_id, window_start_ms, event_count) VALUES (?, ?, ?) ON CONFLICT(tenant_id) DO UPDATE SET window_start_ms = excluded.window_start_ms, event_count = excluded.event_count');
   const insert = db.prepare('INSERT INTO telemetry (tenant_id, url_origin, actions_indexed, actions_executed, execution_failures, received_at) VALUES (?, ?, ?, ?, ?, ?)');
   const insertViolation = db.prepare('INSERT INTO containment_violations (tenant_id, session_id, category, target_url, resolved_ip, created_at) VALUES (?, ?, ?, ?, ?, ?)');
   const lastViolationId = db.prepare('SELECT last_insert_rowid() AS id');
@@ -318,6 +327,25 @@ function createSqliteStore(path, sqlite) {
       const row = /** @type {{site_id?: unknown, url?: unknown, payload?: unknown, updated_at?: unknown} | undefined} */ (selectNavigationMap.get(siteId, url));
       if (!row) return null;
       return { site_id: String(row.site_id), url: String(row.url), payload: JSON.parse(String(row.payload)), updated_at: String(row.updated_at) };
+    },
+    async consumeQuota(options) {
+      const tenantId = String(options.tenant_id);
+      const maxEvents = Math.max(1, Math.trunc(Number(options.max_events_per_window)));
+      const windowMs = Math.max(1000, Math.trunc(Number(options.window_seconds ?? 3600)) * 1000);
+      const now = Date.now();
+      const row = /** @type {{window_start_ms?: unknown, event_count?: unknown} | undefined} */ (selectTenantQuota.get(tenantId));
+      const prevStart = row ? asNumber(row.window_start_ms) : 0;
+      const prevCount = row ? asNumber(row.event_count) : 0;
+      const expired = !row || now - prevStart >= windowMs;
+      const windowStart = expired ? now : prevStart;
+      const currentCount = expired ? 0 : prevCount;
+      if (currentCount >= maxEvents) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((windowStart + windowMs - now) / 1000));
+        return { allowed: false, count: currentCount, remaining: 0, retry_after_seconds: retryAfterSeconds };
+      }
+      const nextCount = currentCount + 1;
+      upsertTenantQuota.run(tenantId, windowStart, nextCount);
+      return { allowed: true, count: nextCount, remaining: Math.max(0, maxEvents - nextCount), retry_after_seconds: 0 };
     },
     async summarize(filter = {}) {
       const where = filter.tenant_id ? 'WHERE tenant_id = ?' : '';
@@ -375,6 +403,7 @@ function createSqliteStore(path, sqlite) {
       db.exec('DELETE FROM telemetry');
       db.exec('DELETE FROM containment_violations');
       db.exec('DELETE FROM navigation_maps');
+      db.exec('DELETE FROM tenant_quotas');
     },
     async close() {
       if (closed) return;
@@ -421,7 +450,7 @@ function createLogStore(path) {
         continue;
       }
       if (!parsed || typeof parsed !== 'object') continue;
-      if (parsed.kind === 'navigation_map') continue;
+      if (parsed.kind === 'navigation_map' || parsed.kind === 'tenant_quota') continue;
       if (parsed.kind === STORE_META_KIND) {
         sequence = Math.max(sequence, asNumber(parsed.violation_sequence));
         continue;
@@ -517,6 +546,40 @@ function createLogStore(path) {
       }
       return null;
     },
+    async consumeQuota(options) {
+      const tenantId = String(options.tenant_id);
+      const maxEvents = Math.max(1, Math.trunc(Number(options.max_events_per_window)));
+      const windowMs = Math.max(1000, Math.trunc(Number(options.window_seconds ?? 3600)) * 1000);
+      return serial(async () => {
+        const now = Date.now();
+        const text = await readFile(path, 'utf8').catch(() => '');
+        let prevStart = 0;
+        let prevCount = 0;
+        let found = false;
+        for (const line of text.split('\n').reverse()) {
+          if (!line.trim()) continue;
+          try {
+            const record = JSON.parse(line);
+            if (record.kind === 'tenant_quota' && record.tenant_id === tenantId) {
+              prevStart = asNumber(record.window_start_ms);
+              prevCount = asNumber(record.event_count);
+              found = true;
+              break;
+            }
+          } catch { /* ignore torn lines */ }
+        }
+        const expired = !found || now - prevStart >= windowMs;
+        const windowStart = expired ? now : prevStart;
+        const currentCount = expired ? 0 : prevCount;
+        if (currentCount >= maxEvents) {
+          const retryAfterSeconds = Math.max(1, Math.ceil((windowStart + windowMs - now) / 1000));
+          return { allowed: false, count: currentCount, remaining: 0, retry_after_seconds: retryAfterSeconds };
+        }
+        const nextCount = currentCount + 1;
+        await appendFile(path, `${JSON.stringify({ kind: 'tenant_quota', tenant_id: tenantId, window_start_ms: windowStart, event_count: nextCount })}\n`, 'utf8');
+        return { allowed: true, count: nextCount, remaining: Math.max(0, maxEvents - nextCount), retry_after_seconds: 0 };
+      });
+    },
     async recordViolation(violation) {
       const record = normalizeViolation(violation);
       return serial(async () => {
@@ -583,7 +646,7 @@ function createLogStore(path) {
               continue;
             }
             if (!parsed || typeof parsed !== 'object') continue;
-            if (parsed.kind === 'navigation_map') continue;
+            if (parsed.kind === 'navigation_map' || parsed.kind === 'tenant_quota') continue;
             if (parsed.kind === STORE_META_KIND) {
               // The old mark is superseded by the one written at the end, which
               // carries whatever this file has seen since.

@@ -6,10 +6,37 @@ export interface Env {
   SUPABASE_SERVICE_ROLE_KEY: string;
 }
 
+export interface SiteRecord {
+  id: string;
+  allowed_origins?: string[] | null;
+}
+
 const json = (status: number, body: Record<string, unknown>): Response => new Response(JSON.stringify(body), {
   status,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
 });
+
+function extractOrigin(urlValue: string): string | null {
+  try {
+    const parsed = new URL(urlValue);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function originAllowed(allowedOrigins: unknown, payloadOrigin: string | null, headerOrigin: string | null): boolean {
+  if (!Array.isArray(allowedOrigins) || allowedOrigins.length === 0) return true;
+  const list = allowedOrigins.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map(item => item.trim());
+  if (list.length === 0 || list.includes('*')) return true;
+  if (!payloadOrigin || !list.includes(payloadOrigin)) return false;
+  if (headerOrigin && headerOrigin.trim().length > 0) {
+    const normalizedHeader = extractOrigin(headerOrigin.trim());
+    if (!normalizedHeader || !list.includes(normalizedHeader)) return false;
+  }
+  return true;
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -39,12 +66,19 @@ export default {
         Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
         'content-type': 'application/json',
       };
-      const siteResponse = await fetch(`${base}/rest/v1/sites?api_key=eq.${encodeURIComponent(apiKey)}&active=eq.true&select=id`, { headers });
+      const siteResponse = await fetch(`${base}/rest/v1/sites?api_key=eq.${encodeURIComponent(apiKey)}&active=eq.true&select=id,allowed_origins`, { headers });
       if (!siteResponse.ok) return json(500, { error: 'Internal server error' });
       const sites: unknown = await siteResponse.json();
       if (!Array.isArray(sites) || !sites[0] || typeof sites[0].id !== 'string') return json(401, { error: 'Unauthorized' });
 
-      const siteId = sites[0].id;
+      const site = sites[0] as SiteRecord;
+      const payloadOrigin = extractOrigin(validated.url);
+      const headerOrigin = request.headers.get('Origin');
+      if (!originAllowed(site.allowed_origins, payloadOrigin, headerOrigin)) {
+        return json(403, { error: 'Forbidden origin' });
+      }
+
+      const siteId = site.id;
       const upsert = await fetch(`${base}/rest/v1/navigation_maps?on_conflict=site_id,url`, {
         method: 'POST',
         headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=minimal' },

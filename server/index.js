@@ -44,7 +44,7 @@ import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { beginProcessLifecycle, createStore, DEFAULT_RETENTION_DAYS, DEFAULT_VIOLATION_LIMIT, MAX_RETENTION_DAYS, MAX_VIOLATION_LIMIT } from './store.js';
-import { loadTenants, tenantFor, tenantIds } from './tenants.js';
+import { isOriginAllowed, loadTenants, tenantConfigFor, tenantFor, tenantIds } from './tenants.js';
 import { validateCrawlerPayload } from '../src/crawler-payload.js';
 
 /** Process boot timestamp, shared by every listener in this process. */
@@ -577,9 +577,9 @@ function validateViolation(payload, allowedTenantIds, keyTenantId) {
 /**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
- * @typedef {{host?: string, port?: number, tenants?: Map<string, string>, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter}} HostOptions
- * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: Map<string, string>, limiter: RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
+ * @typedef {{host?: string, port?: number, tenants?: import('./tenants.js').TenantRegistry, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter, maxEventsPerWindow?: number, quotaWindowSeconds?: number}} HostOptions
+ * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: import('./tenants.js').TenantRegistry, limiter: RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
  */
 
 /**
@@ -610,6 +610,8 @@ export async function createNaviHostServer(options = {}) {
   const sourceUrl = options.sourceUrl ?? process.env.NAVI_SOURCE_URL ?? SOURCE_REPOSITORY_URL;
   const retentionDays = options.retentionDays ?? countFromEnv(process.env.NAVI_RETENTION_DAYS, DEFAULT_RETENTION_DAYS);
   const retentionIntervalMs = Math.max(50, options.retentionIntervalMs ?? RETENTION_SWEEP_INTERVAL_MS);
+  const defaultMaxEventsPerWindow = options.maxEventsPerWindow ?? countFromEnv(process.env.NAVI_MAX_EVENTS_PER_WINDOW, 0);
+  const defaultQuotaWindowSeconds = options.quotaWindowSeconds ?? countFromEnv(process.env.NAVI_QUOTA_WINDOW_SECONDS, 3600);
   // The limiter is per process, exactly like the store it protects: two replicas
   // behind one address each allow the full rate, so enforcement belongs at the
   // shared edge once there is more than one.
@@ -841,14 +843,49 @@ export async function createNaviHostServer(options = {}) {
   });
 
   /**
+   * Resolve the tenant configuration from a strict `Authorization: Bearer <token>` header.
+   * @param {import('node:http').IncomingMessage} req
+   * @returns {import('./tenants.js').TenantDefinition | null}
+   */
+  function bearerTenantConfig(req) {
+    const authorization = req.headers.authorization;
+    const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
+    return match ? tenantConfigFor(tenants, match[1]) : null;
+  }
+
+  /**
    * Resolve the tenant id from a strict `Authorization: Bearer <token>` header.
    * @param {import('node:http').IncomingMessage} req
    * @returns {string | null}
    */
   function bearerTenant(req) {
-    const authorization = req.headers.authorization;
-    const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
-    return match ? tenantFor(tenants, match[1]) : null;
+    return bearerTenantConfig(req)?.id ?? null;
+  }
+
+  /**
+   * Charge one event against the tenant's persistent SQLite/log quota if configured.
+   * Answers `HTTP 429 {"error":"Quota exceeded"}` with `Retry-After` when exceeded.
+   * @param {import('node:http').ServerResponse} res
+   * @param {import('./tenants.js').TenantDefinition} tenantConfig
+   * @returns {Promise<boolean>}
+   */
+  async function checkTenantQuota(res, tenantConfig) {
+    const maxEvents = tenantConfig.max_events_per_window ?? (defaultMaxEventsPerWindow > 0 ? defaultMaxEventsPerWindow : 0);
+    if (!(maxEvents > 0) || typeof store.consumeQuota !== 'function') return true;
+    const windowSeconds = tenantConfig.window_seconds ?? (defaultQuotaWindowSeconds > 0 ? defaultQuotaWindowSeconds : 3600);
+    const verdict = await store.consumeQuota({
+      tenant_id: tenantConfig.id,
+      max_events_per_window: maxEvents,
+      window_seconds: windowSeconds
+    });
+    if (verdict.allowed) return true;
+    rateLimitedByTenant.set(tenantConfig.id, (rateLimitedByTenant.get(tenantConfig.id) ?? 0) + 1);
+    sendJson(res, 429, { error: 'Quota exceeded' }, {
+      'Retry-After': String(verdict.retry_after_seconds),
+      'X-Quota-Limit': String(maxEvents),
+      'X-Quota-Remaining': '0'
+    });
+    return false;
   }
 
   /**
@@ -905,8 +942,9 @@ export async function createNaviHostServer(options = {}) {
 
     if (path === '/v1/sitemap/update') {
       if (method !== 'POST') return sendJson(res, 404, { error: 'Not found' });
-      const siteId = bearerTenant(req);
-      if (!siteId) return sendJson(res, 401, { error: 'Unauthorized' });
+      const tenantConfig = bearerTenantConfig(req);
+      if (!tenantConfig) return sendJson(res, 401, { error: 'Unauthorized' });
+      const siteId = tenantConfig.id;
       await new Promise(/** @param {(value?: void) => void} resolveBody */ resolveBody => readBody(req, 2 * 1024 * 1024, result => {
         if (result.tooLarge || result.raw === null) {
           sendJson(res, 400, { error: 'Invalid payload' });
@@ -925,10 +963,25 @@ export async function createNaviHostServer(options = {}) {
           resolveBody();
           return;
         }
-        void store.upsertNavigationMap(siteId, payload.url, payload)
-          .then(() => sendJson(res, 200, { ok: true, url: payload.url, targets: payload.actions.length }))
-          .catch(() => sendJson(res, 500, { error: 'Internal server error' }))
-          .finally(() => resolveBody());
+        let payloadOrigin = null;
+        try { payloadOrigin = new URL(payload.url).origin; } catch { payloadOrigin = null; }
+        const headerOrigin = typeof req.headers.origin === 'string' ? req.headers.origin : null;
+        if (!isOriginAllowed(tenantConfig.allowed_origins, payloadOrigin, headerOrigin)) {
+          sendJson(res, 403, { error: 'Forbidden origin' });
+          resolveBody();
+          return;
+        }
+        void (async () => {
+          try {
+            if (!(await checkTenantQuota(res, tenantConfig))) return;
+            await store.upsertNavigationMap(siteId, payload.url, payload);
+            sendJson(res, 200, { ok: true, url: payload.url, targets: payload.actions.length });
+          } catch {
+            if (!res.headersSent) sendJson(res, 500, { error: 'Internal server error' });
+          } finally {
+            resolveBody();
+          }
+        })();
       }));
       return;
     }
@@ -1184,10 +1237,11 @@ export async function createNaviHostServer(options = {}) {
       }
       if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/telemetry.');
 
-      const keyTenantId = bearerTenant(req);
-      if (!keyTenantId) {
+      const tenantConfig = bearerTenantConfig(req);
+      if (!tenantConfig) {
         return sendJson(res, 401, { error: 'Unauthorized' });
       }
+      const keyTenantId = tenantConfig.id;
 
       const contentType = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
       if (contentType !== 'application/json' && contentType !== 'text/plain') {
@@ -1220,6 +1274,21 @@ export async function createNaviHostServer(options = {}) {
             resolveBody();
             return;
           }
+          const rawRecord = payload && typeof payload === 'object' && !Array.isArray(payload) ? /** @type {Record<string, unknown>} */ (payload) : null;
+          const candidateOriginRaw = typeof rawRecord?.url_origin === 'string'
+            ? rawRecord.url_origin
+            : (typeof rawRecord?.url === 'string' ? rawRecord.url : null);
+          let candidateOrigin = null;
+          if (candidateOriginRaw) {
+            try {
+              const parsedOrigin = new URL(candidateOriginRaw);
+              if (parsedOrigin.protocol === 'http:' || parsedOrigin.protocol === 'https:') {
+                candidateOrigin = parsedOrigin.origin;
+              }
+            } catch {
+              candidateOrigin = null;
+            }
+          }
           const verdict = validateTelemetry(payload, allowedTenantIds, keyTenantId);
           if (!verdict.ok) {
             if (verdict.status === 401 && verdict.code === 'UNAUTHORIZED') {
@@ -1230,17 +1299,31 @@ export async function createNaviHostServer(options = {}) {
             resolveBody();
             return;
           }
+          const headerOrigin = typeof req.headers.origin === 'string' ? req.headers.origin : null;
+          if (!isOriginAllowed(tenantConfig.allowed_origins, verdict.record.url_origin ?? candidateOrigin, headerOrigin)) {
+            sendJson(res, 403, { error: 'Forbidden origin' });
+            resolveBody();
+            return;
+          }
           const charge = chargeIngest(res, verdict.record.tenant_id);
           if (!charge) {
             resolveBody();
             return;
           }
           const record = { ...verdict.record, received_at: new Date().toISOString() };
-          void store
-            .append(record)
-            .then(() => sendJson(res, 202, { ok: true, accepted: true, tenant_id: record.tenant_id, url_origin: record.url_origin }, rateLimitHeaders(charge)))
-            .catch(error => sendError(res, 500, 'STORE_FAILED', `The aggregate could not be stored: ${error instanceof Error ? error.message : String(error)}`))
-            .finally(() => resolveBody());
+          void (async () => {
+            try {
+              if (!(await checkTenantQuota(res, tenantConfig))) return;
+              await store.append(record);
+              sendJson(res, 202, { ok: true, accepted: true, tenant_id: record.tenant_id, url_origin: record.url_origin }, rateLimitHeaders(charge));
+            } catch (error) {
+              if (!res.headersSent) {
+                sendError(res, 500, 'STORE_FAILED', `The aggregate could not be stored: ${error instanceof Error ? error.message : String(error)}`);
+              }
+            } finally {
+              resolveBody();
+            }
+          })();
         });
       });
       return;

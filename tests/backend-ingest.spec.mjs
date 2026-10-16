@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createNaviHostServer, MAX_PAYLOAD_BYTES, SCRIPT_CACHE_CONTROL } from '../server/index.js';
-import { DEV_TENANT_ID, DEV_TENANT_KEY } from '../server/tenants.js';
+import { DEV_TENANT_ID, DEV_TENANT_KEY, isOriginAllowed, loadTenants, tenantConfigFor } from '../server/tenants.js';
 
 /**
  * Host service checks, driven entirely over HTTP: the test never calls an
@@ -149,6 +149,88 @@ test('enforces strict Bearer authentication on POST /v1/telemetry and rejects un
     });
     expect(response.status).toBe(202);
     expect(await response.json()).toMatchObject({ ok: true, accepted: true, tenant_id: 'tenant-alpha' });
+  } finally {
+    await host.close();
+  }
+});
+
+test('enforces per-tenant allowed_origins (HTTP 403 / 202) and persistent SQLite WAL quota metering (HTTP 429) on POST /v1/telemetry', async () => {
+  // Unit check for loadTenants and isOriginAllowed
+  const parsedTenants = loadTenants({ NAVI_TENANTS: 'k1:t1:https://app.example.com|https://admin.example.com@5,k2:t2:*' });
+  expect(tenantConfigFor(parsedTenants, 'k1')).toEqual({
+    id: 't1',
+    allowed_origins: ['https://app.example.com', 'https://admin.example.com'],
+    max_events_per_window: 5
+  });
+  expect(isOriginAllowed(['https://app.example.com'], 'https://app.example.com')).toBe(true);
+  expect(isOriginAllowed(['https://app.example.com'], 'https://other.example.com')).toBe(false);
+  expect(isOriginAllowed(['*'], 'https://other.example.com')).toBe(true);
+
+  const storeFile = join(tmpdir(), `navi-telemetry-quota-${process.pid}-${Date.now()}.db`);
+  const tenants = new Map([
+    ['key-locked', { id: 'tenant-locked', allowed_origins: ['https://app.example.com'], max_events_per_window: 2, window_seconds: 300 }],
+    ['key-open', { id: 'tenant-open', allowed_origins: ['*'] }]
+  ]);
+  let host = await createNaviHostServer({ port: 0, storeFile, tenants });
+  let base = `http://127.0.0.1:${host.port}`;
+  try {
+    // Disallowed payload url_origin -> 403 Forbidden origin
+    let response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-locked' },
+      body: JSON.stringify(validPayload({ tenant_id: 'tenant-locked', url_origin: 'https://rogue.example.com' }))
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'Forbidden origin' });
+
+    // Disallowed HTTP Origin header -> 403 Forbidden origin
+    response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-locked', Origin: 'https://rogue.example.com' },
+      body: JSON.stringify(validPayload({ tenant_id: 'tenant-locked', url_origin: 'https://app.example.com' }))
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'Forbidden origin' });
+
+    // Wildcard tenant accepts any canonical origin -> 202
+    response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-open' },
+      body: JSON.stringify(validPayload({ tenant_id: 'tenant-open', url_origin: 'https://anywhere.example.com' }))
+    });
+    expect(response.status).toBe(202);
+
+    // Allowed origin within quota -> 202 (event 1 of 2)
+    response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-locked', Origin: 'https://app.example.com' },
+      body: JSON.stringify(validPayload({ tenant_id: 'tenant-locked', url_origin: 'https://app.example.com' }))
+    });
+    expect(response.status).toBe(202);
+
+    // Restart the server against the same SQLite WAL storeFile to prove quota is persisted on disk
+    await host.close();
+    host = await createNaviHostServer({ port: 0, storeFile, tenants });
+    base = `http://127.0.0.1:${host.port}`;
+
+    // Event 2 of 2 succeeds after restart
+    response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-locked' },
+      body: JSON.stringify(validPayload({ tenant_id: 'tenant-locked', url_origin: 'https://app.example.com' }))
+    });
+    expect(response.status).toBe(202);
+
+    // Event 3 exceeds max_events_per_window (2) -> 429 Quota exceeded with Retry-After header
+    response = await fetch(`${base}/v1/telemetry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-locked' },
+      body: JSON.stringify(validPayload({ tenant_id: 'tenant-locked', url_origin: 'https://app.example.com' }))
+    });
+    expect(response.status).toBe(429);
+    const retryAfter = Number(response.headers.get('retry-after'));
+    expect(Number.isInteger(retryAfter) && retryAfter >= 1).toBe(true);
+    expect(await response.json()).toEqual({ error: 'Quota exceeded' });
   } finally {
     await host.close();
   }

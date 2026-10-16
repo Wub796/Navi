@@ -93,9 +93,47 @@ test('Worker sitemap endpoint enforces route, bearer auth, JSON and schema contr
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, url: validPayload.url, targets: 1 });
     expect(calls).toHaveLength(2);
-    expect(calls[0].url).toContain('/sites?api_key=eq.api-key&active=eq.true&select=id');
+    expect(calls[0].url).toContain('/sites?api_key=eq.api-key&active=eq.true&select=id,allowed_origins');
     expect(calls[1].url).toContain('/navigation_maps?on_conflict=site_id,url');
     expect(calls[1].init.method).toBe('POST');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Worker sitemap endpoint enforces per-tenant allowed_origins with HTTP 403 and accepts matching or wildcard origins with HTTP 200', async () => {
+  const originalFetch = globalThis.fetch;
+  /** @type {string[] | undefined} */
+  let allowedOrigins = ['https://app.example.com'];
+  globalThis.fetch = async input => (String(input).includes('/sites?')
+    ? Response.json([{ id: 'site-1', allowed_origins: allowedOrigins }])
+    : new Response(null, { status: 201 }));
+  try {
+    const headers = { Authorization: 'Bearer api-key' };
+    // Payload URL outside allowed_origins -> 403
+    let response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'Forbidden origin' });
+
+    // Payload URL inside allowed_origins -> 200
+    const allowedPayload = { ...validPayload, url: 'https://app.example.com/checkout' };
+    response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(allowedPayload) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, url: allowedPayload.url, targets: 1 });
+
+    // Mismatched Origin header -> 403
+    response = await workerRequest(endpoint, {
+      method: 'POST',
+      headers: { ...headers, Origin: 'https://evil.example.com' },
+      body: JSON.stringify(allowedPayload)
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'Forbidden origin' });
+
+    // Wildcard allowed_origins -> 200 for any origin
+    allowedOrigins = ['*'];
+    response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(200);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -152,6 +190,66 @@ test('native host hides sitemap store errors from callers', async () => {
     const text = await response.text();
     expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
     expect(text).not.toContain('sqlite secret');
+  } finally {
+    await host.close();
+  }
+});
+
+test('native host sitemap endpoint enforces allowed_origins (HTTP 403 / 200) and persistent SQLite quota metering (HTTP 429)', async () => {
+  const storeFile = join(tmpdir(), `navi-sitemap-monetization-${process.pid}-${Date.now()}.db`);
+  const tenants = new Map([
+    ['key-restricted', { id: 'site-restricted', allowed_origins: ['https://app.example.com'], max_events_per_window: 2, window_seconds: 120 }],
+    ['key-wildcard', { id: 'site-wildcard', allowed_origins: ['*'] }]
+  ]);
+  const host = await createNaviHostServer({ port: 0, storeFile, tenants });
+  const base = `http://127.0.0.1:${host.port}/v1/sitemap/update`;
+  try {
+    // Disallowed origin -> 403 (does not consume quota)
+    let response = await fetch(base, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-restricted' },
+      body: JSON.stringify(validPayload)
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'Forbidden origin' });
+
+    // Disallowed Origin header -> 403
+    const allowedPayload = { ...validPayload, url: 'https://app.example.com/dashboard' };
+    response = await fetch(base, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-restricted', Origin: 'https://spoof.example.com' },
+      body: JSON.stringify(allowedPayload)
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'Forbidden origin' });
+
+    // Wildcard tenant accepts any origin -> 200
+    response = await fetch(base, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-wildcard' },
+      body: JSON.stringify(validPayload)
+    });
+    expect(response.status).toBe(200);
+
+    // Allowed origin within quota -> 200 (events 1 and 2)
+    for (let i = 0; i < 2; i += 1) {
+      response = await fetch(base, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer key-restricted', Origin: 'https://app.example.com' },
+        body: JSON.stringify(allowedPayload)
+      });
+      expect(response.status).toBe(200);
+    }
+
+    // 3rd request exceeds max_events_per_window: 2 -> 429 with Retry-After
+    response = await fetch(base, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer key-restricted' },
+      body: JSON.stringify(allowedPayload)
+    });
+    expect(response.status).toBe(429);
+    expect(Number(response.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+    expect(await response.json()).toEqual({ error: 'Quota exceeded' });
   } finally {
     await host.close();
   }
