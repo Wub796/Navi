@@ -52,7 +52,9 @@ import { createInterface } from 'node:readline';
  * @typedef {{tenant_id: string, max_events_per_window: number, window_seconds?: number}} QuotaOptions
  * @typedef {{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}} QuotaVerdict
  * @typedef {{tenant_id: string, window_start_ms: number, event_count: number}} QuotaState
- * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, consumeQuota(options: QuotaOptions): Promise<QuotaVerdict>, readQuota(tenantId: string): Promise<QuotaState | null>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
+ * @typedef {{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}} TenantDefinitionRecord
+ * @typedef {{tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'}} TenantDefinitionInput
+ * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, consumeQuota(options: QuotaOptions): Promise<QuotaVerdict>, readQuota(tenantId: string): Promise<QuotaState | null>, upsertTenantDefinition(definition: TenantDefinitionInput): Promise<TenantDefinitionRecord>, readTenantDefinition(tenantId: string): Promise<TenantDefinitionRecord | null>, readTenantDefinitions(): Promise<TenantDefinitionRecord[]>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
  */
 
 /** Default number of violation rows one query returns. */
@@ -104,6 +106,36 @@ function normalizeViolation(violation) {
   const resolvedIp = typeof violation.resolved_ip === 'string' && violation.resolved_ip.length ? violation.resolved_ip : null;
   const createdAt = typeof violation.created_at === 'string' && violation.created_at.length ? violation.created_at : new Date().toISOString();
   return { tenant_id: tenantId, session_id: sessionId, category, target_url: targetUrl, resolved_ip: resolvedIp, created_at: createdAt };
+}
+
+/**
+ * Validate a provisioned tenant definition and give it a timestamp.
+ *
+ * A ceiling of `0` is kept rather than defaulted away: it is how a revoked
+ * subscription is represented, and normalizing it to the default would turn a
+ * suspension back into a live plan. Only a missing or unusable value falls back
+ * to the documented default.
+ * @param {TenantDefinitionInput} input @returns {TenantDefinitionRecord}
+ */
+function normalizeTenantDefinition(input) {
+  const tenantId = typeof input?.tenant_id === 'string' ? input.tenant_id.trim() : '';
+  const apiKey = typeof input?.api_key === 'string' ? input.api_key.trim() : '';
+  if (!tenantId) throw new TypeError('upsertTenantDefinition needs a tenant_id');
+  if (!apiKey) throw new TypeError('upsertTenantDefinition needs an api_key');
+  const origins = Array.isArray(input?.allowed_origins)
+    ? input.allowed_origins.filter((/** @type {unknown} */ item) => typeof item === 'string' && item.trim().length > 0).map(item => item.trim())
+    : [];
+  const maxEvents = Number.isInteger(input?.max_events_per_window) && Number(input.max_events_per_window) >= 0 ? Number(input.max_events_per_window) : 10000;
+  const windowSeconds = Number.isInteger(input?.window_seconds) && Number(input.window_seconds) > 0 ? Number(input.window_seconds) : 2592000;
+  return {
+    tenant_id: tenantId,
+    api_key: apiKey,
+    allowed_origins: origins.length > 0 ? origins : ['*'],
+    max_events_per_window: maxEvents,
+    window_seconds: windowSeconds,
+    status: input?.status === 'suspended' ? 'suspended' : 'active',
+    updated_at: new Date().toISOString()
+  };
 }
 
 /**
@@ -234,6 +266,34 @@ function asNumber(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+/**
+ * Map one stored tenant-definition row into the record every caller sees, so the
+ * SQLite rows and the JSONL lines cannot drift in shape. `allowed_origins` is
+ * stored as JSON text in both backends, because it is a list and neither store
+ * has an array type.
+ * @param {any} row @returns {TenantDefinitionRecord}
+ */
+function toTenantDefinition(row) {
+  /** @type {unknown} */
+  let origins = row.allowed_origins;
+  if (typeof origins === 'string') {
+    try { origins = JSON.parse(origins); }
+    catch { origins = null; }
+  }
+  const list = Array.isArray(origins)
+    ? origins.filter((/** @type {unknown} */ item) => typeof item === 'string' && item.trim().length > 0).map(item => item.trim())
+    : [];
+  return {
+    tenant_id: String(row.tenant_id ?? ''),
+    api_key: String(row.api_key ?? ''),
+    allowed_origins: list.length > 0 ? list : ['*'],
+    max_events_per_window: asNumber(row.max_events_per_window),
+    window_seconds: asNumber(row.window_seconds) > 0 ? asNumber(row.window_seconds) : 2592000,
+    status: row.status === 'suspended' ? 'suspended' : 'active',
+    updated_at: String(row.updated_at ?? '')
+  };
+}
+
 /** @param {string} path @param {any} sqlite @returns {TelemetryStore} */
 function createSqliteStore(path, sqlite) {
   const db = new sqlite.DatabaseSync(path);
@@ -295,10 +355,27 @@ function createSqliteStore(path, sqlite) {
     window_start_ms INTEGER NOT NULL,
     event_count INTEGER NOT NULL
   )`);
+  // Provisioned tenants are configuration, not telemetry: a row here is what makes
+  // a key bought through the billing webhook survive a restart. The key is unique
+  // because it is the lookup the ingest routes perform; two tenants sharing one
+  // would silently hand each other's quota to whichever was read first.
+  db.exec(`CREATE TABLE IF NOT EXISTS tenant_definitions (
+    tenant_id TEXT PRIMARY KEY,
+    api_key TEXT NOT NULL,
+    allowed_origins TEXT NOT NULL,
+    max_events_per_window INTEGER NOT NULL,
+    window_seconds INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_definitions_key ON tenant_definitions(api_key)');
   const upsertNavigationMap = db.prepare('INSERT INTO navigation_maps (site_id, url, payload, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(site_id, url) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at');
   const selectNavigationMap = db.prepare('SELECT site_id, url, payload, updated_at FROM navigation_maps WHERE site_id = ? AND url = ?');
   const selectTenantQuota = db.prepare('SELECT window_start_ms, event_count FROM tenant_quotas WHERE tenant_id = ?');
   const upsertTenantQuota = db.prepare('INSERT INTO tenant_quotas (tenant_id, window_start_ms, event_count) VALUES (?, ?, ?) ON CONFLICT(tenant_id) DO UPDATE SET window_start_ms = excluded.window_start_ms, event_count = excluded.event_count');
+  const upsertTenantDefinition = db.prepare('INSERT INTO tenant_definitions (tenant_id, api_key, allowed_origins, max_events_per_window, window_seconds, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id) DO UPDATE SET api_key = excluded.api_key, allowed_origins = excluded.allowed_origins, max_events_per_window = excluded.max_events_per_window, window_seconds = excluded.window_seconds, status = excluded.status, updated_at = excluded.updated_at');
+  const selectTenantDefinition = db.prepare('SELECT tenant_id, api_key, allowed_origins, max_events_per_window, window_seconds, status, updated_at FROM tenant_definitions WHERE tenant_id = ?');
+  const selectTenantDefinitions = db.prepare('SELECT tenant_id, api_key, allowed_origins, max_events_per_window, window_seconds, status, updated_at FROM tenant_definitions ORDER BY tenant_id');
   const insert = db.prepare('INSERT INTO telemetry (tenant_id, url_origin, actions_indexed, actions_executed, execution_failures, received_at) VALUES (?, ?, ?, ?, ?, ?)');
   const insertViolation = db.prepare('INSERT INTO containment_violations (tenant_id, session_id, category, target_url, resolved_ip, created_at) VALUES (?, ?, ?, ?, ?, ?)');
   const lastViolationId = db.prepare('SELECT last_insert_rowid() AS id');
@@ -352,6 +429,18 @@ function createSqliteStore(path, sqlite) {
       const row = /** @type {{window_start_ms?: unknown, event_count?: unknown} | undefined} */ (selectTenantQuota.get(String(tenantId)));
       if (!row) return null;
       return { tenant_id: String(tenantId), window_start_ms: asNumber(row.window_start_ms), event_count: asNumber(row.event_count) };
+    },
+    async upsertTenantDefinition(definition) {
+      const record = normalizeTenantDefinition(definition);
+      upsertTenantDefinition.run(record.tenant_id, record.api_key, JSON.stringify(record.allowed_origins), record.max_events_per_window, record.window_seconds, record.status, record.updated_at);
+      return record;
+    },
+    async readTenantDefinition(tenantId) {
+      const row = /** @type {any} */ (selectTenantDefinition.get(String(tenantId)));
+      return row ? /** @type {TenantDefinitionRecord} */ (toTenantDefinition(row)) : null;
+    },
+    async readTenantDefinitions() {
+      return /** @type {any[]} */ (selectTenantDefinitions.all()).map(row => /** @type {TenantDefinitionRecord} */ (toTenantDefinition(row)));
     },
     async summarize(filter = {}) {
       const where = filter.tenant_id ? 'WHERE tenant_id = ?' : '';
@@ -410,6 +499,7 @@ function createSqliteStore(path, sqlite) {
       db.exec('DELETE FROM containment_violations');
       db.exec('DELETE FROM navigation_maps');
       db.exec('DELETE FROM tenant_quotas');
+      db.exec('DELETE FROM tenant_definitions');
     },
     async close() {
       if (closed) return;
@@ -431,14 +521,16 @@ function createLogStore(path) {
   /**
    * One pass over the whole file. Aggregates, violations and the id high-water
    * mark are read together because a rewrite has to know about all three at once.
-   * @returns {Promise<{records: TelemetryRecord[], violations: ContainmentViolation[], sequence: number}>}
+   * @returns {Promise<{records: TelemetryRecord[], violations: ContainmentViolation[], definitions: Map<string, TenantDefinitionRecord>, sequence: number}>}
    */
   const scanLog = async () => {
     let text = '';
+    /** @type {Map<string, TenantDefinitionRecord>} */
+    const definitions = new Map();
     try {
       text = await readFile(path, 'utf8');
     } catch {
-      return { records: [], violations: [], sequence: 0 };
+      return { records: [], violations: [], definitions, sequence: 0 };
     }
     /** @type {TelemetryRecord[]} */
     const records = [];
@@ -457,6 +549,13 @@ function createLogStore(path) {
       }
       if (!parsed || typeof parsed !== 'object') continue;
       if (parsed.kind === 'navigation_map' || parsed.kind === 'tenant_quota') continue;
+      if (parsed.kind === 'tenant_definition') {
+        // Last line wins, exactly like the SQLite upsert: a revocation appends a
+        // new definition rather than rewriting the old one.
+        const definition = toTenantDefinition(parsed);
+        if (definition.tenant_id) definitions.set(definition.tenant_id, definition);
+        continue;
+      }
       if (parsed.kind === STORE_META_KIND) {
         sequence = Math.max(sequence, asNumber(parsed.violation_sequence));
         continue;
@@ -489,7 +588,7 @@ function createLogStore(path) {
         received_at: String(parsed.received_at ?? '')
       });
     }
-    return { records, violations, sequence };
+    return { records, violations, definitions, sequence };
   };
   /** @returns {Promise<TelemetryRecord[]>} */
   const readRecords = async () => (await scanLog()).records;
@@ -586,6 +685,17 @@ function createLogStore(path) {
         return { allowed: true, count: nextCount, remaining: Math.max(0, maxEvents - nextCount), retry_after_seconds: 0 };
       });
     },
+    async upsertTenantDefinition(definition) {
+      const record = normalizeTenantDefinition(definition);
+      await serial(() => appendFile(path, `${JSON.stringify({ kind: 'tenant_definition', ...record })}\n`, 'utf8'));
+      return record;
+    },
+    async readTenantDefinition(tenantId) {
+      return (await scanLog()).definitions.get(String(tenantId)) ?? null;
+    },
+    async readTenantDefinitions() {
+      return [...(await scanLog()).definitions.values()].sort((left, right) => left.tenant_id.localeCompare(right.tenant_id));
+    },
     async readQuota(tenantId) {
       // The last line for this tenant is the current window: every accepted ingest
       // appends one, so the newest occurrence is the state a scrape or a summary
@@ -655,6 +765,8 @@ function createLogStore(path) {
         let keptForTenant = 0;
         let seen = 0;
         let sequence = 0;
+        /** @type {Map<string, TenantDefinitionRecord>} */
+        const definitions = new Map();
         try {
           const input = createInterface({ input: createReadStream(path, 'utf8'), crlfDelay: Infinity });
           for await (const line of input) {
@@ -669,6 +781,13 @@ function createLogStore(path) {
             }
             if (!parsed || typeof parsed !== 'object') continue;
             if (parsed.kind === 'navigation_map' || parsed.kind === 'tenant_quota') continue;
+            if (parsed.kind === 'tenant_definition') {
+              // Carried into the map and written back below: a prune prunes
+              // violations, not the tenants an operator provisioned.
+              const definition = toTenantDefinition(parsed);
+              if (definition.tenant_id) definitions.set(definition.tenant_id, definition);
+              continue;
+            }
             if (parsed.kind === STORE_META_KIND) {
               // The old mark is superseded by the one written at the end, which
               // carries whatever this file has seen since.
@@ -691,6 +810,11 @@ function createLogStore(path) {
             }
             // Aggregates are copied verbatim: compaction prunes violations, not events.
             await write(line);
+          }
+          // Definitions come before the meta line because that line describes the
+          // file: a crash between the two leaves an unmarked but complete set.
+          for (const definition of definitions.values()) {
+            await write(JSON.stringify({ kind: 'tenant_definition', ...definition }));
           }
           // Written last because it describes everything above it, and only when
           // there is a mark worth keeping: a file of aggregates alone stays as it is.

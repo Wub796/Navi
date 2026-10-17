@@ -37,7 +37,10 @@ export function normalizeTenantEntry(entry) {
     const allowed = Array.isArray(entry.allowed_origins)
       ? entry.allowed_origins.filter((/** @type {unknown} */ item) => typeof item === 'string' && item.trim().length > 0).map(item => item.trim())
       : undefined;
-    const maxEvents = typeof entry.max_events_per_window === 'number' && Number.isInteger(entry.max_events_per_window) && entry.max_events_per_window > 0
+    // A ceiling of `0` is kept rather than dropped: it is how a revoked
+    // subscription is represented, and treating it as "unset" would turn a
+    // suspended tenant back into an unmetered one.
+    const maxEvents = typeof entry.max_events_per_window === 'number' && Number.isInteger(entry.max_events_per_window) && entry.max_events_per_window >= 0
       ? entry.max_events_per_window
       : undefined;
     const windowSeconds = typeof entry.window_seconds === 'number' && Number.isInteger(entry.window_seconds) && entry.window_seconds > 0

@@ -12,6 +12,7 @@ This document is both a record of what was built and a plan for what was not. Ev
 | Tenant key registry | implemented | `server/tenants.js` |
 | Remote MCP transport (SSE) and session hydration | implemented | `src/mcp/sse.js`, `src/mcp/server.js` |
 | Verified per-request service tests | implemented | `tests/backend-ingest.spec.mjs`, `tests/mcp-sse.spec.mjs`, `tests/session-hydration.spec.mjs` |
+| Stripe webhook tenant provisioning | implemented | `POST /v1/billing/webhook`, `server/index.js`, `server/store.js`, `src/worker.ts` |
 | Per-tenant ingest rate limiting | implemented | `server/index.js`, `POST /v1/telemetry`, `POST /v1/telemetry/violations` |
 | Violation retention and log compaction | implemented | `server/store.js`, `POST /v1/tenants/:id/maintenance/prune` |
 | Account/session identity, ownership verification, dashboards | planned | not implemented |
@@ -151,6 +152,15 @@ Ingestion is bounded per tenant from the other side, on `POST /v1/telemetry` and
 - **Bounded memory:** a bucket is forgotten after ten idle minutes (`RATE_LIMIT_IDLE_MS`), swept on a timer and again on demand when the map passes `RATE_LIMIT_SWEEP_THRESHOLD`, so the map tracks active tenants rather than every tenant ever seen. Being per process, two replicas each allow the full rate — this is a bound on one process, not a global quota, and the shared edge is where a fleet-wide limit belongs.
 - **The audit consequence:** the MCP forwarder posts violations through this same route, so a tenant whose refusals exceed its ceiling has those forwards answered `429`, which the forwarder counts as `failed` rather than retrying. Raise the ceiling for such a tenant or alert on that counter; the alternative — an unbounded retry — is exactly what the fail-safe boundary exists to prevent.
 
+### Implemented: Stripe billing webhook
+
+A subscription has to become a tenant without a human running SQL. `POST /v1/billing/webhook` receives Stripe events, verifies them against the endpoint secret, and writes the tenant through the same store the ingest routes already use. It is dependency-free on both deployments: `node:crypto` here, Web Crypto in the Worker.
+
+- **Verification before parsing.** The signature covers the exact bytes that arrived, so the body is read as text and checked before `JSON.parse` runs. `Stripe-Signature` is `t=<unix seconds>,v1=<hex hmac>`; the digest is HMAC-SHA256 over `${t}.${rawBody}`, the timestamp sits inside the signed string and is refused when it is more than **300 seconds** away in either direction, and the comparison is `timingSafeEqual` on the host and a fixed-length XOR in the Worker. A missing or malformed header, a wrong HMAC, a tampered body or a skewed timestamp is `401 {"error":"Invalid signature"}`. With `NAVI_STRIPE_WEBHOOK_SECRET` unset the route answers `503 {"error":"Billing webhook not configured"}`: a webhook without a secret cannot tell Stripe from anyone who found the URL.
+- **Provisioning.** `checkout.session.completed`, `customer.subscription.created` and `customer.subscription.updated` read `metadata` (`tenant_id`, with `client_reference_id` as the fallback), `api_key`, `allowed_origins` (JSON array, comma- or pipe-separated list, default `["*"]`), `max_events_per_window` (default `10000`) and `window_seconds` (default `2592000`), and answer `{ ok, tenant_id, api_key }`. A key is minted as `navi_live_<64 hex>` only when the tenant has none, so an update cannot rotate the credential a page already embeds. Missing `tenant_id` is `400 {"error":"Missing tenant_id"}`.
+- **Persistence and immediate effect.** The host upserts `tenant_definitions` in the SQLite WAL store (or appends a `tenant_definition` line in the log backend) and registers the definition into the live registry, so the key authenticates the very next request and every provisioned key is re-registered at startup from the store. The Worker upserts the `sites` row through PostgREST (`on_conflict=id`, `resolution=merge-duplicates,return=representation`).
+- **Revocation is a ceiling, not a deletion.** `customer.subscription.deleted` keeps the row and the key and sets `max_events_per_window` to `0`, answering `{ ok, tenant_id, status: "suspended" }`. Ingestion then answers `429 {"error":"Quota exceeded"}` with `X-Quota-Limit: 0`, because a tenant whose key is still correct must not be told `401` and invited to retry with another one. Unhandled event types answer `{ ok: true, ignored: true }`.
+
 ### Implemented: scraped metrics, journal checkpointing and bounded shutdown
 
 Operating this service is meant to be boring, which is three properties:
@@ -181,6 +191,7 @@ Planned endpoints:
 | Route | Purpose | Security | Status |
 |---|---|---|---|
 | `GET /v1/navi.js?key=…` | key-gated asset | tenant key; no DB call | implemented |
+| `POST /v1/billing/webhook` | provision or revoke a tenant | Stripe HMAC-SHA256 signature, 300 s replay window, `metadata.tenant_id` | implemented |
 | `POST /v1/telemetry` | aggregate counts | strict schema + canonical origin + 2048-byte cap | implemented |
 | `GET /v1/telemetry?key=…` | tenant aggregate | tenant key; private, no-store | implemented |
 | `POST /v1/telemetry/violations` | one containment violation | tenant key; six categories; sanitized origin+path; 2048-byte cap | implemented |

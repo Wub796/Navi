@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { createHmac } from 'node:crypto';
 import { build } from 'esbuild';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -16,10 +17,26 @@ test.beforeAll(async () => {
   crawlerScript = bundle.outputFiles[0].text;
 });
 
-/** @param {RequestInfo | URL} input @param {RequestInit} [init] */
-function workerRequest(input, init = {}) {
-  return worker.fetch(new Request(input, init), { SUPABASE_URL: 'https://supabase.example', SUPABASE_SERVICE_ROLE_KEY: 'server-secret' });
+/** @param {RequestInfo | URL} input @param {RequestInit} [init] @param {Record<string, string>} [env] */
+function workerRequest(input, init = {}, env = { SUPABASE_URL: 'https://supabase.example', SUPABASE_SERVICE_ROLE_KEY: 'server-secret' }) {
+  return worker.fetch(new Request(input, init), /** @type {any} */ (env));
 }
+
+const WEBHOOK_SECRET = 'whsec_worker_test';
+const webhookEndpoint = 'https://worker.example/v1/billing/webhook';
+const workerEnv = { SUPABASE_URL: 'https://supabase.example', SUPABASE_SERVICE_ROLE_KEY: 'server-secret', STRIPE_WEBHOOK_SECRET: WEBHOOK_SECRET };
+/**
+ * Sign a body the way Stripe does: HMAC over `${t}.${body}` with the endpoint secret.
+ * @param {string} body @param {number} [timestamp] @param {string} [secret]
+ */
+const stripeSignature = (body, timestamp = Math.floor(Date.now() / 1000), secret = WEBHOOK_SECRET) =>
+  `t=${timestamp},v1=${createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex')}`;
+/** @param {string} body @param {string} [signature] @param {Record<string, string>} [env] */
+const billingRequest = (body, signature = stripeSignature(body), env = workerEnv) => workerRequest(webhookEndpoint, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', ...(signature ? { 'Stripe-Signature': signature } : {}) },
+  body
+}, env);
 
 test('DOM crawler maps semantic roles, stable selectors, select options and excludes control values', async ({ page }) => {
   await page.setContent(`<!doctype html><label for="q">Search</label><input id="q" type="search" value="private-current-value"><div role="textbox" aria-label="Notes"></div><div contenteditable="true" aria-label="Editor"></div><a href="/next">Next</a><div role="link" aria-label="Settings"></div><div role="tab" aria-label="Billing"></div><div role="checkbox" aria-label="Agree"></div><div role="switch" aria-label="Enabled"></div><button id="volatile" data-navi-id="navi-stable">Stable</button><select aria-label="Plan"><option value="">Choose one</option><optgroup disabled><option value="hidden">Hidden</option></optgroup><option value="pro">Premium plan</option></select>`);
@@ -189,12 +206,121 @@ test('Worker sitemap endpoint meters a site against max_events_per_window, persi
     expect(rolled.window_start_ms).toBeGreaterThan(expiredStart);
     expect(call('/navigation_maps')?.init.method).toBe('POST');
 
-    // An unmetered site (no ceiling) still ingests without a quota write.
-    site.max_events_per_window = 0;
+    // An unmetered site (no ceiling at all) still ingests without a quota write.
+    site.max_events_per_window = null;
     calls.length = 0;
     response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
     expect(response.status).toBe(200);
     expect(call('/sites?id=eq.site-1')).toBeUndefined();
+
+    // A ceiling of exactly 0 is how a revoked subscription is stored: it is a
+    // suspension, not an absence of metering, and it refuses before the map write.
+    site.max_events_per_window = 0;
+    calls.length = 0;
+    response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(429);
+    expect(response.headers.get('x-quota-limit')).toBe('0');
+    expect(response.headers.get('x-quota-remaining')).toBe('0');
+    expect(call('/navigation_maps')).toBeUndefined();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Worker billing webhook verifies the Stripe signature, provisions a site and suspends it on cancellation', async () => {
+  const originalFetch = globalThis.fetch;
+  /** @type {{url: string, init: RequestInit}[]} */
+  const calls = [];
+  /** @type {string} */
+  let existingApiKey = '';
+  globalThis.fetch = async (input, init = {}) => {
+    calls.push({ url: String(input), init });
+    if (String(input).includes('select=id,api_key')) return Response.json(existingApiKey ? [{ id: 'acme', api_key: existingApiKey }] : []);
+    if (String(input).includes('on_conflict=id')) return Response.json([{ id: 'acme' }], { status: 201 });
+    if (String(input).includes('/sites?id=eq.')) return new Response(null, { status: 204 });
+    return new Response(null, { status: 201 });
+  };
+  const checkout = JSON.stringify({
+    id: 'evt_1',
+    type: 'checkout.session.completed',
+    data: { object: { id: 'cs_test', client_reference_id: 'acme', metadata: {
+      allowed_origins: 'https://app.example.com|https://admin.example.com',
+      max_events_per_window: '50',
+      window_seconds: '600'
+    } } }
+  });
+  try {
+    // Without a secret the route refuses before it trusts any body.
+    let response = await billingRequest(checkout, undefined, { SUPABASE_URL: 'https://supabase.example', SUPABASE_SERVICE_ROLE_KEY: 'server-secret' });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Billing webhook not configured' });
+
+    response = await workerRequest(webhookEndpoint, { method: 'POST', body: checkout }, workerEnv);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Invalid signature' });
+
+    response = await billingRequest(checkout, stripeSignature(checkout, undefined, 'whsec_wrong'));
+    expect(response.status).toBe(401);
+
+    // A signature over different bytes than the body that arrived.
+    response = await billingRequest(checkout.replace('acme', 'acme-other'), stripeSignature(checkout));
+    expect(response.status).toBe(401);
+
+    // Outside the 300-second replay window, in either direction.
+    const now = Math.floor(Date.now() / 1000);
+    for (const skew of [-301, 301]) {
+      response = await billingRequest(checkout, stripeSignature(checkout, now + skew));
+      expect(response.status, `a ${skew}s skew must be refused`).toBe(401);
+      expect(await response.json()).toEqual({ error: 'Invalid signature' });
+    }
+
+    // A valid signature provisions the site and returns the minted key once.
+    response = await billingRequest(checkout);
+    expect(response.status).toBe(200);
+    const provisioned = await response.json();
+    expect(provisioned.ok).toBe(true);
+    expect(provisioned.tenant_id).toBe('acme');
+    expect(provisioned.api_key).toMatch(/^navi_live_[0-9a-f]{64}$/);
+    const upsert = calls.find(call => call.url.includes('on_conflict=id'));
+    expect(upsert?.init.method).toBe('POST');
+    expect(String(/** @type {any} */ (upsert?.init.headers).Prefer)).toContain('resolution=merge-duplicates,return=representation');
+    expect(JSON.parse(String(upsert?.init.body))).toEqual({
+      id: 'acme',
+      api_key: provisioned.api_key,
+      allowed_origins: ['https://app.example.com', 'https://admin.example.com'],
+      max_events_per_window: 50,
+      window_seconds: 600,
+      active: true
+    });
+
+    // An update that carries no api_key keeps the credential already embedded.
+    existingApiKey = provisioned.api_key;
+    const update = JSON.stringify({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1', metadata: { tenant_id: 'acme', max_events_per_window: '75' } } } });
+    response = await billingRequest(update);
+    expect(response.status).toBe(200);
+    expect((await response.json()).api_key).toBe(provisioned.api_key);
+
+    // A handled event with no tenant anywhere in it is a caller error, not a 200.
+    const missing = JSON.stringify({ type: 'checkout.session.completed', data: { object: { metadata: {} } } });
+    response = await billingRequest(missing);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Missing tenant_id' });
+
+    const ignored = JSON.stringify({ type: 'invoice.paid', data: { object: {} } });
+    response = await billingRequest(ignored);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, ignored: true });
+
+    // Cancellation zeroes the ceiling instead of deleting the row, so ingestion is
+    // a deterministic 429 rather than a 401 the tenant would read as a bad key.
+    const cancellation = JSON.stringify({ type: 'customer.subscription.deleted', data: { object: { id: 'sub_1', metadata: { tenant_id: 'acme' } } } });
+    calls.length = 0;
+    response = await billingRequest(cancellation);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, tenant_id: 'acme', status: 'suspended' });
+    const patch = calls.find(call => call.url.includes('/sites?id=eq.acme'));
+    expect(patch?.init.method).toBe('PATCH');
+    expect(JSON.parse(String(patch?.init.body))).toEqual({ max_events_per_window: 0 });
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -508,7 +508,7 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(222);
+  expect(MIN_PASSING_TESTS).toBe(225);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.2.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');

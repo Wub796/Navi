@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { createHmac } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -313,6 +314,152 @@ test('never stores raw DOM or HTML text', async () => {
   const after = await summary();
   expect(after.events, 'a rejected payload must not be persisted').toBe(before.events);
   expect(JSON.stringify(after)).not.toContain('onclick');
+});
+
+test('the billing webhook refuses unsigned, mis-signed, tampered and stale events', async () => {
+  const storeFile = join(tmpdir(), `navi-billing-guard-${process.pid}-${Date.now()}.db`);
+  const secret = 'whsec_guard';
+  const host = await createNaviHostServer({ port: 0, storeFile, stripeWebhookSecret: secret });
+  const endpoint = `http://127.0.0.1:${host.port}/v1/billing/webhook`;
+  const body = JSON.stringify({ type: 'checkout.session.completed', data: { object: { metadata: { tenant_id: 'guard-tenant' } } } });
+  /** @param {string} raw @param {number} [timestamp] @param {string} [signingSecret] */
+  const sign = (raw, timestamp = Math.floor(Date.now() / 1000), signingSecret = secret) =>
+    `t=${timestamp},v1=${createHmac('sha256', signingSecret).update(`${timestamp}.${raw}`).digest('hex')}`;
+  /** @param {string} raw @param {string | null} [signature] */
+  const send = (raw, signature = sign(raw)) => fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(signature === null ? {} : { 'Stripe-Signature': signature }) },
+    body: raw
+  });
+  try {
+    // The suite's shared host configures no secret, so it must not trust a body at all.
+    const unconfigured = await fetch(`${state.base}/v1/billing/webhook`, { method: 'POST', body: '{}' });
+    expect(unconfigured.status).toBe(503);
+    expect(await unconfigured.json()).toEqual({ error: 'Billing webhook not configured' });
+
+    let response = await send(body, null);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Invalid signature' });
+
+    response = await send(body, sign(body, undefined, 'whsec_wrong'));
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Invalid signature' });
+
+    // A signature over different bytes than the body that arrived.
+    response = await send(body.replace('guard-tenant', 'other-tenant'), sign(body));
+    expect(response.status).toBe(401);
+
+    // Outside the 300-second replay window, in either direction.
+    const now = Math.floor(Date.now() / 1000);
+    for (const skew of [-301, 301]) {
+      response = await send(body, sign(body, now + skew));
+      expect(response.status, `a ${skew}s skew must be refused`).toBe(401);
+      expect(await response.json()).toEqual({ error: 'Invalid signature' });
+    }
+
+    // A well-formed but unusable signature header is still a 401, not a 500.
+    response = await send(body, 'v1=deadbeef');
+    expect(response.status).toBe(401);
+
+    // Signed but unparseable is a caller error with its own answer.
+    const malformed = '{not json';
+    response = await send(malformed, sign(malformed));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Invalid payload' });
+  } finally {
+    await host.close();
+  }
+});
+
+test('a signed checkout provisions a tenant that ingests, survives a restart, and is revoked with 429', async () => {
+  const storeFile = join(tmpdir(), `navi-billing-provision-${process.pid}-${Date.now()}.db`);
+  const secret = 'whsec_provision';
+  const start = () => createNaviHostServer({ port: 0, storeFile, stripeWebhookSecret: secret });
+  let host = await start();
+  const base = () => `http://127.0.0.1:${host.port}`;
+  /** @param {string} raw @param {string} [signingSecret] */
+  const webhook = (raw, signingSecret = secret) => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = createHmac('sha256', signingSecret).update(`${timestamp}.${raw}`).digest('hex');
+    return fetch(`${base()}/v1/billing/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${timestamp},v1=${signature}` },
+      body: raw
+    });
+  };
+  const crawl = (/** @type {string} */ key, /** @type {string} */ url) => fetch(`${base()}/v1/sitemap/update`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ url, actions: [{ target_id: '#submit', role: 'button', name: 'Submit', action: 'click', selector: '#submit', disabled: false }] })
+  });
+  const beacon = (/** @type {string} */ key, /** @type {string} */ origin) => fetch(`${base()}/v1/telemetry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ tenant_id: 'tenant-stripe', url_origin: origin, actions_indexed: 1, actions_executed: 0, execution_failures: 0 })
+  });
+  try {
+    const checkout = JSON.stringify({
+      id: 'evt_checkout',
+      type: 'checkout.session.completed',
+      data: { object: { id: 'cs_test', client_reference_id: 'tenant-stripe', metadata: {
+        allowed_origins: 'https://app.example.com',
+        max_events_per_window: '5',
+        window_seconds: '600'
+      } } }
+    });
+    let response = await webhook(checkout);
+    expect(response.status).toBe(200);
+    const provisioned = await response.json();
+    expect(provisioned.ok).toBe(true);
+    expect(provisioned.tenant_id).toBe('tenant-stripe');
+    expect(provisioned.api_key).toMatch(/^navi_live_[0-9a-f]{64}$/);
+    const key = provisioned.api_key;
+
+    // The minted key authenticates both ingest routes immediately, and the
+    // provisioned origin list is already enforced.
+    response = await crawl(key, 'https://app.example.com/checkout');
+    expect(response.status).toBe(200);
+    response = await crawl(key, 'https://rogue.example.com/checkout');
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'Forbidden origin' });
+    response = await beacon(key, 'https://app.example.com');
+    expect(response.status).toBe(202);
+
+    // A restart is the only way to prove the key is configuration on disk rather
+    // than an in-memory registration.
+    await host.close();
+    host = await start();
+    response = await crawl(key, 'https://app.example.com/checkout');
+    expect(response.status, 'a provisioned key must survive a restart').toBe(200);
+
+    // An update without an api_key keeps the credential already handed out.
+    const update = JSON.stringify({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1', metadata: { tenant_id: 'tenant-stripe', max_events_per_window: '9' } } } });
+    response = await webhook(update);
+    expect(response.status).toBe(200);
+    expect((await response.json()).api_key).toBe(key);
+
+    const cancellation = JSON.stringify({ type: 'customer.subscription.deleted', data: { object: { id: 'sub_1', metadata: { tenant_id: 'tenant-stripe' } } } });
+    response = await webhook(cancellation);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, tenant_id: 'tenant-stripe', status: 'suspended' });
+
+    // Suspension is a quota answer, not an authentication one: the key stays valid.
+    response = await crawl(key, 'https://app.example.com/checkout');
+    expect(response.status).toBe(429);
+    expect(response.headers.get('x-quota-limit')).toBe('0');
+    expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(await response.json()).toEqual({ error: 'Quota exceeded' });
+    response = await beacon(key, 'https://app.example.com');
+    expect(response.status).toBe(429);
+
+    // And the suspension is persisted, not a registry-only flag.
+    await host.close();
+    host = await start();
+    response = await crawl(key, 'https://app.example.com/checkout');
+    expect(response.status, 'a suspended tenant must stay suspended across a restart').toBe(429);
+  } finally {
+    await host.close();
+  }
 });
 
 test('reports health and refuses unknown routes', async () => {
