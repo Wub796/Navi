@@ -513,6 +513,12 @@ test('the published test floor is one number, stated everywhere it is promised',
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.2.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
     expect(text, `${document} must state the published floor`).toContain(String(MIN_PASSING_TESTS));
+    // Naming the right number somewhere is not the promise: a second sentence still
+    // quoting an older floor is exactly the drift this test exists to catch, and a
+    // containment check passes on the mention while the stale claim stands beside it.
+    for (const [, claimed] of text.matchAll(/(\d{3,})(?:-test suite|\s+passing tests|\s+passed, 0 failed)/g)) {
+      expect(Number(claimed), `${document} still names a ${claimed} floor`).toBe(MIN_PASSING_TESTS);
+    }
   }
 });
 
