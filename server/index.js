@@ -38,13 +38,13 @@
 // store.
 
 import { createServer } from 'node:http';
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { beginProcessLifecycle, createStore, DEFAULT_RETENTION_DAYS, DEFAULT_VIOLATION_LIMIT, MAX_RETENTION_DAYS, MAX_VIOLATION_LIMIT } from './store.js';
-import { isOriginAllowed, loadTenants, tenantConfigFor, tenantFor, tenantIds } from './tenants.js';
+import { isOriginAllowed, loadTenants, normalizeTenantEntry, tenantConfigFor, tenantFor, tenantIds } from './tenants.js';
 import { validateCrawlerPayload } from '../src/crawler-payload.js';
 
 /** Process boot timestamp, shared by every listener in this process. */
@@ -292,6 +292,16 @@ Environment
                            failed rather than retrying.
   NAVI_RATE_LIMIT_BURST    Burst allowance above that rate. Default 30; 0 disables
                            limiting.
+  NAVI_MAX_EVENTS_PER_WINDOW
+                           Ingest events allowed per quota window, for tenants that
+                           do not set their own. Default 0 (unmetered); a request
+                           past the ceiling is 429 with Retry-After.
+  NAVI_QUOTA_WINDOW_SECONDS
+                           Length of that quota window. Default 3600.
+  NAVI_METRICS_TOKEN       When set, GET /metrics requires
+                           "Authorization: Bearer <token>" and answers 401
+                           without it. Unset keeps the scrape unauthenticated,
+                           which is what a healthcheck expects.
 `;
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -577,8 +587,8 @@ function validateViolation(payload, allowedTenantIds, keyTenantId) {
 /**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
- * @typedef {{host?: string, port?: number, tenants?: import('./tenants.js').TenantRegistry, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter, maxEventsPerWindow?: number, quotaWindowSeconds?: number}} HostOptions
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, readQuota?(tenantId: string): Promise<{tenant_id: string, window_start_ms: number, event_count: number} | null>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
+ * @typedef {{host?: string, port?: number, tenants?: import('./tenants.js').TenantRegistry, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter, maxEventsPerWindow?: number, quotaWindowSeconds?: number, metricsToken?: string}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: import('./tenants.js').TenantRegistry, limiter: RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
  */
 
@@ -612,6 +622,25 @@ export async function createNaviHostServer(options = {}) {
   const retentionIntervalMs = Math.max(50, options.retentionIntervalMs ?? RETENTION_SWEEP_INTERVAL_MS);
   const defaultMaxEventsPerWindow = options.maxEventsPerWindow ?? countFromEnv(process.env.NAVI_MAX_EVENTS_PER_WINDOW, 0);
   const defaultQuotaWindowSeconds = options.quotaWindowSeconds ?? countFromEnv(process.env.NAVI_QUOTA_WINDOW_SECONDS, 3600);
+  // Empty means "no credential": `/metrics` stays reachable the way `/healthz` is,
+  // which is what a container healthcheck and a default Prometheus scrape expect.
+  // Setting it makes the scrape an operator-only read without changing the route.
+  const metricsToken = (options.metricsToken ?? process.env.NAVI_METRICS_TOKEN ?? '').trim();
+  /**
+   * Constant-time comparison against the configured scrape credential. A length
+   * mismatch short-circuits, which leaks only the token's length, and the header
+   * must be a well-formed `Bearer <token>` like every other authenticated route.
+   * @param {import('node:http').IncomingMessage} req @returns {boolean}
+   */
+  function metricsAuthorized(req) {
+    if (!metricsToken) return true;
+    const authorization = req.headers.authorization;
+    const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
+    if (!match) return false;
+    const presented = Buffer.from(match[1]);
+    const expected = Buffer.from(metricsToken);
+    return presented.length === expected.length && timingSafeEqual(presented, expected);
+  }
   // The limiter is per process, exactly like the store it protects: two replicas
   // behind one address each allow the full rate, so enforcement belongs at the
   // shared edge once there is more than one.
@@ -629,6 +658,8 @@ export async function createNaviHostServer(options = {}) {
   const requestCounts = new Map();
   /** @type {Map<string, number>} */
   const rateLimitedByTenant = new Map();
+  /** @type {Map<string, number>} */
+  const quotaExceededByTenant = new Map();
   let pruneEvents = 0;
   let prunedRecords = 0;
   /**
@@ -711,6 +742,39 @@ export async function createNaviHostServer(options = {}) {
   }
 
   /**
+   * The ceiling a tenant's ingest is metered against, or null when it is unmetered.
+   * A tenant-level ceiling wins over the process default, so one customer's plan can
+   * differ from the deployment's baseline without a second configuration surface.
+   * @param {import('./tenants.js').TenantDefinition} tenantConfig
+   * @returns {{limit: number, window_seconds: number} | null}
+   */
+  function effectiveQuota(tenantConfig) {
+    const limit = tenantConfig.max_events_per_window ?? (defaultMaxEventsPerWindow > 0 ? defaultMaxEventsPerWindow : 0);
+    if (!(limit > 0)) return null;
+    return {
+      limit,
+      window_seconds: tenantConfig.window_seconds ?? (defaultQuotaWindowSeconds > 0 ? defaultQuotaWindowSeconds : 3600)
+    };
+  }
+
+  /**
+   * The metered tenants, in a stable order. Only a tenant with a positive ceiling
+   * has a window to report: emitting a zero series for everyone else would be a
+   * label per tenant that says nothing.
+   * @returns {{config: import('./tenants.js').TenantDefinition, quota: {limit: number, window_seconds: number}}[]}
+   */
+  function meteredTenants() {
+    /** @type {{config: import('./tenants.js').TenantDefinition, quota: {limit: number, window_seconds: number}}[]} */
+    const metered = [];
+    for (const value of tenants.values()) {
+      const config = normalizeTenantEntry(value);
+      const quota = config ? effectiveQuota(config) : null;
+      if (config && quota) metered.push({ config, quota });
+    }
+    return metered.sort((left, right) => left.config.id.localeCompare(right.config.id));
+  }
+
+  /**
    * The Prometheus exposition. Labeled series appear once they have been observed,
    * while the label-free aggregates and the gauges are always present, so a scrape
    * of a freshly started host is a valid document rather than an empty one.
@@ -750,8 +814,28 @@ export async function createNaviHostServer(options = {}) {
       `navi_host_active_tenants ${limiter.size}`,
       '# HELP navi_host_store_bytes Size of the active store file on disk, in bytes.',
       '# TYPE navi_host_store_bytes gauge',
-      `navi_host_store_bytes ${await storeBytes()}`
+      `navi_host_store_bytes ${await storeBytes()}`,
+      '# HELP navi_host_tenant_quota_limit Ingest events allowed per quota window, by tenant.',
+      '# TYPE navi_host_tenant_quota_limit gauge',
+      '# HELP navi_host_tenant_quota_events Ingest events consumed in the tenant\'s active quota window.',
+      '# TYPE navi_host_tenant_quota_events gauge',
+      '# HELP navi_host_tenant_quota_window_start_seconds Start of the tenant\'s active quota window in Unix seconds, 0 when no window has been opened.',
+      '# TYPE navi_host_tenant_quota_window_start_seconds gauge',
+      '# HELP navi_host_quota_exceeded_total Ingest requests refused because the tenant exhausted its quota window.',
+      '# TYPE navi_host_quota_exceeded_total counter'
     );
+    // Quota state is the tenant's own persisted window, read per scrape: a gauge
+    // fed by process memory would report a ceiling that survived a restart beside a
+    // count that did not. `readQuota` is optional on a store injected by a caller.
+    for (const { config, quota } of meteredTenants()) {
+      const state = typeof store.readQuota === 'function' ? await store.readQuota(config.id) : null;
+      const label = escapeLabel(config.id);
+      const windowStart = state && state.window_start_ms > 0 ? Math.floor(state.window_start_ms / 1000) : 0;
+      lines.push(`navi_host_tenant_quota_limit{tenant_id="${label}"} ${quota.limit}`);
+      lines.push(`navi_host_tenant_quota_events{tenant_id="${label}"} ${state?.event_count ?? 0}`);
+      lines.push(`navi_host_tenant_quota_window_start_seconds{tenant_id="${label}"} ${windowStart}`);
+      lines.push(`navi_host_quota_exceeded_total{tenant_id="${label}"} ${quotaExceededByTenant.get(config.id) ?? 0}`);
+    }
     return `${lines.join('\n')}\n`;
   }
 
@@ -870,19 +954,18 @@ export async function createNaviHostServer(options = {}) {
    * @returns {Promise<boolean>}
    */
   async function checkTenantQuota(res, tenantConfig) {
-    const maxEvents = tenantConfig.max_events_per_window ?? (defaultMaxEventsPerWindow > 0 ? defaultMaxEventsPerWindow : 0);
-    if (!(maxEvents > 0) || typeof store.consumeQuota !== 'function') return true;
-    const windowSeconds = tenantConfig.window_seconds ?? (defaultQuotaWindowSeconds > 0 ? defaultQuotaWindowSeconds : 3600);
+    const quota = effectiveQuota(tenantConfig);
+    if (!quota || typeof store.consumeQuota !== 'function') return true;
     const verdict = await store.consumeQuota({
       tenant_id: tenantConfig.id,
-      max_events_per_window: maxEvents,
-      window_seconds: windowSeconds
+      max_events_per_window: quota.limit,
+      window_seconds: quota.window_seconds
     });
     if (verdict.allowed) return true;
-    rateLimitedByTenant.set(tenantConfig.id, (rateLimitedByTenant.get(tenantConfig.id) ?? 0) + 1);
+    quotaExceededByTenant.set(tenantConfig.id, (quotaExceededByTenant.get(tenantConfig.id) ?? 0) + 1);
     sendJson(res, 429, { error: 'Quota exceeded' }, {
       'Retry-After': String(verdict.retry_after_seconds),
-      'X-Quota-Limit': String(maxEvents),
+      'X-Quota-Limit': String(quota.limit),
       'X-Quota-Remaining': '0'
     });
     return false;
@@ -937,6 +1020,7 @@ export async function createNaviHostServer(options = {}) {
 
     if (path === '/metrics') {
       if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /metrics.');
+      if (!metricsAuthorized(req)) return sendJson(res, 401, { error: 'Unauthorized' });
       return sendMetrics(res, await renderMetrics());
     }
 
@@ -1229,11 +1313,30 @@ export async function createNaviHostServer(options = {}) {
 
     if (path === '/v1/telemetry') {
       if (method === 'GET') {
-        const tenantId = tenantFor(tenants, url.searchParams.get('key'));
-        if (!tenantId) {
+        // A bearer key and `?key=` name the same tenant; the header is what an
+        // operator console uses, and the query parameter stays because it is the
+        // documented read and a browser can follow it.
+        const tenantConfig = bearerTenantConfig(req) ?? tenantConfigFor(tenants, url.searchParams.get('key'));
+        if (!tenantConfig) {
           return sendError(res, 401, 'UNAUTHORIZED', 'A valid key query parameter is required to read a tenant summary.');
         }
-        return sendJson(res, 200, { ok: true, tenant_id: tenantId, summary: await store.summarize({ tenant_id: tenantId }) });
+        const quota = effectiveQuota(tenantConfig);
+        const state = quota && typeof store.readQuota === 'function' ? await store.readQuota(tenantConfig.id) : null;
+        return sendJson(res, 200, {
+          ok: true,
+          tenant_id: tenantConfig.id,
+          summary: await store.summarize({ tenant_id: tenantConfig.id }),
+          // Null rather than zeroes when the tenant is unmetered: a ceiling of 0
+          // would read as "nothing allowed" to a consumer that did not know better.
+          quota: quota
+            ? {
+              max_events_per_window: quota.limit,
+              window_seconds: quota.window_seconds,
+              window_start_ms: state?.window_start_ms ?? null,
+              event_count: state?.event_count ?? 0
+            }
+            : null
+        });
       }
       if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/telemetry.');
 

@@ -508,9 +508,9 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(220);
+  expect(MIN_PASSING_TESTS).toBe(222);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
-  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.1.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
+  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.2.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
     expect(text, `${document} must state the published floor`).toContain(String(MIN_PASSING_TESTS));
   }
@@ -624,7 +624,7 @@ test('the generated notes and the release collateral carry the canary attestatio
   const build = JSON.parse(await readFile(join(root, 'reports/build.json'), 'utf8'));
   const canary = receipt.evidence.canary;
   expect(canary?.ok, 'the committed receipt must record a green clean-room canary').toBe(true);
-  const notes = renderReleaseNotes({ build, receipt, version: '0.6.1', tag: 'v0.6.1', protocol: '0.3.0', containers: await readContainerReceipts(root) });
+  const notes = renderReleaseNotes({ build, receipt, version: '0.6.2', tag: 'v0.6.2', protocol: '0.3.0', containers: await readContainerReceipts(root) });
 
   // Both attestations, each under its own section, in one document.
   expect(notes).toContain('### Container verification');
@@ -659,10 +659,10 @@ test('the generated notes and the release collateral carry the canary attestatio
   expect(committed, 'the committed notes must carry the provenance paragraph').toContain(`\`evidence.sourceTree\` is \`${receipt.evidence.sourceTree}\``);
   expect(committed).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
   expect(committed).toContain(recorded.map(check => `| \`${check.id}\` | ${check.detail} | Passed |`).join('\n'));
-  const release = await readFile(join(root, 'docs/RELEASES/v0.6.1.md'), 'utf8');
+  const release = await readFile(join(root, 'docs/RELEASES/v0.6.2.md'), 'utf8');
   expect(release).toContain('## Container verification matrix');
   expect(release).toContain('| Check | Description | Status |');
-  for (const check of recorded) expect(release, `docs/RELEASES/v0.6.1.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
+  for (const check of recorded) expect(release, `docs/RELEASES/v0.6.2.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
 });
 
 test('container receipts are discovered by target, not by the path they sit in', async () => {

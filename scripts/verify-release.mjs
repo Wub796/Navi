@@ -53,7 +53,7 @@ import { verifyCleanRoomPackage } from './verify-registry-package.mjs';
  * them, and tests/release-pipeline.spec.mjs pins those documents together, so raising it
  * is a deliberate change to all of them rather than a silent drift in one.
  */
-export const MIN_PASSING_TESTS = 220;
+export const MIN_PASSING_TESTS = 222;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
 export const LOADER_BUDGET_BYTES = 700;

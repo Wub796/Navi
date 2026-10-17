@@ -13,7 +13,7 @@
  * Usage:
  *   node scripts/verify-registry-package.mjs --tarball             # pack local checkout and verify
  *   node scripts/verify-registry-package.mjs --tarball <file.tgz>  # verify an existing tarball
- *   node scripts/verify-registry-package.mjs --registry [spec]     # pack from npm registry (e.g. navi@0.6.1)
+ *   node scripts/verify-registry-package.mjs --registry [spec]     # pack from npm registry (e.g. navi@0.6.2)
  *   node scripts/verify-registry-package.mjs --json                # emit structured JSON receipt
  *
  * Exit codes: 0 all checks passed, 1 a verification check failed, 2 usage error.
@@ -244,7 +244,7 @@ export async function runCleanRoomMcpHandshake(packageDir) {
       params: {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'navi-cleanroom-canary', version: '0.6.1' }
+        clientInfo: { name: 'navi-cleanroom-canary', version: '0.6.2' }
       }
     });
     const negotiatedVersion = initReply?.result?.protocolVersion;

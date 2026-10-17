@@ -124,9 +124,9 @@ The container suite is also a **publish gate**: [.github/workflows/release.yml](
 
 Verified on native **linux/arm64** using the rebuilt `navi:local` image and container Node **22.23.3**:
 
-- `npm run test:containers`: **18/18 passed**, including lifecycle-volume ownership, the normalized sentinel pair (`state.dirty` / `state.clean`, and no `state.clean.clean`), host crash recovery and MCP crash recovery. The receipt records `compose: docker-compose.yml`, `architecture: linux/arm64`, `imageId: sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991`.
-- `npm run test:containers -- --compose deploy/docker-compose.prod.yml`: **18/18 passed** using the shipped production Compose file in an isolated local project, **not a production deployment**. Both disposable projects and their volumes were removed after the checks, and the receipt records `compose: deploy/docker-compose.prod.yml`, `architecture: linux/arm64`, `imageId: sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991`.
-- Node 22.23.3 `npm test`: **220 passed, 0 failed**, at the published floor **220**. `npm run typecheck` passed on the final source, and `npm run verify:release` recorded all eleven checks passing (including `cleanroom-package-canary`).
+- `npm run test:containers`: **18/18 passed**, including lifecycle-volume ownership, the normalized sentinel pair (`state.dirty` / `state.clean`, and no `state.clean.clean`), host crash recovery and MCP crash recovery. The receipt records `compose: docker-compose.yml`, `architecture: linux/arm64`, `imageId: sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad`.
+- `npm run test:containers -- --compose deploy/docker-compose.prod.yml`: **18/18 passed** using the shipped production Compose file in an isolated local project, **not a production deployment**. Both disposable projects and their volumes were removed after the checks, and the receipt records `compose: deploy/docker-compose.prod.yml`, `architecture: linux/arm64`, `imageId: sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad`.
+- Node 22.23.3 `npm test`: **222 passed, 0 failed**, at the published floor **222**. `npm run typecheck` passed on the final source, and `npm run verify:release` recorded all eleven checks passing (including `cleanroom-package-canary`).
 - Actual `dist/navi.min.js`: **14,929 bytes** (< 15,000); actual `dist/loader.min.js`: **689 bytes** (<= 700). SDK SHA-384 agrees with `dist/sri.txt`; distribution bytes are unchanged by the sentinel rename.
 
 Receipts: [local container verification](../reports/container-verification.json) and [production-config container verification](../reports/production-container-verification.json). Native amd64 container execution is covered by [.github/workflows/ci.yml](../.github/workflows/ci.yml) rather than by this arm64 host, and host power-loss recovery was not tested in this run.
@@ -141,4 +141,4 @@ This runs ten paired tasks per execution path against a disposable live, multi-s
 
 The checkout is also available through `npm run dev` at `/tcr-checkout.html` for UI review, using the same disposable fixture backend. SDK mutation silence is a scheduling signal, not proof of a server commit: the independent outcome oracle remains essential.
 
-The package is the unreleased **0.6.1** candidate. The immutable `v0.6.0` tag stays where it is and this change creates no new release tag, publishes no image and deploys nothing to production.
+The package is **0.6.2**. The immutable `v0.6.1` tag stays where it is; this change creates the annotated `v0.6.2` tag and publishes the package from it through the keyless OIDC pipeline, but pushes no image and deploys nothing to production.

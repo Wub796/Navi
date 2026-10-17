@@ -171,6 +171,73 @@ test('the metrics endpoint serves Prometheus text and carries no request data', 
   expect((await fetch(`http://127.0.0.1:${host.port}/metrics`, { method: 'POST' })).status).toBe(405);
 });
 
+test('NAVI_METRICS_TOKEN protects the scrape and the quota window is reported per tenant', async () => {
+  const host = await startHost({
+    metricsToken: 'scrape-secret',
+    tenants: new Map(/** @type {[string, any][]} */ ([
+      ['key-alpha', { id: 'tenant-alpha', max_events_per_window: 2, window_seconds: 60 }],
+      ['key-beta', 'tenant-beta']
+    ]))
+  });
+  const base = `http://127.0.0.1:${host.port}`;
+  // Unset, the scrape stays open (every other test in this file reads it anonymously).
+  // Set, it is an operator-only read and the refusal is a JSON 401, not an empty page.
+  expect((await fetch(`${base}/metrics`)).status).toBe(401);
+  const unknownToken = await fetch(`${base}/metrics`, { headers: { Authorization: 'Bearer wrong-secret' } });
+  expect(unknownToken.status).toBe(401);
+  expect(await unknownToken.json()).toEqual({ error: 'Unauthorized' });
+  // A malformed credential is refused the same way as a wrong one.
+  expect((await fetch(`${base}/metrics`, { headers: { Authorization: 'scrape-secret' } })).status).toBe(401);
+  // Liveness is deliberately not behind the scrape credential: a container probe
+  // has no business holding the operator's token.
+  expect((await fetch(`${base}/healthz`)).status).toBe(200);
+
+  const beacon = { tenant_id: 'tenant-alpha', url_origin: 'https://shop.example.com', actions_indexed: 1, actions_executed: 0, execution_failures: 0 };
+  const ingest = () => fetch(`${base}/v1/telemetry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer key-alpha' },
+    body: JSON.stringify(beacon)
+  });
+  expect((await ingest()).status).toBe(202);
+  expect((await ingest()).status).toBe(202);
+  const exceeded = await ingest();
+  expect(exceeded.status).toBe(429);
+  expect(await exceeded.json()).toEqual({ error: 'Quota exceeded' });
+  expect(Number(exceeded.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+
+  const scrape = await fetch(`${base}/metrics`, { headers: { Authorization: 'Bearer scrape-secret' } });
+  expect(scrape.status).toBe(200);
+  const body = await scrape.text();
+  // The ceiling comes from the tenant's configuration; the count and the window are
+  // the persisted state the ingest route charged, so a restart reports the same
+  // numbers instead of an empty window beside a configured ceiling.
+  expect(seriesLine(body, 'navi_host_tenant_quota_limit{tenant_id="tenant-alpha"}')).toBe('navi_host_tenant_quota_limit{tenant_id="tenant-alpha"} 2');
+  expect(seriesLine(body, 'navi_host_tenant_quota_events{tenant_id="tenant-alpha"}')).toBe('navi_host_tenant_quota_events{tenant_id="tenant-alpha"} 2');
+  const windowStart = Number(seriesLine(body, 'navi_host_tenant_quota_window_start_seconds{tenant_id="tenant-alpha"}')?.split(' ')[1]);
+  expect(windowStart).toBeGreaterThan(0);
+  expect(windowStart).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+  expect(seriesLine(body, 'navi_host_quota_exceeded_total{tenant_id="tenant-alpha"}')).toBe('navi_host_quota_exceeded_total{tenant_id="tenant-alpha"} 1');
+  // An unmetered tenant has no window to report: a zero series per tenant would be a
+  // label that says nothing, and the scrape stays aggregate-only.
+  expect(body).not.toContain('tenant_id="tenant-beta"');
+  expect(body).not.toContain('scrape-secret');
+  expect(body).not.toContain('key-alpha');
+
+  // The same window is what the tenant's own read returns, authenticated by its
+  // bearer key rather than by the scrape credential.
+  const read = await fetch(`${base}/v1/telemetry`, { headers: { Authorization: 'Bearer key-alpha' } });
+  expect(read.status).toBe(200);
+  const summary = await read.json();
+  expect(summary.tenant_id).toBe('tenant-alpha');
+  expect(summary.summary.events).toBe(2);
+  expect(summary.quota).toMatchObject({ max_events_per_window: 2, window_seconds: 60, event_count: 2 });
+  // The gauge is whole Unix seconds and the read is milliseconds; the same window
+  // is what both report, so the second is the floor of the first.
+  expect(Math.floor(summary.quota.window_start_ms / 1000)).toBe(windowStart);
+  const unmetered = await (await fetch(`${base}/v1/telemetry?key=key-beta`)).json();
+  expect(unmetered.quota, 'an unmetered tenant reports no quota rather than a zero ceiling').toBeNull();
+});
+
 test('request counters carry the route and the status, never the requested path', async () => {
   const host = await startHost();
   const base = `http://127.0.0.1:${host.port}`;

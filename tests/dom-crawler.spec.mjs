@@ -93,7 +93,7 @@ test('Worker sitemap endpoint enforces route, bearer auth, JSON and schema contr
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, url: validPayload.url, targets: 1 });
     expect(calls).toHaveLength(2);
-    expect(calls[0].url).toContain('/sites?api_key=eq.api-key&active=eq.true&select=id,allowed_origins');
+    expect(calls[0].url).toContain('/sites?api_key=eq.api-key&active=eq.true&select=id,allowed_origins,max_events_per_window,window_seconds,window_start_ms,event_count');
     expect(calls[1].url).toContain('/navigation_maps?on_conflict=site_id,url');
     expect(calls[1].init.method).toBe('POST');
   } finally {
@@ -134,6 +134,67 @@ test('Worker sitemap endpoint enforces per-tenant allowed_origins with HTTP 403 
     allowedOrigins = ['*'];
     response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
     expect(response.status).toBe(200);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Worker sitemap endpoint meters a site against max_events_per_window, persists the window and rolls it over', async () => {
+  const originalFetch = globalThis.fetch;
+  /** @type {{id: string, max_events_per_window: number, window_seconds: number, window_start_ms: number, event_count: number}} */
+  const site = { id: 'site-1', max_events_per_window: 2, window_seconds: 60, window_start_ms: Date.now(), event_count: 1 };
+  /** @type {{url: string, init: RequestInit}[]} */
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    calls.push({ url: String(input), init });
+    if (String(input).includes('/sites?')) return Response.json([{ ...site }]);
+    return new Response(null, { status: init.method === 'PATCH' ? 204 : 201 });
+  };
+  /** @param {string} fragment @returns {{url: string, init: RequestInit} | undefined} */
+  const call = fragment => calls.find(entry => entry.url.includes(fragment));
+  try {
+    const headers = { Authorization: 'Bearer api-key' };
+    // One event of a ceiling of two: the request is accepted, and the charged
+    // state is written back to the site row rather than held in the isolate.
+    let response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, url: validPayload.url, targets: 1 });
+    const charged = call('/sites?id=eq.site-1');
+    expect(charged?.init.method).toBe('PATCH');
+    expect(JSON.parse(String(charged?.init.body))).toEqual({ window_start_ms: site.window_start_ms, event_count: 2 });
+
+    // The ceiling is now reached: the next event is refused before the map write.
+    site.event_count = 2;
+    calls.length = 0;
+    response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: 'Quota exceeded' });
+    expect(Number(response.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+    expect(Number(response.headers.get('retry-after'))).toBeLessThanOrEqual(60);
+    expect(response.headers.get('x-quota-limit')).toBe('2');
+    expect(response.headers.get('x-quota-remaining')).toBe('0');
+    expect(call('/navigation_maps')).toBeUndefined();
+    expect(call('/sites?id=eq.site-1')).toBeUndefined();
+
+    // The window has expired: the next accepted event opens a fresh one at 1 rather
+    // than carrying the exhausted count across the boundary.
+    const expiredStart = Date.now() - 120_000;
+    site.window_start_ms = expiredStart;
+    site.event_count = 2;
+    calls.length = 0;
+    response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(200);
+    const rolled = JSON.parse(String(call('/sites?id=eq.site-1')?.init.body));
+    expect(rolled.event_count).toBe(1);
+    expect(rolled.window_start_ms).toBeGreaterThan(expiredStart);
+    expect(call('/navigation_maps')?.init.method).toBe('POST');
+
+    // An unmetered site (no ceiling) still ingests without a quota write.
+    site.max_events_per_window = 0;
+    calls.length = 0;
+    response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(200);
+    expect(call('/sites?id=eq.site-1')).toBeUndefined();
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -51,7 +51,8 @@ import { createInterface } from 'node:readline';
  * @typedef {{journal_mode: string, synchronous: number, auto_vacuum: number}} StorePragmas
  * @typedef {{tenant_id: string, max_events_per_window: number, window_seconds?: number}} QuotaOptions
  * @typedef {{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}} QuotaVerdict
- * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, consumeQuota(options: QuotaOptions): Promise<QuotaVerdict>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
+ * @typedef {{tenant_id: string, window_start_ms: number, event_count: number}} QuotaState
+ * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, consumeQuota(options: QuotaOptions): Promise<QuotaVerdict>, readQuota(tenantId: string): Promise<QuotaState | null>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
  */
 
 /** Default number of violation rows one query returns. */
@@ -347,6 +348,11 @@ function createSqliteStore(path, sqlite) {
       upsertTenantQuota.run(tenantId, windowStart, nextCount);
       return { allowed: true, count: nextCount, remaining: Math.max(0, maxEvents - nextCount), retry_after_seconds: 0 };
     },
+    async readQuota(tenantId) {
+      const row = /** @type {{window_start_ms?: unknown, event_count?: unknown} | undefined} */ (selectTenantQuota.get(String(tenantId)));
+      if (!row) return null;
+      return { tenant_id: String(tenantId), window_start_ms: asNumber(row.window_start_ms), event_count: asNumber(row.event_count) };
+    },
     async summarize(filter = {}) {
       const where = filter.tenant_id ? 'WHERE tenant_id = ?' : '';
       const args = filter.tenant_id ? [filter.tenant_id] : [];
@@ -579,6 +585,22 @@ function createLogStore(path) {
         await appendFile(path, `${JSON.stringify({ kind: 'tenant_quota', tenant_id: tenantId, window_start_ms: windowStart, event_count: nextCount })}\n`, 'utf8');
         return { allowed: true, count: nextCount, remaining: Math.max(0, maxEvents - nextCount), retry_after_seconds: 0 };
       });
+    },
+    async readQuota(tenantId) {
+      // The last line for this tenant is the current window: every accepted ingest
+      // appends one, so the newest occurrence is the state a scrape or a summary
+      // must report. Reading back to front stops at it instead of scanning the file.
+      const text = await readFile(path, 'utf8').catch(() => '');
+      for (const line of text.split('\n').reverse()) {
+        if (!line.trim()) continue;
+        try {
+          const record = JSON.parse(line);
+          if (record.kind === 'tenant_quota' && record.tenant_id === tenantId) {
+            return { tenant_id: String(tenantId), window_start_ms: asNumber(record.window_start_ms), event_count: asNumber(record.event_count) };
+          }
+        } catch { /* ignore torn lines */ }
+      }
+      return null;
     },
     async recordViolation(violation) {
       const record = normalizeViolation(violation);
