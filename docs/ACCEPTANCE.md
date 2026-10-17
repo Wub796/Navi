@@ -157,6 +157,8 @@ JavaScript cannot preempt a single native layout call, host event handler, brows
 
 ## Required tests
 
+The suite floor is **226 passed, 0 failed** on the pinned Node 22.23.3 runtime (`MIN_PASSING_TESTS` in `scripts/verify-release.mjs`), and every document that promises it states the same number.
+
 Real React controlled input/change state and keyed list replacement/sorting without target drift; structural replacement fingerprints; captured closed roots with original semantics and stop restoration; same-origin navigation and inaccessible sandbox; backdrop occlusion preventing dispatch; hidden/disabled/inert/offscreen controls; native select/type validation and canceled keydown; exclusive execute-driven full sandbox transaction with outcome checks; mutation burst convergence; detached-root/index cleanup; idle/frame fallback; no automatic network telemetry/field values/CSS/ARIA changes.
 
 Security and protocol additions, each with its own suite:

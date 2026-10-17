@@ -222,6 +222,36 @@ test('log compaction drops expired violations, keeps aggregates, and does not re
   }
 });
 
+test('the log backend carries a provisioned tenant through compaction and a reopen', async () => {
+  const file = tempFile('log');
+  await writeLog([
+    JSON.stringify({ tenant_id: 'tenant-alpha', url_origin: 'https://a.example.com', actions_indexed: 1, actions_executed: 0, execution_failures: 0, received_at: daysAgo(40) }),
+    JSON.stringify({ kind: VIOLATION_KIND, tenant_id: 'tenant-alpha', session_id: null, category: 'private_ipv4', target_url: 'http://10.0.0.1/', resolved_ip: '10.0.0.1', created_at: daysAgo(40) })
+  ], file);
+  const store = await createStore(file, { mode: 'log' });
+  try {
+    const created = await store.upsertTenantDefinition({ tenant_id: 'log-tenant', api_key: 'navi_live_log', allowed_origins: ['https://log.example.com'], max_events_per_window: 5, window_seconds: 600 });
+    expect(created).toMatchObject({ tenant_id: 'log-tenant', api_key: 'navi_live_log', max_events_per_window: 5, window_seconds: 600, status: 'active' });
+    // The rewrite that drops an expired violation must copy the definition line,
+    // or a webhook-provisioned tenant would vanish on the next scheduled sweep.
+    expect(await store.pruneViolations({ max_age_days: 30 })).toEqual({ pruned_count: 1, remaining_count: 0 });
+    await store.close();
+
+    const reopened = await createStore(file, { mode: 'log' });
+    try {
+      expect(await reopened.readTenantDefinition('log-tenant')).toMatchObject({ api_key: 'navi_live_log', allowed_origins: ['https://log.example.com'] });
+      // Suspension is an ordinary update, not a delete: the key survives it.
+      const suspended = await reopened.upsertTenantDefinition({ tenant_id: 'log-tenant', api_key: 'navi_live_log', allowed_origins: ['https://log.example.com'], max_events_per_window: 0, window_seconds: 600, status: 'suspended' });
+      expect(suspended).toMatchObject({ max_events_per_window: 0, status: 'suspended' });
+      expect((await reopened.readTenantDefinitions()).map(/** @param {any} d */ d => [d.tenant_id, d.max_events_per_window])).toEqual([['log-tenant', 0]]);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await store.close();
+  }
+});
+
 test('compaction is atomic: a reader sees the old file or the new one, and an append survives it', async () => {
   const file = tempFile('log');
   /** @type {string[]} */
