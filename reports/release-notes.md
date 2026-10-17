@@ -58,24 +58,24 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 
 ### Verification
 
-Provenance: `evidence.revision` is `602ac9f81c73d21c8915953ce8571ebc8dd864fd` and `evidence.sourceTree` is `sha256:d361f691202c9547e74150963aa2be2bd6c946297b24d1362ae90053539d55a3` — a digest of every tracked
+Provenance: `evidence.revision` is `9d884aa845cb0bbd0ea5d656a20d970cff25668c` and `evidence.sourceTree` is `sha256:070657b75f0d12c88af0901dbb395105af8427207a488df6475c322c8cd8cb83` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-17T19:11:54.598Z: **11/11 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-17T19:30:56.790Z: **11/11 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 0 generated path(s) |
-| `version-tag` | pass | v0.6.4 does not exist yet (create it with --tag once this gate is green) |
+| `git-clean` | pass | clean apart from 6 generated path(s) |
+| `version-tag` | pass | v0.6.4 points at HEAD |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
-| `test-suite` | pass | 239 passed, 0 failed (floor 239) |
+| `test-suite` | pass | 240 passed, 0 failed, 0 skipped (floor 240) |
 | `ci-gates` | pass | All selected gates passed. |
 | `pack-check` | pass | every published path is an intended release artifact |
 | `cleanroom-package-canary` | pass | 6/6 clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake) |

@@ -1,17 +1,17 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-17T19:11:54.598Z",
+  "recordedAt": "2026-10-17T19:30:56.790Z",
   "evidence": {
-    "revision": "602ac9f81c73d21c8915953ce8571ebc8dd864fd",
+    "revision": "9d884aa845cb0bbd0ea5d656a20d970cff25668c",
     "branch": "main",
-    "sourceTree": "sha256:d361f691202c9547e74150963aa2be2bd6c946297b24d1362ae90053539d55a3",
+    "sourceTree": "sha256:070657b75f0d12c88af0901dbb395105af8427207a488df6475c322c8cd8cb83",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
-    "floor": 239,
+    "floor": 240,
     "tests": [
-      239,
+      240,
       0
     ],
     "containers": [
@@ -88,12 +88,12 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 0 generated path(s)"
+      "detail": "clean apart from 6 generated path(s)"
     },
     {
       "id": "version-tag",
       "ok": true,
-      "detail": "v0.6.4 does not exist yet (create it with --tag once this gate is green)"
+      "detail": "v0.6.4 points at HEAD"
     },
     {
       "id": "artifact-budget",
@@ -108,7 +108,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "239 passed, 0 failed (floor 239)"
+      "detail": "240 passed, 0 failed, 0 skipped (floor 240)"
     },
     {
       "id": "ci-gates",
