@@ -8,7 +8,7 @@ import { parse } from 'yaml';
 import { CANARY_CHECKS_FLOOR, CONTAINER_CHECKS_FLOOR, evaluatePublish, repositorySlug, resolveProvenance, resolveRepository } from '../scripts/publish-preflight.mjs';
 import { canaryAttestation, renderReleaseNotes, sourceTreeAttestation } from '../scripts/release-notes.mjs';
 import { readContainerReceipts, summarizeContainer } from '../scripts/container-evidence.mjs';
-import { MIN_PASSING_TESTS, sourceTreeDigest } from '../scripts/verify-release.mjs';
+import { MIN_PASSING_TESTS, failureDigest, sourceTreeDigest } from '../scripts/verify-release.mjs';
 import { evaluateUnpackedPackage, REQUIRED_PACKAGE_FILES, verifyCleanRoomPackage } from '../scripts/verify-registry-package.mjs';
 
 /**
@@ -508,7 +508,7 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(239);
+  expect(MIN_PASSING_TESTS).toBe(240);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.4.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
@@ -520,6 +520,29 @@ test('the published test floor is one number, stated everywhere it is promised',
       expect(Number(claimed), `${document} still names a ${claimed} floor`).toBe(MIN_PASSING_TESTS);
     }
   }
+});
+
+test('a gate that blocks a release names the test that broke it', () => {
+  // "238 passed, 1 failed" without a name costs a full release cycle to diagnose, and
+  // the surrounding output is thousands of lines of other tests' logs. The digest lifts
+  // the failures out by the shape Playwright prints them in.
+  const output = [
+    '  ✓  1 tests/a.spec.mjs:1:1 › something that passed (3ms)',
+    '  1) tests/supabase-schema.spec.mjs:140:1 › the schema applies twice',
+    '    Error: expect(received).toBe(expected)',
+    '    Expected: 240',
+    '    Received: 239',
+    '',
+    '  239 passed, 1 failed (2.0m)'
+  ].join('\n');
+  const digest = failureDigest(output);
+  expect(digest).toContain('1) tests/supabase-schema.spec.mjs:140:1');
+  expect(digest).toContain('Error: expect(received).toBe(expected)');
+  // A passing row is not what a reader needs, and the summary is already the detail's
+  // first line.
+  expect(digest).not.toContain('something that passed');
+  // Output with nothing recognisable still says something rather than nothing.
+  expect(failureDigest('boom\n')).toBe('boom');
 });
 
 test('the edge deployment contract pins its schema, deny rules and entrypoint', async () => {

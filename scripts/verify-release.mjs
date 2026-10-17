@@ -54,7 +54,7 @@ import { verifyCleanRoomPackage } from './verify-registry-package.mjs';
  * them, and tests/release-pipeline.spec.mjs pins those documents together, so raising it
  * is a deliberate change to all of them rather than a silent drift in one.
  */
-export const MIN_PASSING_TESTS = 239;
+export const MIN_PASSING_TESTS = 240;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
 export const LOADER_BUDGET_BYTES = 700;
@@ -93,6 +93,22 @@ function attempt(command, args, env = process.env) {
  */
 function tail(output, lines = 6) {
   return output.trim().split('\n').filter(line => line.trim()).slice(-lines).join('\n');
+}
+
+/**
+ * The lines in a test run that name what broke.
+ *
+ * A gate that blocks a release on "1 failed" without naming the test costs a whole
+ * cycle to diagnose, and the surrounding output is thousands of lines of unrelated
+ * test logs — so the failures are lifted out by their own shape: Playwright prints
+ * each one as `N) file:line › name` followed by the assertion it made.
+ * @param {string} output
+ * @returns {string}
+ */
+export function failureDigest(output) {
+  const lines = output.split('\n').map(line => line.trimEnd());
+  const named = lines.filter(line => /^\s{0,4}\d+\)\s+\S/.test(line) || /^\s*(Error:|expect\()/.test(line));
+  return (named.length > 0 ? named : lines.filter(line => line.trim().length > 0)).slice(0, 12).join('\n');
 }
 
 /**
@@ -219,9 +235,13 @@ export async function verifyRelease(options) {
       const result = attempt('npm', ['test', '--silent'], { ...process.env, VERIFY_RELEASE_ACTIVE: '1' });
       const passed = Number(/(\d+) passed/.exec(result.output)?.[1] ?? 0);
       const failed = Number(/(\d+) failed/.exec(result.output)?.[1] ?? 0);
-      const summary = `${passed} passed, ${failed} failed (floor ${MIN_PASSING_TESTS})`;
+      // A skipped test is a test that did not run, and the floor is a promise about
+      // tests that did: recording the count makes a skipped suite legible instead of
+      // looking like an unexplained shortfall.
+      const skipped = Number(/(\d+) skipped/.exec(result.output)?.[1] ?? 0);
+      const summary = `${passed} passed, ${failed} failed, ${skipped} skipped (floor ${MIN_PASSING_TESTS})`;
       if (!result.ok || failed > 0 || passed < MIN_PASSING_TESTS) {
-        return { ok: false, detail: `${summary}\n${tail(result.output, 10)}` };
+        return { ok: false, detail: `${summary}\n${failureDigest(result.output)}` };
       }
       return { ok: true, detail: summary };
     }));
