@@ -1,15 +1,15 @@
 {
-  "ok": true,
+  "ok": false,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-16T00:18:39.847Z",
+  "recordedAt": "2026-10-17T03:51:47.142Z",
   "evidence": {
-    "revision": "5282ef6bfefe3824631888ffe13f46d76ef62314",
+    "revision": "9ef8da40e5feb4b26ffccb9f35a2bbb6fae4fda7",
     "branch": "main",
-    "sourceTree": "sha256:627baf2e3572e22b7d90e48f37c1753b01343f2093b7432d6d42d43249c428de",
+    "sourceTree": "sha256:bd2c6fdefa7fe72345e5da18e173aa2ad9086c40aecaedb22926f41c619f7ba8",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
-    "floor": 216,
+    "floor": 222,
     "tests": [
       216,
       0
@@ -18,8 +18,8 @@
       {
         "architecture": "linux/arm64",
         "compose": "deploy/docker-compose.prod.yml",
-        "imageId": "sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991",
-        "recordedAt": "2026-10-16T00:14:27.784Z",
+        "imageId": "sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad",
+        "recordedAt": "2026-10-17T03:48:49.419Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -27,8 +27,8 @@
       {
         "architecture": "linux/arm64",
         "compose": "docker-compose.yml",
-        "imageId": "sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991",
-        "recordedAt": "2026-10-16T00:14:08.151Z",
+        "imageId": "sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad",
+        "recordedAt": "2026-10-17T03:48:30.813Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -59,7 +59,7 @@
         {
           "id": "mcp-initialize",
           "ok": true,
-          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.1 (Navi protocol 0.3.0)"
+          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.2 (Navi protocol 0.3.0)"
         },
         {
           "id": "mcp-tools-list",
@@ -88,12 +88,12 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 7 generated path(s)"
+      "detail": "clean apart from 8 generated path(s)"
     },
     {
       "id": "version-tag",
       "ok": true,
-      "detail": "v0.6.1 does not exist yet (create it with --tag once this gate is green)"
+      "detail": "v0.6.2 does not exist yet (create it with --tag once this gate is green)"
     },
     {
       "id": "artifact-budget",
@@ -107,8 +107,8 @@
     },
     {
       "id": "test-suite",
-      "ok": true,
-      "detail": "216 passed, 0 failed (floor 216)"
+      "ok": false,
+      "detail": "216 passed, 0 failed (floor 222)\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.373Z\",\"session_id\":null,\"target_url\":\"http://127.0.0.1:53998/trap\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.569Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.572Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap-image\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.572Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap-frame\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.683Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap-redirect\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.720Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap-redirect\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.741Z\",\"session_id\":null,\"target_url\":\"http://127.0.0.1:53998/trap-proxy\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.742Z\",\"session_id\":null,\"target_url\":\"https://127.0.0.1:3001/\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n(node:9642) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)"
     },
     {
       "id": "ci-gates",

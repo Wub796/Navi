@@ -1,4 +1,4 @@
-## Navi 0.6.1
+## Navi 0.6.2
 
 Distributed browser runtime for agent-driven pages: deterministic action maps, differential
 updates, guarded execution and settlement receipts. Protocol version `0.3.0` — read out of
@@ -34,8 +34,8 @@ container receipts rather than restated here.
 
 | Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |
 |---|---|---|---|---|---|---:|---:|
-| linux/arm64 | `sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991` | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
-| linux/arm64 | `sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991` | `docker-compose.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
+| linux/arm64 | `sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad` | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
+| linux/arm64 | `sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad` | `docker-compose.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
 
 ### Clean-Room Package Canary Attestation
 
@@ -52,30 +52,40 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 | `manifest-layout` | all 13 required manifest exports present (dist/navi.min.js, dist/loader.min.js, dist/mcp.mjs, bin/navi-mcp.js, …) | Passed |
 | `sri-and-budgets` | dist/navi.min.js (14929 B) matches sha384-TmtbTx4Um3FaZ25ht…; dist/loader.min.js is 689 B (<=700 B) | Passed |
 | `zero-leak-isolation` | 0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (19 files total) | Passed |
-| `mcp-initialize` | negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.1 (Navi protocol 0.3.0) | Passed |
+| `mcp-initialize` | negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.2 (Navi protocol 0.3.0) | Passed |
 | `mcp-tools-list` | tools/list declared navi_navigate, navi_get_actions, navi_execute_action, navi_assert_state, navi_set_session (Navi protocol 0.3.0) | Passed |
 | `mcp-sigterm-teardown` | clean teardown on SIGTERM with exit code 0 | Passed |
 
 ### Verification
 
-Provenance: `evidence.revision` is `5282ef6bfefe3824631888ffe13f46d76ef62314` and `evidence.sourceTree` is `sha256:627baf2e3572e22b7d90e48f37c1753b01343f2093b7432d6d42d43249c428de` — a digest of every tracked
+Provenance: `evidence.revision` is `9ef8da40e5feb4b26ffccb9f35a2bbb6fae4fda7` and `evidence.sourceTree` is `sha256:bd2c6fdefa7fe72345e5da18e173aa2ad9086c40aecaedb22926f41c619f7ba8` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-16T00:18:39.847Z: **11/11 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-17T03:51:47.142Z: **10/11 checks passed**, receipt `ok: false`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 7 generated path(s) |
-| `version-tag` | pass | v0.6.1 does not exist yet (create it with --tag once this gate is green) |
+| `git-clean` | pass | clean apart from 8 generated path(s) |
+| `version-tag` | pass | v0.6.2 does not exist yet (create it with --tag once this gate is green) |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
-| `test-suite` | pass | 216 passed, 0 failed (floor 216) |
+| `test-suite` | FAIL | 216 passed, 0 failed (floor 222)
+{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.373Z","session_id":null,"target_url":"http://127.0.0.1:53998/trap","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
+{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.569Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
+{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.572Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap-image","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
+{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.572Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap-frame","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
+{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.683Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap-redirect","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
+{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.720Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap-redirect","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
+{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.741Z","session_id":null,"target_url":"http://127.0.0.1:53998/trap-proxy","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
+{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.742Z","session_id":null,"target_url":"https://127.0.0.1:3001/","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
+(node:9642) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created) |
 | `ci-gates` | pass | All selected gates passed. |
 | `pack-check` | pass | every published path is an intended release artifact |
 | `cleanroom-package-canary` | pass | 6/6 clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake) |
@@ -91,7 +101,7 @@ configuration for Claude Desktop, Cursor and page embeds: [docs/INTEGRATION-MATR
 
 ### Honest limits
 
-These notes are generated from this repository's own gate receipts on v0.6.1. The npm publish
+These notes are generated from this repository's own gate receipts on v0.6.2. The npm publish
 is verified by the workflow, not by a hosted CI run reproduced here; the remote SSE transport
 is exercised against this repository's own SSE tests rather than a third-party client; and
 each architecture's container verification is recorded only where a receipt exists — a

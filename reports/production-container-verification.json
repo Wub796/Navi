@@ -1,14 +1,14 @@
 {
-  "recordedAt": "2026-10-16T00:14:27.784Z",
+  "recordedAt": "2026-10-17T03:48:49.419Z",
   "compose": "deploy/docker-compose.prod.yml",
   "architecture": "linux/arm64",
-  "imageId": "sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991",
+  "imageId": "sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad",
   "ok": true,
   "checks": [
     {
       "check": "image",
       "ok": true,
-      "detail": "sha256:daa69775029f4901e1c2acc25c92dd5fca9bab66b05d6c729f6e97789d0d7991; linux/arm64; user pwuser:pwuser"
+      "detail": "sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad; linux/arm64; user pwuser:pwuser"
     },
     {
       "check": "compose-health",
@@ -23,7 +23,7 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"126\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532960]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"127\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "lifecycle-volume",
@@ -73,7 +73,7 @@
     {
       "check": "host-metrics",
       "ok": true,
-      "detail": "9 request series in 31 lines scraped from the shipped host service"
+      "detail": "9 request series in 39 lines scraped from the shipped host service"
     },
     {
       "check": "sqlite-store",
@@ -93,7 +93,7 @@
     {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-16T00:14:27.374Z\",\"session_id\":\"93b5c08a-ad21-443b-9a8c-70cd69e8d521\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:48:49.012Z\",\"session_id\":\"b5e57981-cd45-48b9-b537-6e12f8b1755b\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }
