@@ -508,9 +508,9 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(230);
+  expect(MIN_PASSING_TESTS).toBe(239);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
-  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.3.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
+  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.4.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
     expect(text, `${document} must state the published floor`).toContain(String(MIN_PASSING_TESTS));
     // Naming the right number somewhere is not the promise: a second sentence still
@@ -541,16 +541,42 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   // The replay ledger's shape is what makes a redelivery a no-op rather than a
   // second provisioning: the event id is the key the Worker conflicts on.
   expect(schema).toMatch(/create table if not exists public\.webhook_events \(\s*event_id text primary key,\s*received_at timestamptz not null default now\(\)\s*\)/);
-  expect(schema).toMatch(/create table if not exists public\.checkout_claims \(\s*session_id text primary key,\s*tenant_id text not null,\s*api_key text not null,\s*expires_at_ms bigint not null\s*\)/);
+  expect(schema).toMatch(/create table if not exists public\.checkout_claims \(\s*session_id text primary key,\s*tenant_id text not null,\s*api_key text not null,\s*expires_at timestamptz not null\s*\)/);
   expect(schema).toContain('create unique index if not exists idx_sites_api_key');
   expect(schema).toContain('create unique index if not exists idx_navigation_maps_site_url');
 
-  // The Worker must address the ledger with the atomic duplicate rule the schema
-  // relies on, rather than a read that two isolates could interleave.
-  expect(worker).toContain('/rest/v1/webhook_events?on_conflict=event_id');
-  expect(worker).toContain('resolution=ignore-duplicates');
-  expect(worker).toContain('/rest/v1/webhook_events?received_at=lt.');
-  expect(worker).toContain('/rest/v1/checkout_claims');
+  // The write path is three functions, not a sequence of REST calls PostgREST
+  // cannot make atomic. Each must be idempotently defined, security definer with a
+  // pinned search_path, and executable by the service role alone.
+  const functions = [
+    ['apply_stripe_webhook', 'public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz)'],
+    ['consume_site_quota', 'public.consume_site_quota(text, bigint, text, text)'],
+    ['claim_checkout_session', 'public.claim_checkout_session(text)']
+  ];
+  for (const [name, signature] of functions) {
+    expect(schema, `${name} must be created idempotently`).toContain(`create or replace function public.${name}(`);
+    expect(schema, `${name} must deny the public roles`).toContain(`revoke all on function ${signature} from public, anon, authenticated;`);
+    expect(schema, `${name} must grant service_role explicitly`).toContain(`grant execute on function ${signature} to service_role;`);
+  }
+  expect(schema.match(/security definer/g) ?? []).toHaveLength(3);
+  expect(schema.match(/set search_path = public/g) ?? []).toHaveLength(3);
+  // The atomicity the functions promise, asserted on the statements that provide it:
+  // a duplicate delivery changes no row, the ledger is pruned inside every write, the
+  // quota charge holds the tenant row, and the claim is consumed by the delete itself.
+  expect(schema).toContain('on conflict (event_id) do nothing');
+  expect(schema).toContain("interval '24 hours'");
+  expect(schema).toMatch(/from public\.sites\s+where api_key = p_api_key and active = true\s+for update/);
+  expect(schema).toMatch(/delete from public\.checkout_claims\s+where session_id = p_session_id and expires_at > now\(\)\s+returning \* into claimed/);
+
+  // The Worker delegates to those functions and no longer writes the ledger or the
+  // claim table itself: a second path that could get the order wrong is a second bug.
+  expect(worker).toContain('/rest/v1/rpc/${name}');
+  expect(worker).toContain("callRpc(env, 'apply_stripe_webhook'");
+  expect(worker).toContain("callRpc(env, 'consume_site_quota'");
+  expect(worker).toContain("callRpc(env, 'claim_checkout_session'");
+  expect(worker).not.toContain('/rest/v1/webhook_events');
+  expect(worker).not.toContain('/rest/v1/checkout_claims');
+  expect(worker).not.toContain('resolution=ignore-duplicates');
 
   // The manifest is committed, so it may name the entrypoint and the secrets an
   // operator sets, and nothing that looks like a credential value.
@@ -669,7 +695,7 @@ test('the generated notes and the release collateral carry the canary attestatio
   const build = JSON.parse(await readFile(join(root, 'reports/build.json'), 'utf8'));
   const canary = receipt.evidence.canary;
   expect(canary?.ok, 'the committed receipt must record a green clean-room canary').toBe(true);
-  const notes = renderReleaseNotes({ build, receipt, version: '0.6.3', tag: 'v0.6.3', protocol: '0.3.0', containers: await readContainerReceipts(root) });
+  const notes = renderReleaseNotes({ build, receipt, version: '0.6.4', tag: 'v0.6.4', protocol: '0.3.0', containers: await readContainerReceipts(root) });
 
   // Both attestations, each under its own section, in one document.
   expect(notes).toContain('### Container verification');
@@ -709,13 +735,13 @@ test('the generated notes and the release collateral carry the canary attestatio
     expect(committed).toMatch(/`evidence\.sourceTree` is `sha256:[0-9a-f]{64}`/);
   }
   expect(committed).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
-  const release = await readFile(join(root, 'docs/RELEASES/v0.6.3.md'), 'utf8');
+  const release = await readFile(join(root, 'docs/RELEASES/v0.6.4.md'), 'utf8');
   expect(release).toContain('## Container verification matrix');
   expect(release).toContain('| Check | Description | Status |');
   if (!inFlight) {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.3.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.4.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
   } else {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.3.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.4.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
   }
 });
 

@@ -7,47 +7,21 @@ export interface Env {
   STRIPE_WEBHOOK_SECRET?: string;
 }
 
-/**
- * The `sites` row the ingestion path needs. `allowed_origins` and the quota
- * columns are optional because a deployment may predate them: an absent list
- * means "any origin" and an absent ceiling means "unmetered", which is the
- * behaviour this endpoint had before either feature existed. A ceiling of exactly
- * `0` is not absent — it is how a revoked subscription is stored, and it refuses.
- */
-export interface SiteRecord {
-  id: string;
-  api_key?: string | null;
-  allowed_origins?: string[] | null;
-  max_events_per_window?: number | null;
-  window_seconds?: number | null;
-  window_start_ms?: number | null;
-  event_count?: number | null;
-}
-
-/** Window length when a site sets a ceiling but no window. Matches the host's default. */
-const DEFAULT_WINDOW_SECONDS = 3600;
 /** Ceiling a provisioned site gets when Stripe metadata omits one. */
 const DEFAULT_MAX_EVENTS_PER_WINDOW = 10000;
 /** Window a provisioned site gets when Stripe metadata omits one: 30 days. */
 const DEFAULT_PROVISION_WINDOW_SECONDS = 2592000;
 /** Replay window enforced around a Stripe signature timestamp, in seconds. */
 const SIGNATURE_TOLERANCE_SECONDS = 300;
-/** Retention window for the webhook event-id ledger, in milliseconds (24 hours). */
-const WEBHOOK_EVENT_TTL_MS = 86_400_000;
 /** Validity window for a one-time post-checkout API-key claim, in milliseconds (15 minutes). */
 const CHECKOUT_CLAIM_TTL_MS = 900_000;
 /** Random bytes in a generated `navi_live_` key. */
 const TENANT_KEY_BYTES = 32;
 
-interface QuotaVerdict {
-  allowed: boolean;
-  limit: number;
-  count: number;
-  window_start_ms: number;
-  retry_after_seconds: number;
-}
-
 const PROVISIONING_EVENT_TYPES = new Set(['checkout.session.completed', 'customer.subscription.created', 'customer.subscription.updated']);
+
+/** A decoded PostgREST RPC payload. Narrowing is the caller's job, per field. */
+type RpcResult = Record<string, unknown>;
 
 const json = (status: number, body: Record<string, unknown>, extraHeaders: Record<string, string> = {}): Response => new Response(JSON.stringify(body), {
   status,
@@ -62,18 +36,6 @@ function extractOrigin(urlValue: string): string | null {
   } catch {
     return null;
   }
-}
-
-function originAllowed(allowedOrigins: unknown, payloadOrigin: string | null, headerOrigin: string | null): boolean {
-  if (!Array.isArray(allowedOrigins) || allowedOrigins.length === 0) return true;
-  const list = allowedOrigins.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map(item => item.trim());
-  if (list.length === 0 || list.includes('*')) return true;
-  if (!payloadOrigin || !list.includes(payloadOrigin)) return false;
-  if (headerOrigin && headerOrigin.trim().length > 0) {
-    const normalizedHeader = extractOrigin(headerOrigin.trim());
-    if (!normalizedHeader || !list.includes(normalizedHeader)) return false;
-  }
-  return true;
 }
 
 /**
@@ -188,6 +150,29 @@ function supabaseHeaders(env: Env): Record<string, string> {
 }
 
 /**
+ * Call one of the schema's atomic functions through PostgREST.
+ *
+ * Every write this Worker makes goes through here, because PostgREST cannot span
+ * several REST calls in one transaction: a claim, a site upsert and a claim row
+ * issued as separate requests can be interleaved by two isolates, and a crash
+ * between them leaves an event id claimed by an event that never landed. A
+ * function call is one transaction, so a failure rolls the whole thing back and
+ * the resend Stripe generates is processed instead of being swallowed.
+ * @param {Env} env @param {string} name @param {Record<string, unknown>} body
+ * @returns {Promise<RpcResult>}
+ */
+async function callRpc(env: Env, name: string, body: Record<string, unknown>): Promise<RpcResult> {
+  const response = await fetch(`${supabaseBase(env)}/rest/v1/rpc/${name}`, {
+    method: 'POST',
+    headers: supabaseHeaders(env),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`the ${name} function answered ${response.status}`);
+  const decoded: unknown = await response.json();
+  return decoded && typeof decoded === 'object' ? decoded as RpcResult : {};
+}
+
+/**
  * @param {any} object
  * @returns {string}
  */
@@ -197,20 +182,25 @@ function billingTenantId(object: any): string {
   return typeof object?.client_reference_id === 'string' ? object.client_reference_id.trim() : '';
 }
 
-/** @param {Env} env @param {any} object @param {string} [eventType] @returns {Promise<Response>} */
-async function provisionSite(env: Env, object: any, eventType = ''): Promise<Response> {
+/**
+ * Provision a tenant from a verified billing event.
+ *
+ * The key is resolved here and written by the function, not read back afterwards:
+ * an update that carries no `api_key` must keep the credential a live page is
+ * already embedding, and minting a replacement would break every embed at once. A
+ * failed lookup is a 500 rather than a fall-through to minting for the same reason.
+ * @param {Env} env @param {any} object @param {string} eventType @param {string} eventId
+ * @returns {Promise<Response>}
+ */
+async function provisionSite(env: Env, object: any, eventType: string, eventId: string): Promise<Response> {
   const tenantId = billingTenantId(object);
   if (!tenantId) return json(400, { error: 'Missing tenant_id' });
   const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
   try {
-    const base = supabaseBase(env);
-    const headers = supabaseHeaders(env);
     const explicitKey = typeof metadata.api_key === 'string' ? metadata.api_key.trim() : '';
     let apiKey = explicitKey;
     if (!apiKey) {
-      // Reuse the key this site already has: an update event without metadata must
-      // not rotate the credential a tenant page is already embedding.
-      const existing = await fetch(`${base}/rest/v1/sites?id=eq.${encodeURIComponent(tenantId)}&select=id,api_key`, { headers });
+      const existing = await fetch(`${supabaseBase(env)}/rest/v1/sites?id=eq.${encodeURIComponent(tenantId)}&select=id,api_key`, { headers: supabaseHeaders(env) });
       // A failed lookup must not fall through to minting: that would silently
       // rotate the credential a live tenant is already embedding.
       if (!existing.ok) return json(500, { error: 'Internal server error' });
@@ -218,50 +208,55 @@ async function provisionSite(env: Env, object: any, eventType = ''): Promise<Res
       if (Array.isArray(rows) && rows[0] && typeof rows[0].api_key === 'string' && rows[0].api_key.length > 0) apiKey = rows[0].api_key;
     }
     if (!apiKey) apiKey = randomTenantKey();
-    const upsert = await fetch(`${base}/rest/v1/sites?on_conflict=id`, {
-      method: 'POST',
-      headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=representation' },
-      body: JSON.stringify({
-        id: tenantId,
-        api_key: apiKey,
-        allowed_origins: parseAllowedOrigins(metadata.allowed_origins),
-        max_events_per_window: metadataInteger(metadata.max_events_per_window, DEFAULT_MAX_EVENTS_PER_WINDOW, 0),
-        window_seconds: metadataInteger(metadata.window_seconds, DEFAULT_PROVISION_WINDOW_SECONDS, 1),
-        active: true,
-      }),
+    const rawSessionId = eventType === 'checkout.session.completed' && typeof object?.id === 'string' ? object.id.trim() : '';
+    const sessionId = rawSessionId.startsWith('cs_') ? rawSessionId : null;
+    const result = await callRpc(env, 'apply_stripe_webhook', {
+      p_event_id: eventId || null,
+      p_site_id: tenantId,
+      p_api_key: apiKey,
+      p_allowed_origins: parseAllowedOrigins(metadata.allowed_origins),
+      p_max_events_per_window: metadataInteger(metadata.max_events_per_window, DEFAULT_MAX_EVENTS_PER_WINDOW, 0),
+      p_window_seconds: metadataInteger(metadata.window_seconds, DEFAULT_PROVISION_WINDOW_SECONDS, 1),
+      p_active: true,
+      // The claim is written in the same transaction as the tenant: a key handed
+      // out for a site that does not exist is worse than a claim that never landed.
+      p_session_id: sessionId,
+      p_claim_expires_at: sessionId ? new Date(Date.now() + CHECKOUT_CLAIM_TTL_MS).toISOString() : null,
     });
-    if (!upsert.ok) return json(500, { error: 'Internal server error' });
-    const rawSessionId = typeof object?.id === 'string' ? object.id.trim() : '';
-    if (eventType === 'checkout.session.completed' && rawSessionId.startsWith('cs_')) {
-      const claimUpsert = await fetch(`${base}/rest/v1/checkout_claims?on_conflict=session_id`, {
-        method: 'POST',
-        headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify({
-          session_id: rawSessionId,
-          tenant_id: tenantId,
-          api_key: apiKey,
-          expires_at_ms: Date.now() + CHECKOUT_CLAIM_TTL_MS,
-        }),
-      });
-      if (!claimUpsert.ok) return json(500, { error: 'Internal server error' });
-    }
-    return json(200, { ok: true, tenant_id: tenantId, api_key: apiKey });
+    if (result.duplicate) return json(200, { ok: true, duplicate: true });
+    const effective = typeof result.api_key === 'string' && result.api_key.length > 0 ? result.api_key : apiKey;
+    return json(200, { ok: true, tenant_id: tenantId, api_key: effective });
   } catch {
     return json(500, { error: 'Internal server error' });
   }
 }
 
-/** @param {Env} env @param {any} object @returns {Promise<Response>} */
-async function suspendSite(env: Env, object: any): Promise<Response> {
+/**
+ * Suspend a tenant by zeroing its ceiling instead of deleting the row, so
+ * ingestion is a deterministic 429 rather than a 401 the tenant would read as a
+ * bad key. The call carries no `api_key`, so the function preserves the existing
+ * credential: a cancellation must not rotate the key a page is still embedding.
+ * @param {Env} env @param {any} object @param {string} eventId
+ * @returns {Promise<Response>}
+ */
+async function suspendSite(env: Env, object: any, eventId: string): Promise<Response> {
   const tenantId = billingTenantId(object);
   if (!tenantId) return json(400, { error: 'Missing tenant_id' });
   try {
-    const patch = await fetch(`${supabaseBase(env)}/rest/v1/sites?id=eq.${encodeURIComponent(tenantId)}`, {
-      method: 'PATCH',
-      headers: { ...supabaseHeaders(env), Prefer: 'return=minimal' },
-      body: JSON.stringify({ max_events_per_window: 0 }),
+    const result = await callRpc(env, 'apply_stripe_webhook', {
+      p_event_id: eventId || null,
+      p_site_id: tenantId,
+      p_api_key: null,
+      // NULL here is "leave the tenant's configuration alone", which is what a
+      // cancellation carries: only the ceiling is being changed.
+      p_allowed_origins: null,
+      p_max_events_per_window: 0,
+      p_window_seconds: null,
+      p_active: true,
+      p_session_id: null,
+      p_claim_expires_at: null,
     });
-    if (!patch.ok) return json(500, { error: 'Internal server error' });
+    if (result.duplicate) return json(200, { ok: true, duplicate: true });
     return json(200, { ok: true, tenant_id: tenantId, status: 'suspended' });
   } catch {
     return json(500, { error: 'Internal server error' });
@@ -269,42 +264,30 @@ async function suspendSite(env: Env, object: any): Promise<Response> {
 }
 
 /**
- * Claim a Stripe event id, answering whether this delivery is the first one.
- *
- * PostgREST compiles `resolution=ignore-duplicates` into `ON CONFLICT (event_id)
- * DO NOTHING` and returns the inserted rows, so a duplicate comes back as an empty
- * array. That makes "first delivery wins" one atomic statement rather than a read
- * followed by a write two isolates could interleave.
- * @param {Env} env @param {string} eventId @returns {Promise<boolean>}
+ * Record the id of an event this deployment ignores, so its resend is a no-op
+ * too. The same function does it with a NULL site id: the ledger insert is the
+ * only write, and it still happens in its own transaction.
+ * @param {Env} env @param {string} eventId
+ * @returns {Promise<Response>}
  */
-async function claimWebhookEvent(env: Env, eventId: string): Promise<boolean> {
-  const base = supabaseBase(env);
-  const headers = supabaseHeaders(env);
-  const cutoffIso = new Date(Date.now() - WEBHOOK_EVENT_TTL_MS).toISOString();
-  await fetch(`${base}/rest/v1/webhook_events?received_at=lt.${encodeURIComponent(cutoffIso)}`, {
-    method: 'DELETE',
-    headers,
-  }).catch(() => {});
-  const response = await fetch(`${base}/rest/v1/webhook_events?on_conflict=event_id`, {
-    method: 'POST',
-    headers: { ...headers, Prefer: 'resolution=ignore-duplicates,return=representation' },
-    body: JSON.stringify({ event_id: eventId }),
-  });
-  if (!response.ok) throw new Error(`the webhook ledger answered ${response.status}`);
-  const rows: unknown = await response.json();
-  return Array.isArray(rows) && rows.length > 0;
-}
-
-/**
- * Withdraw a claim whose delivery failed, so Stripe's resend is not swallowed.
- * @param {Env} env @param {string} eventId @returns {Promise<void>}
- */
-async function releaseWebhookEvent(env: Env, eventId: string): Promise<void> {
-  const response = await fetch(`${supabaseBase(env)}/rest/v1/webhook_events?event_id=eq.${encodeURIComponent(eventId)}`, {
-    method: 'DELETE',
-    headers: supabaseHeaders(env),
-  });
-  if (!response.ok) throw new Error(`the webhook ledger answered ${response.status}`);
+async function recordIgnoredEvent(env: Env, eventId: string): Promise<Response> {
+  if (!eventId) return json(200, { ok: true, ignored: true });
+  try {
+    const result = await callRpc(env, 'apply_stripe_webhook', {
+      p_event_id: eventId,
+      p_site_id: null,
+      p_api_key: null,
+      p_allowed_origins: null,
+      p_max_events_per_window: null,
+      p_window_seconds: null,
+      p_active: null,
+      p_session_id: null,
+      p_claim_expires_at: null,
+    });
+    return json(200, result.duplicate ? { ok: true, duplicate: true } : { ok: true, ignored: true });
+  } catch {
+    return json(500, { error: 'Internal server error' });
+  }
 }
 
 /** @param {Request} request @param {Env} env @returns {Promise<Response>} */
@@ -330,27 +313,12 @@ async function handleBilling(request: Request, env: Env): Promise<Response> {
   const type = typeof event?.type === 'string' ? event.type : '';
   const object = event?.data?.object && typeof event.data.object === 'object' ? event.data.object : {};
   const eventId = typeof event?.id === 'string' ? event.id.trim() : '';
-  let claimed = false;
-  if (eventId) {
-    try {
-      claimed = await claimWebhookEvent(env, eventId);
-    } catch {
-      return json(500, { error: 'Internal server error' });
-    }
-    // The ledger is claimed before anything is written, so a redelivery cannot
-    // upsert the site again or re-run a suspension.
-    if (!claimed) return json(200, { ok: true, duplicate: true });
-  }
-  let response: Response;
-  if (PROVISIONING_EVENT_TYPES.has(type)) response = await provisionSite(env, object, type);
-  else if (type === 'customer.subscription.deleted') response = await suspendSite(env, object);
-  else response = json(200, { ok: true, ignored: true });
-  // A failed delivery is one Stripe will resend; leaving the claim behind would
-  // make that resend a silent no-op, which is worse than acting twice.
-  if (claimed && response.status >= 300) {
-    try { await releaseWebhookEvent(env, eventId); } catch { /* the ledger is unreachable; the 500 stands */ }
-  }
-  return response;
+  // Each branch is one RPC call, and the event id travels inside it: the ledger
+  // claim and the tenant write commit together or not at all, so a redelivery is
+  // answered as a duplicate and a failed delivery leaves nothing to withdraw.
+  if (PROVISIONING_EVENT_TYPES.has(type)) return provisionSite(env, object, type, eventId);
+  if (type === 'customer.subscription.deleted') return suspendSite(env, object, eventId);
+  return recordIgnoredEvent(env, eventId);
 }
 
 /** @param {URL} url @param {Env} env @returns {Promise<Response>} */
@@ -360,70 +328,14 @@ async function handleBillingSession(url: URL, env: Env): Promise<Response> {
     return json(404, { error: 'Session not found or already claimed' });
   }
   try {
-    const base = supabaseBase(env);
-    const headers = supabaseHeaders(env);
-    const now = Date.now();
-    await fetch(`${base}/rest/v1/checkout_claims?expires_at_ms=lte.${now}`, {
-      method: 'DELETE',
-      headers,
-    }).catch(() => {});
-    const response = await fetch(
-      `${base}/rest/v1/checkout_claims?session_id=eq.${encodeURIComponent(sessionId)}&expires_at_ms=gt.${now}`,
-      {
-        method: 'DELETE',
-        headers: { ...headers, Prefer: 'return=representation' },
-      },
-    );
-    if (!response.ok) return json(500, { error: 'Internal server error' });
-    const rows: unknown = await response.json();
-    if (!Array.isArray(rows) || !rows[0] || typeof rows[0].tenant_id !== 'string' || typeof rows[0].api_key !== 'string') {
+    const result = await callRpc(env, 'claim_checkout_session', { p_session_id: sessionId });
+    if (result.ok !== true || typeof result.tenant_id !== 'string' || typeof result.api_key !== 'string') {
       return json(404, { error: 'Session not found or already claimed' });
     }
-    return json(200, { ok: true, tenant_id: rows[0].tenant_id, api_key: rows[0].api_key });
+    return json(200, { ok: true, tenant_id: result.tenant_id, api_key: result.api_key });
   } catch {
     return json(500, { error: 'Internal server error' });
   }
-}
-
-/**
- * The next state of a site's quota window, or null when the site is unmetered.
- *
- * The window is a fixed interval starting at `window_start_ms`: once
- * `window_seconds` have passed, the next accepted event opens a new window at
- * `now` with a count of 1, so a tenant that goes quiet is not throttled on its
- * first event back. A ceiling of exactly `0` is a suspension, not an absence, and
- * is answered as an exhausted window rather than as an unmetered plan.
- * @param {SiteRecord} site
- * @param {number} now
- * @returns {QuotaVerdict | null}
- */
-function quotaVerdict(site: SiteRecord, now: number): QuotaVerdict | null {
-  const declared = site.max_events_per_window;
-  if (typeof declared !== 'number' || !Number.isFinite(declared) || declared < 0) return null;
-  const limit = Math.trunc(declared);
-  const rawWindow = Number(site.window_seconds);
-  const windowSeconds = Number.isFinite(rawWindow) && rawWindow > 0 ? Math.trunc(rawWindow) : DEFAULT_WINDOW_SECONDS;
-  const windowMs = windowSeconds * 1000;
-  if (limit === 0) {
-    return { allowed: false, limit: 0, count: 0, window_start_ms: now, retry_after_seconds: Math.max(1, windowSeconds) };
-  }
-  const previousStart = Number(site.window_start_ms);
-  const previousCount = Number(site.event_count);
-  const hasActiveWindow = Number.isFinite(previousStart) && previousStart > 0
-    && Number.isFinite(previousCount) && previousCount >= 0
-    && now - previousStart < windowMs;
-  const windowStart = hasActiveWindow ? previousStart : now;
-  const consumed = hasActiveWindow ? Math.trunc(previousCount) : 0;
-  if (consumed >= limit) {
-    return {
-      allowed: false,
-      limit,
-      count: consumed,
-      window_start_ms: windowStart,
-      retry_after_seconds: Math.max(1, Math.ceil((windowStart + windowMs - now) / 1000)),
-    };
-  }
-  return { allowed: true, limit, count: consumed + 1, window_start_ms: windowStart, retry_after_seconds: 0 };
 }
 
 export default {
@@ -456,44 +368,35 @@ export default {
     const validated = payload as CrawlerPayload;
 
     try {
-      const base = supabaseBase(env);
-      const headers = supabaseHeaders(env);
-      const siteResponse = await fetch(`${base}/rest/v1/sites?api_key=eq.${encodeURIComponent(apiKey)}&active=eq.true&select=id,allowed_origins,max_events_per_window,window_seconds,window_start_ms,event_count`, { headers });
-      if (!siteResponse.ok) return json(500, { error: 'Internal server error' });
-      const sites: unknown = await siteResponse.json();
-      if (!Array.isArray(sites) || !sites[0] || typeof sites[0].id !== 'string') return json(401, { error: 'Unauthorized' });
-
-      const site = sites[0] as SiteRecord;
-      const payloadOrigin = extractOrigin(validated.url);
-      const headerOrigin = request.headers.get('Origin');
-      if (!originAllowed(site.allowed_origins, payloadOrigin, headerOrigin)) {
-        return json(403, { error: 'Forbidden origin' });
-      }
-
-      // The ceiling is charged before the map is written: a refused request must
-      // not have stored anything, and a metering write that fails must not be
-      // papered over with a 200 that leaves the count stale.
-      const quota = quotaVerdict(site, Date.now());
-      if (quota) {
-        if (!quota.allowed) {
-          return json(429, { error: 'Quota exceeded' }, {
-            'Retry-After': String(quota.retry_after_seconds),
-            'X-Quota-Limit': String(quota.limit),
-            'X-Quota-Remaining': '0',
-          });
-        }
-        const patch = await fetch(`${base}/rest/v1/sites?id=eq.${encodeURIComponent(site.id)}`, {
-          method: 'PATCH',
-          headers: { ...headers, Prefer: 'return=minimal' },
-          body: JSON.stringify({ window_start_ms: quota.window_start_ms, event_count: quota.count }),
+      // The origin policy and the charge are one statement under a row lock. Doing
+      // the check here and the charge next would charge a forbidden request, and
+      // doing both as a read followed by a write lets two isolates admit twice the
+      // ceiling. An unparseable `Origin` header is passed as an empty string, which
+      // matches no allow-list entry, so a malformed header fails closed.
+      const rawOrigin = request.headers.get('Origin');
+      const headerOrigin = rawOrigin === null || rawOrigin.trim().length === 0
+        ? null
+        : (extractOrigin(rawOrigin.trim()) ?? '');
+      const quota = await callRpc(env, 'consume_site_quota', {
+        p_api_key: apiKey,
+        p_now_ms: Date.now(),
+        p_origin: extractOrigin(validated.url),
+        p_header_origin: headerOrigin,
+      });
+      if (quota.found !== true) return json(401, { error: 'Unauthorized' });
+      if (quota.forbidden === true) return json(403, { error: 'Forbidden origin' });
+      if (quota.allowed !== true) {
+        return json(429, { error: 'Quota exceeded' }, {
+          'Retry-After': String(typeof quota.retry_after_seconds === 'number' ? quota.retry_after_seconds : 1),
+          'X-Quota-Limit': String(typeof quota.limit === 'number' ? quota.limit : 0),
+          'X-Quota-Remaining': '0',
         });
-        if (!patch.ok) return json(500, { error: 'Internal server error' });
       }
 
-      const siteId = site.id;
-      const upsert = await fetch(`${base}/rest/v1/navigation_maps?on_conflict=site_id,url`, {
+      const siteId = String(quota.id);
+      const upsert = await fetch(`${supabaseBase(env)}/rest/v1/navigation_maps?on_conflict=site_id,url`, {
         method: 'POST',
-        headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=minimal' },
+        headers: { ...supabaseHeaders(env), Prefer: 'resolution=merge-duplicates,return=minimal' },
         body: JSON.stringify({ site_id: siteId, url: validated.url, payload: validated }),
       });
       if (!upsert.ok) return json(500, { error: 'Internal server error' });

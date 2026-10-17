@@ -38,6 +38,119 @@ const billingRequest = (body, signature = stripeSignature(body), env = workerEnv
   body
 }, env);
 
+/**
+ * A stand-in for PostgREST's `/rest/v1/rpc` surface, holding the same contract the
+ * schema's three functions implement: a duplicate event id changes nothing, a
+ * quota charge is decided against the row, and a claim is consumed once. The SQL
+ * itself is executed against a real PostgreSQL cluster in
+ * `supabase-schema.spec.mjs`; this exists so the Worker's own status-code mapping is
+ * testable without a database, and it is deliberately small rather than clever.
+ * @param {{sites?: any[], lookupFails?: boolean}} [options]
+ */
+function fakeSupabase(options = {}) {
+  /** @type {Map<string, any>} */
+  const sites = new Map((options.sites ?? []).map(site => [site.id, { allowed_origins: ['*'], max_events_per_window: null, window_seconds: null, window_start_ms: null, event_count: 0, active: true, ...site }]));
+  /** @type {Set<string>} */
+  const events = new Set();
+  /** @type {Map<string, {tenant_id: string, api_key: string, expires_at: number}>} */
+  const claims = new Map();
+  /** @type {{url: string, init: RequestInit}[]} */
+  const calls = [];
+  const lookupFails = { value: options.lookupFails === true };
+  /** Set to make the webhook function answer 500, which is a transaction that aborted. */
+  const failApply = { value: false };
+
+  /** @param {any} body */
+  const consumeQuota = body => {
+    const site = [...sites.values()].find(candidate => candidate.api_key === body.p_api_key && candidate.active !== false);
+    if (!site) return { found: false };
+    const allowed = site.allowed_origins ?? ['*'];
+    const headerRefused = body.p_header_origin !== null && body.p_header_origin !== undefined && !allowed.includes(body.p_header_origin);
+    if (!allowed.includes('*') && (!body.p_origin || !allowed.includes(body.p_origin) || headerRefused)) {
+      return { found: true, id: site.id, forbidden: true, allowed: false, allowed_origins: allowed };
+    }
+    if (site.max_events_per_window === null || site.max_events_per_window === undefined) {
+      return { found: true, id: site.id, forbidden: false, allowed: true, limit: null, remaining: null, retry_after_seconds: 0, allowed_origins: allowed };
+    }
+    const limit = site.max_events_per_window;
+    const windowSeconds = site.window_seconds || 3600;
+    const windowMs = windowSeconds * 1000;
+    if (limit === 0) return { found: true, id: site.id, forbidden: false, allowed: false, limit: 0, remaining: 0, retry_after_seconds: windowSeconds, allowed_origins: allowed };
+    const active = Number.isFinite(site.window_start_ms) && site.window_start_ms > 0 && body.p_now_ms - site.window_start_ms < windowMs;
+    const windowStart = active ? site.window_start_ms : body.p_now_ms;
+    const consumed = active ? site.event_count : 0;
+    if (consumed >= limit) {
+      return { found: true, id: site.id, forbidden: false, allowed: false, limit, remaining: 0, retry_after_seconds: Math.max(1, Math.ceil((windowStart + windowMs - body.p_now_ms) / 1000)), allowed_origins: allowed };
+    }
+    site.window_start_ms = windowStart;
+    site.event_count = consumed + 1;
+    return { found: true, id: site.id, forbidden: false, allowed: true, limit, remaining: limit - consumed - 1, retry_after_seconds: 0, allowed_origins: allowed };
+  };
+
+  /** @param {any} body */
+  const applyWebhook = body => {
+    if (body.p_event_id) {
+      if (events.has(body.p_event_id)) return { duplicate: true };
+      events.add(body.p_event_id);
+    }
+    if (!body.p_site_id) return { duplicate: false, ignored: true };
+    const existing = sites.get(body.p_site_id);
+    if (!existing && !body.p_api_key) return { duplicate: false, tenant_id: body.p_site_id, missing: true, api_key: null };
+    const site = existing ?? { id: body.p_site_id, api_key: body.p_api_key, allowed_origins: ['*'], max_events_per_window: null, window_seconds: null, window_start_ms: null, event_count: 0, active: true };
+    if (body.p_api_key) site.api_key = body.p_api_key;
+    if (body.p_allowed_origins) site.allowed_origins = body.p_allowed_origins;
+    if (body.p_max_events_per_window !== null && body.p_max_events_per_window !== undefined) site.max_events_per_window = body.p_max_events_per_window;
+    if (body.p_window_seconds !== null && body.p_window_seconds !== undefined) site.window_seconds = body.p_window_seconds;
+    if (body.p_active !== null && body.p_active !== undefined) site.active = body.p_active;
+    sites.set(site.id, site);
+    if (body.p_session_id && body.p_claim_expires_at) {
+      claims.set(body.p_session_id, { tenant_id: site.id, api_key: site.api_key, expires_at: Date.parse(body.p_claim_expires_at) });
+    }
+    return { duplicate: false, tenant_id: site.id, api_key: site.api_key };
+  };
+
+  /** @param {any} body */
+  const claimSession = body => {
+    const found = claims.get(body.p_session_id);
+    claims.delete(body.p_session_id);
+    if (!found || found.expires_at <= Date.now()) return { ok: false };
+    return { ok: true, tenant_id: found.tenant_id, api_key: found.api_key };
+  };
+
+  const handlers = { apply_stripe_webhook: applyWebhook, consume_site_quota: consumeQuota, claim_checkout_session: claimSession };
+
+  /** @type {typeof fetch} */
+  const fetchImpl = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, init });
+    const rpc = /\/rest\/v1\/rpc\/([a-z_]+)$/.exec(url);
+    if (rpc) {
+      if (rpc[1] === 'apply_stripe_webhook' && failApply.value) return new Response('transaction aborted', { status: 500 });
+      const handler = /** @type {Record<string, (body: any) => any>} */ (handlers)[rpc[1]];
+      return Response.json(handler(JSON.parse(String(init.body))));
+    }
+    if (url.includes('select=id,api_key')) {
+      if (lookupFails.value) return new Response('upstream failure', { status: 500 });
+      const id = /id=eq\.([^&]+)/.exec(url)?.[1] ?? '';
+      const site = sites.get(decodeURIComponent(id));
+      return Response.json(site ? [{ id: site.id, api_key: site.api_key }] : []);
+    }
+    return new Response(null, { status: 201 });
+  };
+
+  return {
+    sites,
+    events,
+    claims,
+    calls,
+    lookupFails,
+    failApply,
+    fetch: fetchImpl,
+    /** @param {string} id */
+    site: id => sites.get(id)
+  };
+}
+
 test('DOM crawler maps semantic roles, stable selectors, select options and excludes control values', async ({ page }) => {
   await page.setContent(`<!doctype html><label for="q">Search</label><input id="q" type="search" value="private-current-value"><div role="textbox" aria-label="Notes"></div><div contenteditable="true" aria-label="Editor"></div><a href="/next">Next</a><div role="link" aria-label="Settings"></div><div role="tab" aria-label="Billing"></div><div role="checkbox" aria-label="Agree"></div><div role="switch" aria-label="Enabled"></div><button id="volatile" data-navi-id="navi-stable">Stable</button><select aria-label="Plan"><option value="">Choose one</option><optgroup disabled><option value="hidden">Hidden</option></optgroup><option value="pro">Premium plan</option></select>`);
   await page.addScriptTag({ content: crawlerScript });
@@ -85,12 +198,9 @@ test('adapter discovers and executes with settlement on a page that has no Navi 
 
 test('Worker sitemap endpoint enforces route, bearer auth, JSON and schema contracts', async () => {
   const originalFetch = globalThis.fetch;
-  /** @type {{url: string, init: RequestInit}[]} */
-  const calls = [];
-  globalThis.fetch = async (input, init = {}) => {
-    calls.push({ url: String(input), init });
-    return String(input).includes('/sites?') ? Response.json([{ id: 'site-1' }]) : new Response(null, { status: 201 });
-  };
+  const supabase = fakeSupabase({ sites: [{ id: 'site-1', api_key: 'api-key' }] });
+  const calls = supabase.calls;
+  globalThis.fetch = supabase.fetch;
   try {
     let response = await workerRequest('https://worker.example/wrong', { method: 'POST' });
     expect(response.status).toBe(404);
@@ -110,7 +220,10 @@ test('Worker sitemap endpoint enforces route, bearer auth, JSON and schema contr
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, url: validPayload.url, targets: 1 });
     expect(calls).toHaveLength(2);
-    expect(calls[0].url).toContain('/sites?api_key=eq.api-key&active=eq.true&select=id,allowed_origins,max_events_per_window,window_seconds,window_start_ms,event_count');
+    expect(calls[0].url).toContain('/rest/v1/rpc/consume_site_quota');
+    // The tenant is resolved, charged and origin-checked by the database, so the
+    // isolate sends the key and the two origins rather than a read it could race.
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({ p_api_key: 'api-key', p_origin: 'https://shop.example', p_header_origin: null });
     expect(calls[1].url).toContain('/navigation_maps?on_conflict=site_id,url');
     expect(calls[1].init.method).toBe('POST');
   } finally {
@@ -120,11 +233,10 @@ test('Worker sitemap endpoint enforces route, bearer auth, JSON and schema contr
 
 test('Worker sitemap endpoint enforces per-tenant allowed_origins with HTTP 403 and accepts matching or wildcard origins with HTTP 200', async () => {
   const originalFetch = globalThis.fetch;
-  /** @type {string[] | undefined} */
-  let allowedOrigins = ['https://app.example.com'];
-  globalThis.fetch = async input => (String(input).includes('/sites?')
-    ? Response.json([{ id: 'site-1', allowed_origins: allowedOrigins }])
-    : new Response(null, { status: 201 }));
+  const supabase = fakeSupabase({ sites: [{ id: 'site-1', api_key: 'api-key', allowed_origins: ['https://app.example.com'] }] });
+  const site = supabase.site('site-1');
+  if (!site) throw new Error('fixture site missing');
+  globalThis.fetch = supabase.fetch;
   try {
     const headers = { Authorization: 'Bearer api-key' };
     // Payload URL outside allowed_origins -> 403
@@ -148,7 +260,7 @@ test('Worker sitemap endpoint enforces per-tenant allowed_origins with HTTP 403 
     expect(await response.json()).toEqual({ error: 'Forbidden origin' });
 
     // Wildcard allowed_origins -> 200 for any origin
-    allowedOrigins = ['*'];
+    site.allowed_origins = ['*'];
     response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
     expect(response.status).toBe(200);
   } finally {
@@ -158,30 +270,25 @@ test('Worker sitemap endpoint enforces per-tenant allowed_origins with HTTP 403 
 
 test('Worker sitemap endpoint meters a site against max_events_per_window, persists the window and rolls it over', async () => {
   const originalFetch = globalThis.fetch;
-  /** @type {{id: string, max_events_per_window: number | null, window_seconds: number, window_start_ms: number, event_count: number}} */
-  const site = { id: 'site-1', max_events_per_window: 2, window_seconds: 60, window_start_ms: Date.now(), event_count: 1 };
-  /** @type {{url: string, init: RequestInit}[]} */
-  const calls = [];
-  globalThis.fetch = async (input, init = {}) => {
-    calls.push({ url: String(input), init });
-    if (String(input).includes('/sites?')) return Response.json([{ ...site }]);
-    return new Response(null, { status: init.method === 'PATCH' ? 204 : 201 });
-  };
+  const supabase = fakeSupabase({ sites: [{ id: 'site-1', api_key: 'api-key', max_events_per_window: 2, window_seconds: 60, window_start_ms: Date.now(), event_count: 1 }] });
+  const site = supabase.site('site-1');
+  if (!site) throw new Error('fixture site missing');
+  const calls = supabase.calls;
+  globalThis.fetch = supabase.fetch;
   /** @param {string} fragment @returns {{url: string, init: RequestInit} | undefined} */
   const call = fragment => calls.find(entry => entry.url.includes(fragment));
   try {
     const headers = { Authorization: 'Bearer api-key' };
-    // One event of a ceiling of two: the request is accepted, and the charged
-    // state is written back to the site row rather than held in the isolate.
+    // One event of a ceiling of two: the charge happens inside the function, under
+    // a row lock, so the isolate holds no counter it could lose to another one.
     let response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, url: validPayload.url, targets: 1 });
-    const charged = call('/sites?id=eq.site-1');
-    expect(charged?.init.method).toBe('PATCH');
-    expect(JSON.parse(String(charged?.init.body))).toEqual({ window_start_ms: site.window_start_ms, event_count: 2 });
+    expect(calls.filter(entry => entry.url.includes('/rpc/consume_site_quota'))).toHaveLength(1);
+    expect(site.event_count).toBe(2);
 
-    // The ceiling is now reached: the next event is refused before the map write.
-    site.event_count = 2;
+    // The ceiling is now reached: the next event is refused before the map write,
+    // and the refusal carries the window the database is holding the site in.
     calls.length = 0;
     response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
     expect(response.status).toBe(429);
@@ -191,7 +298,6 @@ test('Worker sitemap endpoint meters a site against max_events_per_window, persi
     expect(response.headers.get('x-quota-limit')).toBe('2');
     expect(response.headers.get('x-quota-remaining')).toBe('0');
     expect(call('/navigation_maps')).toBeUndefined();
-    expect(call('/sites?id=eq.site-1')).toBeUndefined();
 
     // The window has expired: the next accepted event opens a fresh one at 1 rather
     // than carrying the exhausted count across the boundary.
@@ -201,17 +307,19 @@ test('Worker sitemap endpoint meters a site against max_events_per_window, persi
     calls.length = 0;
     response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
     expect(response.status).toBe(200);
-    const rolled = JSON.parse(String(call('/sites?id=eq.site-1')?.init.body));
-    expect(rolled.event_count).toBe(1);
-    expect(rolled.window_start_ms).toBeGreaterThan(expiredStart);
+    expect(site.event_count).toBe(1);
+    expect(site.window_start_ms).toBeGreaterThan(expiredStart);
     expect(call('/navigation_maps')?.init.method).toBe('POST');
 
-    // An unmetered site (no ceiling at all) still ingests without a quota write.
+    // An unmetered site (no ceiling at all) still ingests, and the function leaves
+    // its window untouched because there is nothing to charge.
     site.max_events_per_window = null;
+    site.event_count = 0;
     calls.length = 0;
     response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
     expect(response.status).toBe(200);
-    expect(call('/sites?id=eq.site-1')).toBeUndefined();
+    expect(site.event_count).toBe(0);
+    expect(call('/navigation_maps')?.init.method).toBe('POST');
 
     // A ceiling of exactly 0 is how a revoked subscription is stored: it is a
     // suspension, not an absence of metering, and it refuses before the map write.
@@ -229,53 +337,9 @@ test('Worker sitemap endpoint meters a site against max_events_per_window, persi
 
 test('Worker billing webhook verifies the Stripe signature, provisions a site and suspends it on cancellation', async () => {
   const originalFetch = globalThis.fetch;
-  /** @type {{url: string, init: RequestInit}[]} */
-  const calls = [];
-  /** @type {string} */
-  let existingApiKey = '';
-  let lookupFails = false;
-  // Stands in for the `webhook_events` primary key: the insert is the claim, and a
-  // conflict comes back as an empty representation, exactly as PostgREST answers
-  // `resolution=ignore-duplicates`.
-  const claimedEvents = new Set();
-  /** @type {Map<string, {session_id: string, tenant_id: string, api_key: string, expires_at_ms: number}>} */
-  const checkoutClaims = new Map();
-  globalThis.fetch = async (input, init = {}) => {
-    calls.push({ url: String(input), init });
-    if (String(input).includes('/rest/v1/webhook_events')) {
-      if (init.method === 'DELETE') {
-        const deletedId = /event_id=eq\.([^&]+)/.exec(String(input))?.[1];
-        if (deletedId) claimedEvents.delete(deletedId);
-        return new Response(null, { status: 204 });
-      }
-      const { event_id: eventId } = JSON.parse(String(init.body));
-      if (claimedEvents.has(eventId)) return Response.json([]);
-      claimedEvents.add(eventId);
-      return Response.json([{ event_id: eventId }], { status: 201 });
-    }
-    if (String(input).includes('/rest/v1/checkout_claims')) {
-      if (init.method === 'POST') {
-        const claim = JSON.parse(String(init.body));
-        checkoutClaims.set(claim.session_id, claim);
-        return new Response(null, { status: 201 });
-      }
-      if (init.method === 'DELETE') {
-        const sessionMatch = /session_id=eq\.([^&]+)/.exec(String(input));
-        if (!sessionMatch) return new Response(null, { status: 204 });
-        const sessionId = decodeURIComponent(sessionMatch[1]);
-        const claim = checkoutClaims.get(sessionId);
-        checkoutClaims.delete(sessionId);
-        if (!claim || claim.expires_at_ms <= Date.now()) return Response.json([]);
-        return Response.json([claim]);
-      }
-    }
-    if (String(input).includes('select=id,api_key')) {
-      return lookupFails ? new Response('upstream failure', { status: 500 }) : Response.json(existingApiKey ? [{ id: 'acme', api_key: existingApiKey }] : []);
-    }
-    if (String(input).includes('on_conflict=id')) return Response.json([{ id: 'acme' }], { status: 201 });
-    if (String(input).includes('/sites?id=eq.')) return new Response(null, { status: 204 });
-    return new Response(null, { status: 201 });
-  };
+  const supabase = fakeSupabase();
+  const calls = supabase.calls;
+  globalThis.fetch = supabase.fetch;
   const checkout = JSON.stringify({
     id: 'evt_1',
     type: 'checkout.session.completed',
@@ -317,21 +381,27 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
     expect(provisioned.ok).toBe(true);
     expect(provisioned.tenant_id).toBe('acme');
     expect(provisioned.api_key).toMatch(/^navi_live_[0-9a-f]{64}$/);
-    const upsert = calls.find(call => call.url.includes('on_conflict=id'));
-    expect(upsert?.init.method).toBe('POST');
-    expect(String(/** @type {any} */ (upsert?.init.headers).Prefer)).toContain('resolution=merge-duplicates,return=representation');
-    expect(JSON.parse(String(upsert?.init.body))).toEqual({
-      id: 'acme',
-      api_key: provisioned.api_key,
-      allowed_origins: ['https://app.example.com', 'https://admin.example.com'],
-      max_events_per_window: 50,
-      window_seconds: 600,
-      active: true
+    // One call, not four: the ledger claim, the tenant upsert and the checkout
+    // claim commit together, so no request can be answered between them.
+    const apply = calls.find(call => call.url.includes('/rpc/apply_stripe_webhook'));
+    expect(apply?.init.method).toBe('POST');
+    const applyBody = JSON.parse(String(apply?.init.body));
+    expect(applyBody).toMatchObject({
+      p_event_id: 'evt_1',
+      p_site_id: 'acme',
+      p_api_key: provisioned.api_key,
+      p_allowed_origins: ['https://app.example.com', 'https://admin.example.com'],
+      p_max_events_per_window: 50,
+      p_window_seconds: 600,
+      p_active: true,
+      p_session_id: 'cs_test'
     });
-    expect(
-      calls.some(call => call.url.includes('/rest/v1/webhook_events?received_at=lt.') && call.init.method === 'DELETE'),
-      'Worker must prune expired webhook_events older than 24h'
-    ).toBe(true);
+    // The claim is 15 minutes out, and it is written by the same statement as the
+    // tenant, so a handed-out key always belongs to a site that exists.
+    const claimTtl = Date.parse(applyBody.p_claim_expires_at) - Date.now();
+    expect(claimTtl).toBeGreaterThan(840_000);
+    expect(claimTtl).toBeLessThanOrEqual(900_000);
+    expect(supabase.sites.size).toBe(1);
 
     // Self-serve post-checkout claim: first GET /v1/billing/session?session_id=cs_test
     // returns 200 with Cache-Control: no-store and the provisioned api_key; second returns 404.
@@ -354,23 +424,25 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
     response = await billingRequest(checkout);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, duplicate: true });
-    expect(calls.some(call => call.url.includes('on_conflict=id')), 'a duplicate must not upsert the site').toBe(false);
+    expect(calls.filter(call => call.url.includes('/rpc/apply_stripe_webhook'))).toHaveLength(1);
+    expect(supabase.sites.size, 'a duplicate must not create a second tenant').toBe(1);
 
-    // A delivery that failed is one Stripe will resend, so the claim is withdrawn:
-    // the retry provisions instead of being swallowed as a duplicate.
-    lookupFails = true;
+    // A delivery that failed is one Stripe will resend. Because the claim and the
+    // tenant write are one transaction, the failure rolled the claim back: there is
+    // nothing to withdraw, and the retry is processed rather than swallowed.
+    supabase.failApply.value = true;
     const retry = JSON.stringify({ id: 'evt_retry', type: 'checkout.session.completed', data: { object: { id: 'cs_retry', client_reference_id: 'acme', metadata: {} } } });
     calls.length = 0;
     response = await billingRequest(retry);
     expect(response.status).toBe(500);
-    expect(calls.some(call => call.url.includes('/rest/v1/webhook_events') && call.init.method === 'DELETE'), 'a failed delivery must release its claim').toBe(true);
-    lookupFails = false;
+    expect(supabase.events.has('evt_retry'), 'a rolled-back delivery must not leave its event id claimed').toBe(false);
+    expect(calls.some(call => call.url.includes('/rest/v1/webhook_events')), 'no separate ledger request remains to withdraw').toBe(false);
+    supabase.failApply.value = false;
     response = await billingRequest(retry);
     expect(response.status, 'the resend must be processed, not treated as a duplicate').toBe(200);
     expect((await response.json()).ok).toBe(true);
 
     // An update that carries no api_key keeps the credential already embedded.
-    existingApiKey = provisioned.api_key;
     const update = JSON.stringify({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1', metadata: { tenant_id: 'acme', max_events_per_window: '75' } } } });
     response = await billingRequest(update);
     expect(response.status).toBe(200);
@@ -378,12 +450,12 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
 
     // A failed key lookup must not fall through to minting a replacement: that
     // would rotate the credential a live page is already embedding.
-    lookupFails = true;
+    supabase.lookupFails.value = true;
     calls.length = 0;
     response = await billingRequest(update);
     expect(response.status).toBe(500);
-    expect(calls.some(call => call.url.includes('on_conflict=id')), 'a failed lookup must not write a new key').toBe(false);
-    lookupFails = false;
+    expect(calls.some(call => call.url.includes('/rpc/apply_stripe_webhook')), 'a failed lookup must not write a new key').toBe(false);
+    supabase.lookupFails.value = false;
 
     // A handled event with no tenant anywhere in it is a caller error, not a 200.
     const missing = JSON.stringify({ type: 'checkout.session.completed', data: { object: { metadata: {} } } });
@@ -398,14 +470,17 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
 
     // Cancellation zeroes the ceiling instead of deleting the row, so ingestion is
     // a deterministic 429 rather than a 401 the tenant would read as a bad key.
-    const cancellation = JSON.stringify({ type: 'customer.subscription.deleted', data: { object: { id: 'sub_1', metadata: { tenant_id: 'acme' } } } });
+    const cancellation = JSON.stringify({ id: 'evt_suspend', type: 'customer.subscription.deleted', data: { object: { id: 'sub_1', metadata: { tenant_id: 'acme' } } } });
     calls.length = 0;
     response = await billingRequest(cancellation);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, tenant_id: 'acme', status: 'suspended' });
-    const patch = calls.find(call => call.url.includes('/sites?id=eq.acme'));
-    expect(patch?.init.method).toBe('PATCH');
-    expect(JSON.parse(String(patch?.init.body))).toEqual({ max_events_per_window: 0 });
+    // The cancellation carries no key and no origin list: the function preserves
+    // both and only zeroes the ceiling, so the embedded credential keeps working.
+    const suspension = JSON.parse(String(calls.find(call => call.url.includes('/rpc/apply_stripe_webhook'))?.init.body));
+    expect(suspension).toMatchObject({ p_event_id: 'evt_suspend', p_site_id: 'acme', p_api_key: null, p_allowed_origins: null, p_max_events_per_window: 0 });
+    expect(supabase.site('acme')?.api_key).toBe(provisioned.api_key);
+    expect(supabase.site('acme')?.max_events_per_window).toBe(0);
   } finally {
     globalThis.fetch = originalFetch;
   }

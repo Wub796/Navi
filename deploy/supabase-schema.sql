@@ -7,6 +7,14 @@
 -- The Worker talks to PostgREST with the service-role key, which bypasses row-level
 -- security. Nothing else may read these tables: the anon key is public by definition
 -- (it ships in browser code) and a tenant's api_key must never be reachable with it.
+--
+-- The three functions at the end are the whole write path. They exist because
+-- PostgREST cannot span several REST calls in one transaction: a claim, a site
+-- upsert and a checkout claim issued as three requests can be interleaved by two
+-- isolates, and a crash between them leaves an event id claimed by an event that
+-- never landed. Each function is one transaction, so a duplicate delivery, a
+-- concurrent quota charge and a one-time key read are decided by the database
+-- rather than by whoever called it first.
 
 create table if not exists public.sites (
   id text primary key,
@@ -55,23 +63,45 @@ create table if not exists public.navigation_maps (
 create unique index if not exists idx_navigation_maps_site_url on public.navigation_maps (site_id, url);
 
 -- Stripe retries a delivery it did not see acknowledged, and a retry must not
--- provision or suspend a site twice. The primary key is the ledger: the Worker
--- inserts with `on_conflict=event_id` and `resolution=ignore-duplicates`, so the
--- second delivery changes no row and is answered `{ ok, duplicate: true }`.
+-- provision or suspend a site twice. The primary key is the ledger, and
+-- `apply_stripe_webhook` inserts into it with `on conflict (event_id) do nothing`
+-- inside the same transaction as the tenant write, so the second delivery changes
+-- no row and is answered `{ ok, duplicate: true }`.
 create table if not exists public.webhook_events (
   event_id text primary key,
   received_at timestamptz not null default now()
 );
 
 -- One-time post-checkout API-key claims (`GET /v1/billing/session?session_id=cs_...`).
--- Written on `checkout.session.completed` with a 15-minute expiry (`expires_at_ms`)
--- and consumed on the first valid read via `DELETE ...?session_id=eq.<id>&expires_at_ms=gt.<now>`.
+-- Written by `apply_stripe_webhook` with a 15-minute expiry and consumed atomically
+-- by `claim_checkout_session`, which deletes the row it returns.
 create table if not exists public.checkout_claims (
   session_id text primary key,
   tenant_id text not null,
   api_key text not null,
-  expires_at_ms bigint not null
+  expires_at timestamptz not null
 );
+
+-- A claim written by an earlier release carries a bigint millisecond expiry. Adding
+-- the timestamptz column beside it and backfilling keeps that deployment's unclaimed
+-- sessions readable through the upgrade instead of silently expiring them at epoch 0.
+alter table public.checkout_claims add column if not exists expires_at timestamptz;
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'checkout_claims' and column_name = 'expires_at_ms'
+  ) then
+    execute 'update public.checkout_claims set expires_at = to_timestamp(expires_at_ms / 1000.0) where expires_at is null and expires_at_ms is not null';
+  end if;
+end $$;
+update public.checkout_claims set expires_at = now() where expires_at is null;
+alter table public.checkout_claims alter column expires_at set not null;
+alter table public.checkout_claims drop column if exists expires_at_ms;
+
+-- Every lookup is by session id or by expiry, and both are on the hot path of a
+-- claim read and of the prune that runs inside every webhook delivery.
+create index if not exists idx_checkout_claims_expires_at on public.checkout_claims (expires_at);
 
 alter table public.sites enable row level security;
 alter table public.navigation_maps enable row level security;
@@ -116,3 +146,304 @@ create policy webhook_events_service_role_all on public.webhook_events
 drop policy if exists checkout_claims_service_role_all on public.checkout_claims;
 create policy checkout_claims_service_role_all on public.checkout_claims
   for all to service_role using (true) with check (true);
+
+-- ---------------------------------------------------------------------------
+-- Atomic write path
+-- ---------------------------------------------------------------------------
+-- All three are SECURITY DEFINER with a pinned search_path: they run as their
+-- owner (the role that applied this file) with every unqualified name resolved in
+-- `public`, so a caller cannot redirect a table reference through its own
+-- search_path. EXECUTE is revoked from PUBLIC — which is where a function's
+-- execute privilege comes from by default — and granted to service_role alone.
+
+/**
+ * Apply one verified Stripe event: prune, claim, upsert the tenant, store the
+ * checkout claim, all in one transaction.
+ *
+ * `p_event_id` is the replay ledger key. When it is already present this returns
+ * `{ duplicate: true }` before touching a single tenant row, so a redelivery is
+ * a database decision rather than a race two isolates could win.
+ *
+ * `p_api_key` NULL means "keep the key this site already has": that is what a
+ * subscription update or a cancellation carries, and rotating a credential a live
+ * page is already embedding because the event omitted it is the bug this exists
+ * to prevent. A NULL key for a site that does not exist returns `{ missing: true }`
+ * rather than minting one — there is no tenant to provision, and a cancellation
+ * for an unknown id must not create a working credential.
+ *
+ * `p_site_id` NULL records the event id and nothing else, so an event this
+ * deployment ignores is still deduplicated on resend.
+ */
+create or replace function public.apply_stripe_webhook(
+  p_event_id text,
+  p_site_id text,
+  p_api_key text,
+  p_allowed_origins jsonb,
+  p_max_events integer,
+  p_window_seconds integer,
+  p_active boolean,
+  p_session_id text default null,
+  p_claim_expires_at timestamptz default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  existing_key text;
+  effective_key text;
+begin
+  -- Bounded ledger: the replay window is 300 seconds, so a row older than a day
+  -- cannot deduplicate anything and only makes the table grow.
+  delete from public.webhook_events where received_at < now() - interval '24 hours';
+  delete from public.checkout_claims where expires_at <= now();
+
+  if p_event_id is not null then
+    insert into public.webhook_events (event_id, received_at)
+    values (p_event_id, now())
+    on conflict (event_id) do nothing;
+    if not found then
+      return jsonb_build_object('duplicate', true);
+    end if;
+  end if;
+
+  if p_site_id is null then
+    return jsonb_build_object('duplicate', false, 'ignored', true);
+  end if;
+
+  select api_key into existing_key from public.sites where id = p_site_id;
+  if existing_key is null and p_api_key is null then
+    return jsonb_build_object('duplicate', false, 'tenant_id', p_site_id, 'missing', true, 'api_key', null);
+  end if;
+
+  insert into public.sites as site (
+    id, api_key, allowed_origins, max_events_per_window, window_seconds, active, updated_at
+  ) values (
+    p_site_id,
+    coalesce(p_api_key, existing_key),
+    coalesce(
+      (select array_agg(origin) from jsonb_array_elements_text(p_allowed_origins) as origins(origin)),
+      array['*']::text[]
+    ),
+    p_max_events,
+    p_window_seconds,
+    coalesce(p_active, true),
+    now()
+  )
+  on conflict (id) do update set
+    api_key = coalesce(p_api_key, site.api_key),
+    -- An event that carries no origin list leaves the tenant's allow-list alone;
+    -- coercing it to `['*']` on every update would silently widen a restriction.
+    allowed_origins = case
+      when p_allowed_origins is null then site.allowed_origins
+      else excluded.allowed_origins
+    end,
+    max_events_per_window = coalesce(p_max_events, site.max_events_per_window),
+    window_seconds = coalesce(p_window_seconds, site.window_seconds),
+    active = coalesce(p_active, site.active),
+    updated_at = now()
+  returning api_key into effective_key;
+
+  if p_session_id is not null and p_claim_expires_at is not null then
+    insert into public.checkout_claims (session_id, tenant_id, api_key, expires_at)
+    values (p_session_id, p_site_id, effective_key, p_claim_expires_at)
+    on conflict (session_id) do update set
+      tenant_id = excluded.tenant_id,
+      api_key = excluded.api_key,
+      expires_at = excluded.expires_at;
+  end if;
+
+  return jsonb_build_object(
+    'duplicate', false,
+    'tenant_id', p_site_id,
+    'api_key', effective_key
+  );
+end;
+$$;
+
+/**
+ * Charge one event against a site's window, under a row lock.
+ *
+ * A read-modify-write from two isolates both read the same `event_count` and both
+ * write `count + 1`, so a ceiling of 100 can admit far more than 100 events.
+ * `for update` serialises the charge on the site row: the second caller blocks,
+ * then reads the count the first one committed.
+ *
+ * The origin check happens here rather than after the charge so a request from a
+ * forbidden origin costs no quota. `p_origin` is the origin of the URL the tenant
+ * is storing, which is the only origin the payload itself attests to;
+ * `p_header_origin` is the request's `Origin` header, already normalised by the
+ * Worker. An empty string is "present but unparseable" and matches nothing.
+ */
+create or replace function public.consume_site_quota(
+  p_api_key text,
+  p_now_ms bigint,
+  p_origin text default null,
+  p_header_origin text default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  site public.sites;
+  effective_window_seconds integer;
+  window_ms bigint;
+  limit_count integer;
+  consumed integer;
+  window_start bigint;
+  retry_after integer;
+begin
+  select * into site
+    from public.sites
+   where api_key = p_api_key and active = true
+   for update;
+
+  if not found then
+    return jsonb_build_object('found', false);
+  end if;
+
+  if site.allowed_origins is not null
+     and array_length(site.allowed_origins, 1) is not null
+     and not ('*' = any (site.allowed_origins))
+     and (
+       p_origin is null
+       or not (p_origin = any (site.allowed_origins))
+       or (p_header_origin is not null and not (p_header_origin = any (site.allowed_origins)))
+     ) then
+    return jsonb_build_object(
+      'found', true,
+      'id', site.id,
+      'forbidden', true,
+      'allowed', false,
+      'allowed_origins', to_jsonb(site.allowed_origins)
+    );
+  end if;
+
+  -- NULL is unmetered: no ceiling was ever provisioned, so there is nothing to
+  -- charge and no window to roll.
+  if site.max_events_per_window is null then
+    return jsonb_build_object(
+      'found', true,
+      'id', site.id,
+      'forbidden', false,
+      'allowed', true,
+      'limit', null,
+      'remaining', null,
+      'retry_after_seconds', 0,
+      'allowed_origins', to_jsonb(site.allowed_origins)
+    );
+  end if;
+
+  limit_count := site.max_events_per_window;
+  effective_window_seconds := coalesce(nullif(site.window_seconds, 0), 3600);
+  window_ms := effective_window_seconds::bigint * 1000;
+
+  -- A ceiling of 0 is a suspension, not an absence of metering: it refuses with
+  -- the full window as its retry hint rather than being read as unmetered.
+  if limit_count = 0 then
+    return jsonb_build_object(
+      'found', true,
+      'id', site.id,
+      'forbidden', false,
+      'allowed', false,
+      'limit', 0,
+      'remaining', 0,
+      'retry_after_seconds', greatest(1, effective_window_seconds),
+      'allowed_origins', to_jsonb(site.allowed_origins)
+    );
+  end if;
+
+  if site.window_start_ms is not null
+     and site.window_start_ms > 0
+     and p_now_ms - site.window_start_ms < window_ms then
+    window_start := site.window_start_ms;
+    consumed := greatest(coalesce(site.event_count, 0), 0);
+  else
+    window_start := p_now_ms;
+    consumed := 0;
+  end if;
+
+  if consumed >= limit_count then
+    retry_after := greatest(1, ceil((window_start + window_ms - p_now_ms) / 1000.0)::integer);
+    return jsonb_build_object(
+      'found', true,
+      'id', site.id,
+      'forbidden', false,
+      'allowed', false,
+      'limit', limit_count,
+      'remaining', 0,
+      'retry_after_seconds', retry_after,
+      'allowed_origins', to_jsonb(site.allowed_origins)
+    );
+  end if;
+
+  update public.sites
+     set window_start_ms = window_start,
+         event_count = consumed + 1,
+         updated_at = now()
+   where id = site.id;
+
+  return jsonb_build_object(
+    'found', true,
+    'id', site.id,
+    'forbidden', false,
+    'allowed', true,
+    'limit', limit_count,
+    'remaining', greatest(limit_count - (consumed + 1), 0),
+    'retry_after_seconds', 0,
+    'allowed_origins', to_jsonb(site.allowed_origins)
+  );
+end;
+$$;
+
+/**
+ * Consume one post-checkout API-key claim, at most once.
+ *
+ * `delete ... returning` is the whole point: two simultaneous reads of the same
+ * session id both try to delete the row, the second blocks on the first's row
+ * lock, re-evaluates the predicate after the commit and deletes nothing. A read
+ * followed by a delete would hand the same key to both callers.
+ */
+create or replace function public.claim_checkout_session(p_session_id text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  claimed public.checkout_claims;
+begin
+  if p_session_id is null or length(btrim(p_session_id)) = 0 then
+    return jsonb_build_object('ok', false);
+  end if;
+
+  delete from public.checkout_claims where expires_at <= now();
+
+  delete from public.checkout_claims
+   where session_id = p_session_id and expires_at > now()
+  returning * into claimed;
+
+  if not found then
+    return jsonb_build_object('ok', false);
+  end if;
+
+  return jsonb_build_object(
+    'ok', true,
+    'tenant_id', claimed.tenant_id,
+    'api_key', claimed.api_key
+  );
+end;
+$$;
+
+-- EXECUTE is granted to PUBLIC on a new function, so revoking it is the step that
+-- makes these callable by the service role alone. `anon` ships in browser code and
+-- `authenticated` is every signed-in end user of a Supabase project; neither may
+-- charge a tenant's quota or read a provisioned key.
+revoke all on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.consume_site_quota(text, bigint, text, text) from public, anon, authenticated;
+revoke all on function public.claim_checkout_session(text) from public, anon, authenticated;
+
+grant execute on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz) to service_role;
+grant execute on function public.consume_site_quota(text, bigint, text, text) to service_role;
+grant execute on function public.claim_checkout_session(text) to service_role;

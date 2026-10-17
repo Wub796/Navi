@@ -1,14 +1,14 @@
 {
-  "recordedAt": "2026-10-17T17:06:29.571Z",
+  "recordedAt": "2026-10-17T19:06:50.156Z",
   "compose": "docker-compose.yml",
   "architecture": "linux/arm64",
-  "imageId": "sha256:60212743a49d41b8d47530147317b1335758a9fac3f41eb148d2a71ac5c50769",
+  "imageId": "sha256:3f8c81ad9ee7780f12bbe3f9b8989c6674b416f295d9a118772a384ff93e1bc4",
   "ok": true,
   "checks": [
     {
       "check": "image",
       "ok": true,
-      "detail": "sha256:60212743a49d41b8d47530147317b1335758a9fac3f41eb148d2a71ac5c50769; linux/arm64; user pwuser:pwuser"
+      "detail": "sha256:3f8c81ad9ee7780f12bbe3f9b8989c6674b416f295d9a118772a384ff93e1bc4; linux/arm64; user pwuser:pwuser"
     },
     {
       "check": "compose-health",
@@ -23,7 +23,7 @@
     {
       "check": "chromium-sandbox",
       "ok": true,
-      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"126\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
+      "detail": "{\"ok\":true,\"node\":\"v22.23.3\",\"uid\":1000,\"browser\":\"156.0.8078.4\",\"architecture\":\"arm64\",\"diagnostics\":{\"ownUserNamespace\":\"user:[4026531837]\",\"ownFilters\":1,\"browserSpawnedBy\":\"/opt/playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell\",\"browserArgvLength\":45,\"renderers\":[{\"pid\":\"127\",\"userNamespace\":\"user:[4026532959]\",\"pidNamespace\":\"pid:[4026532827]\",\"filters\":2,\"nestedPid\":true}]}}"
     },
     {
       "check": "lifecycle-volume",
@@ -83,7 +83,7 @@
     {
       "check": "navi-host-crash-recovery",
       "ok": true,
-      "detail": "SIGKILL exit 137 (SIGKILL sent to navi-host pid 6 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es); then SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es)): navi_host_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_host_unclean_shutdowns_total=0 and consumes marker; telemetry and audit retained"
+      "detail": "SIGKILL exit 137 (SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es); then SIGKILL sent to navi-host pid 7 (node server/index.js --host 0.0.0.0 --port 3000 --store /data/telemetry.db) among 1 match(es)): navi_host_unclean_shutdowns_total=1 after restart and container recreation; graceful stop exit 0 publishes marker, next boot navi_host_unclean_shutdowns_total=0 and consumes marker; telemetry and audit retained"
     },
     {
       "check": "navi-mcp-crash-recovery",
@@ -93,7 +93,7 @@
     {
       "check": "containment-default-deny",
       "ok": true,
-      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T17:06:29.180Z\",\"session_id\":\"4b23e8ba-b469-4522-a903-e55c25af68a5\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
+      "detail": "metadata destination refused with ERR_BLOCKED_BY_CONTAINMENT and audited as {\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T19:06:49.782Z\",\"session_id\":\"a41ea480-8929-47eb-8b0d-81a4e142fa66\",\"target_url\":\"http://169.254.169.254/latest/meta-data/\",\"resolved_ip\":\"169.254.169.254\",\"category\":\"metadata_endpoint\",\"action\":\"BLOCKED\"}, without any local-network override"
     }
   ]
 }
