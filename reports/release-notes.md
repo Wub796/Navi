@@ -58,20 +58,20 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 
 ### Verification
 
-Provenance: `evidence.revision` is `4dc26381d21217d30bb6d0c0df4f84ce5da20acc` and `evidence.sourceTree` is `sha256:e5528dade055ba276525b10a367a9616d8f382426349bff58329be70732d376f` — a digest of every tracked
+Provenance: `evidence.revision` is `4b6da8eb096ae78aff815cfb400d12876d70399a` and `evidence.sourceTree` is `sha256:320151565912bc6b21f25da957cfbfef109629647a4998b3b3f896d545e0238b` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-17T22:57:32.230Z: **11/11 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-17T23:06:28.197Z: **11/11 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 6 generated path(s) |
+| `git-clean` | pass | clean apart from 0 generated path(s) |
 | `version-tag` | pass | v0.6.5 does not exist yet (create it with --tag once this gate is green) |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
