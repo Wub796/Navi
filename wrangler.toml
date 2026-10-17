@@ -1,0 +1,18 @@
+# Cloudflare Worker deployment for the edge ingestion and billing surface.
+#
+#   wrangler deploy            # publish navi-edge
+#   wrangler tail              # stream request logs
+#
+# Only `src/` is bundled, so this file stays out of package.json's `files`
+# allowlist and never rides inside a published tarball.
+name = "navi-edge"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+
+# Credentials are secrets, not configuration — set them per environment so no key
+# is ever committed beside the code that reads it. The Worker needs no Node
+# compatibility flag: it imports only Web Crypto, URL, TextEncoder and fetch.
+#
+#   wrangler secret put SUPABASE_URL
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+#   wrangler secret put STRIPE_WEBHOOK_SECRET   # absent => the webhook answers 503
