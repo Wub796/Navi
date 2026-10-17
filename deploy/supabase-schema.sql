@@ -63,15 +63,27 @@ create table if not exists public.webhook_events (
   received_at timestamptz not null default now()
 );
 
+-- One-time post-checkout API-key claims (`GET /v1/billing/session?session_id=cs_...`).
+-- Written on `checkout.session.completed` with a 15-minute expiry (`expires_at_ms`)
+-- and consumed on the first valid read via `DELETE ...?session_id=eq.<id>&expires_at_ms=gt.<now>`.
+create table if not exists public.checkout_claims (
+  session_id text primary key,
+  tenant_id text not null,
+  api_key text not null,
+  expires_at_ms bigint not null
+);
+
 alter table public.sites enable row level security;
 alter table public.navigation_maps enable row level security;
 alter table public.webhook_events enable row level security;
+alter table public.checkout_claims enable row level security;
 
 -- Default deny: neither public role may touch these tables at all. The Worker is
 -- unaffected because the service-role key bypasses RLS.
 revoke all on table public.sites from anon, authenticated;
 revoke all on table public.navigation_maps from anon, authenticated;
 revoke all on table public.webhook_events from anon, authenticated;
+revoke all on table public.checkout_claims from anon, authenticated;
 
 -- Granted explicitly rather than inherited from the project's default privileges:
 -- a table created from a SQL editor session that has none would otherwise leave the
@@ -79,6 +91,7 @@ revoke all on table public.webhook_events from anon, authenticated;
 grant all on table public.sites to service_role;
 grant all on table public.navigation_maps to service_role;
 grant all on table public.webhook_events to service_role;
+grant all on table public.checkout_claims to service_role;
 do $$
 begin
   -- Guarded because a table that predates the identity column has no sequence.
@@ -98,4 +111,8 @@ create policy navigation_maps_service_role_all on public.navigation_maps
 
 drop policy if exists webhook_events_service_role_all on public.webhook_events;
 create policy webhook_events_service_role_all on public.webhook_events
+  for all to service_role using (true) with check (true);
+
+drop policy if exists checkout_claims_service_role_all on public.checkout_claims;
+create policy checkout_claims_service_role_all on public.checkout_claims
   for all to service_role using (true) with check (true);

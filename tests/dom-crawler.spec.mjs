@@ -238,17 +238,36 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
   // conflict comes back as an empty representation, exactly as PostgREST answers
   // `resolution=ignore-duplicates`.
   const claimedEvents = new Set();
+  /** @type {Map<string, {session_id: string, tenant_id: string, api_key: string, expires_at_ms: number}>} */
+  const checkoutClaims = new Map();
   globalThis.fetch = async (input, init = {}) => {
     calls.push({ url: String(input), init });
     if (String(input).includes('/rest/v1/webhook_events')) {
       if (init.method === 'DELETE') {
-        claimedEvents.delete(/event_id=eq\.([^&]+)/.exec(String(input))?.[1] ?? '');
+        const deletedId = /event_id=eq\.([^&]+)/.exec(String(input))?.[1];
+        if (deletedId) claimedEvents.delete(deletedId);
         return new Response(null, { status: 204 });
       }
       const { event_id: eventId } = JSON.parse(String(init.body));
       if (claimedEvents.has(eventId)) return Response.json([]);
       claimedEvents.add(eventId);
       return Response.json([{ event_id: eventId }], { status: 201 });
+    }
+    if (String(input).includes('/rest/v1/checkout_claims')) {
+      if (init.method === 'POST') {
+        const claim = JSON.parse(String(init.body));
+        checkoutClaims.set(claim.session_id, claim);
+        return new Response(null, { status: 201 });
+      }
+      if (init.method === 'DELETE') {
+        const sessionMatch = /session_id=eq\.([^&]+)/.exec(String(input));
+        if (!sessionMatch) return new Response(null, { status: 204 });
+        const sessionId = decodeURIComponent(sessionMatch[1]);
+        const claim = checkoutClaims.get(sessionId);
+        checkoutClaims.delete(sessionId);
+        if (!claim || claim.expires_at_ms <= Date.now()) return Response.json([]);
+        return Response.json([claim]);
+      }
     }
     if (String(input).includes('select=id,api_key')) {
       return lookupFails ? new Response('upstream failure', { status: 500 }) : Response.json(existingApiKey ? [{ id: 'acme', api_key: existingApiKey }] : []);
@@ -309,6 +328,25 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
       window_seconds: 600,
       active: true
     });
+    expect(
+      calls.some(call => call.url.includes('/rest/v1/webhook_events?received_at=lt.') && call.init.method === 'DELETE'),
+      'Worker must prune expired webhook_events older than 24h'
+    ).toBe(true);
+
+    // Self-serve post-checkout claim: first GET /v1/billing/session?session_id=cs_test
+    // returns 200 with Cache-Control: no-store and the provisioned api_key; second returns 404.
+    const firstClaim = await workerRequest('https://worker.example/v1/billing/session?session_id=cs_test', { method: 'GET' }, workerEnv);
+    expect(firstClaim.status).toBe(200);
+    expect(firstClaim.headers.get('cache-control')).toContain('no-store');
+    expect(await firstClaim.json()).toEqual({ ok: true, tenant_id: 'acme', api_key: provisioned.api_key });
+
+    const secondClaim = await workerRequest('https://worker.example/v1/billing/session?session_id=cs_test', { method: 'GET' }, workerEnv);
+    expect(secondClaim.status).toBe(404);
+    expect(await secondClaim.json()).toEqual({ error: 'Session not found or already claimed' });
+
+    const missingClaim = await workerRequest('https://worker.example/v1/billing/session', { method: 'GET' }, workerEnv);
+    expect(missingClaim.status).toBe(404);
+    expect(await missingClaim.json()).toEqual({ error: 'Session not found or already claimed' });
 
     // Stripe resends a delivery it did not see acknowledged. The same event id is
     // answered as a duplicate and must not upsert the site a second time.

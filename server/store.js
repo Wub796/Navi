@@ -54,7 +54,11 @@ import { createInterface } from 'node:readline';
  * @typedef {{tenant_id: string, window_start_ms: number, event_count: number}} QuotaState
  * @typedef {{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}} TenantDefinitionRecord
  * @typedef {{tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'}} TenantDefinitionInput
- * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, consumeQuota(options: QuotaOptions): Promise<QuotaVerdict>, readQuota(tenantId: string): Promise<QuotaState | null>, upsertTenantDefinition(definition: TenantDefinitionInput): Promise<TenantDefinitionRecord>, readTenantDefinition(tenantId: string): Promise<TenantDefinitionRecord | null>, readTenantDefinitions(): Promise<TenantDefinitionRecord[]>, recordWebhookEvent(eventId: string, receivedAtMs?: number): Promise<boolean>, releaseWebhookEvent(eventId: string): Promise<void>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
+ * @typedef {{session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number}} CheckoutClaimInput
+ * @typedef {{session_id: string, tenant_id: string, api_key: string, expires_at_ms: number}} CheckoutClaimRecord
+ * @typedef {{event_id?: string | null, received_at_ms?: number, definition?: TenantDefinitionInput | null, checkout_claim?: CheckoutClaimInput | null}} WebhookMutationInput
+ * @typedef {{duplicate: boolean, record: TenantDefinitionRecord | null}} WebhookMutationResult
+ * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, consumeQuota(options: QuotaOptions): Promise<QuotaVerdict>, readQuota(tenantId: string): Promise<QuotaState | null>, upsertTenantDefinition(definition: TenantDefinitionInput): Promise<TenantDefinitionRecord>, readTenantDefinition(tenantId: string): Promise<TenantDefinitionRecord | null>, readTenantDefinitions(): Promise<TenantDefinitionRecord[]>, recordWebhookEvent(eventId: string, receivedAtMs?: number): Promise<boolean>, releaseWebhookEvent(eventId: string): Promise<void>, applyWebhookEvent(mutation: WebhookMutationInput): Promise<WebhookMutationResult>, recordCheckoutClaim(claim: CheckoutClaimInput): Promise<CheckoutClaimRecord>, consumeCheckoutClaim(sessionId: string, nowMs?: number): Promise<{tenant_id: string, api_key: string} | null>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
  */
 
 /** Default number of violation rows one query returns. */
@@ -79,6 +83,21 @@ export const WEBHOOK_EVENT_KIND = 'webhook_event';
  * release line; SQLite deletes the row.
  */
 export const WEBHOOK_EVENT_RELEASE_KIND = 'webhook_event_release';
+/**
+ * Retention window for the webhook event-id ledger, in milliseconds (24 hours).
+ * Well beyond the 300-second `Stripe-Signature` replay window, so any replay
+ * past this horizon is already rejected at HMAC timestamp verification.
+ */
+export const WEBHOOK_EVENT_TTL_MS = 86_400_000;
+/**
+ * Default validity window for a one-time post-checkout API-key claim, in
+ * milliseconds (15 minutes).
+ */
+export const CHECKOUT_CLAIM_TTL_MS = 900_000;
+/** Discriminator for a stored post-checkout claim in the log backend. */
+export const CHECKOUT_CLAIM_KIND = 'checkout_claim';
+/** Discriminator that marks a post-checkout claim consumed in the log backend. */
+export const CHECKOUT_CLAIM_CONSUMED_KIND = 'checkout_claim_consumed';
 /**
  * Discriminator for the single log-mode line that records the highest violation
  * id the file has ever carried. Without it, compacting away the newest rows
@@ -164,6 +183,23 @@ function normalizeWebhookEvent(eventId, receivedAtMs) {
   if (!id) throw new TypeError('recordWebhookEvent needs an event_id');
   const received = Number.isSafeInteger(receivedAtMs) && Number(receivedAtMs) >= 0 ? Number(receivedAtMs) : Date.now();
   return { event_id: id, received_at_ms: received };
+}
+
+/**
+ * Validate a one-time post-checkout API-key claim.
+ * @param {CheckoutClaimInput} input @returns {CheckoutClaimRecord}
+ */
+function normalizeCheckoutClaim(input) {
+  const sessionId = typeof input?.session_id === 'string' ? input.session_id.trim() : '';
+  const tenantId = typeof input?.tenant_id === 'string' ? input.tenant_id.trim() : '';
+  const apiKey = typeof input?.api_key === 'string' ? input.api_key.trim() : '';
+  if (!sessionId) throw new TypeError('recordCheckoutClaim needs a session_id');
+  if (!tenantId) throw new TypeError('recordCheckoutClaim needs a tenant_id');
+  if (!apiKey) throw new TypeError('recordCheckoutClaim needs an api_key');
+  const expiresAtMs = Number.isSafeInteger(input?.expires_at_ms) && Number(input.expires_at_ms) > 0
+    ? Number(input.expires_at_ms)
+    : Date.now() + CHECKOUT_CLAIM_TTL_MS;
+  return { session_id: sessionId, tenant_id: tenantId, api_key: apiKey, expires_at_ms: expiresAtMs };
 }
 
 /**
@@ -406,6 +442,17 @@ function createSqliteStore(path, sqlite) {
   )`);
   const insertWebhookEvent = db.prepare('INSERT INTO webhook_events (event_id, received_at_ms) VALUES (?, ?) ON CONFLICT(event_id) DO NOTHING');
   const deleteWebhookEvent = db.prepare('DELETE FROM webhook_events WHERE event_id = ?');
+  const deleteExpiredWebhookEvents = db.prepare('DELETE FROM webhook_events WHERE received_at_ms < ?');
+  db.exec(`CREATE TABLE IF NOT EXISTS checkout_claims (
+    session_id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    api_key TEXT NOT NULL,
+    expires_at_ms INTEGER NOT NULL
+  )`);
+  const upsertCheckoutClaim = db.prepare('INSERT INTO checkout_claims (session_id, tenant_id, api_key, expires_at_ms) VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET tenant_id = excluded.tenant_id, api_key = excluded.api_key, expires_at_ms = excluded.expires_at_ms');
+  const selectCheckoutClaim = db.prepare('SELECT session_id, tenant_id, api_key, expires_at_ms FROM checkout_claims WHERE session_id = ?');
+  const deleteCheckoutClaim = db.prepare('DELETE FROM checkout_claims WHERE session_id = ?');
+  const deleteExpiredCheckoutClaims = db.prepare('DELETE FROM checkout_claims WHERE expires_at_ms <= ?');
   const upsertNavigationMap = db.prepare('INSERT INTO navigation_maps (site_id, url, payload, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(site_id, url) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at');
   const selectNavigationMap = db.prepare('SELECT site_id, url, payload, updated_at FROM navigation_maps WHERE site_id = ? AND url = ?');
   const selectTenantQuota = db.prepare('SELECT window_start_ms, event_count FROM tenant_quotas WHERE tenant_id = ?');
@@ -481,11 +528,77 @@ function createSqliteStore(path, sqlite) {
     },
     async recordWebhookEvent(eventId, receivedAtMs) {
       const record = normalizeWebhookEvent(eventId, receivedAtMs);
+      deleteExpiredWebhookEvents.run(Date.now() - WEBHOOK_EVENT_TTL_MS);
       const result = /** @type {{changes?: unknown}} */ (insertWebhookEvent.run(record.event_id, record.received_at_ms));
       return asNumber(result?.changes) > 0;
     },
     async releaseWebhookEvent(eventId) {
       deleteWebhookEvent.run(normalizeWebhookEvent(eventId).event_id);
+    },
+    async applyWebhookEvent(mutation) {
+      const eventId = typeof mutation?.event_id === 'string' && mutation.event_id.trim().length > 0
+        ? normalizeWebhookEvent(mutation.event_id, mutation.received_at_ms)
+        : null;
+      const definition = mutation?.definition ? normalizeTenantDefinition(mutation.definition) : null;
+      const claim = mutation?.checkout_claim ? normalizeCheckoutClaim(mutation.checkout_claim) : null;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        deleteExpiredWebhookEvents.run(Date.now() - WEBHOOK_EVENT_TTL_MS);
+        if (eventId) {
+          const inserted = /** @type {{changes?: unknown}} */ (insertWebhookEvent.run(eventId.event_id, eventId.received_at_ms));
+          if (asNumber(inserted?.changes) === 0) {
+            db.exec('COMMIT');
+            return { duplicate: true, record: null };
+          }
+        }
+        if (definition) {
+          upsertTenantDefinition.run(
+            definition.tenant_id,
+            definition.api_key,
+            JSON.stringify(definition.allowed_origins),
+            definition.max_events_per_window,
+            definition.window_seconds,
+            definition.status,
+            definition.updated_at
+          );
+        }
+        if (claim) {
+          deleteExpiredCheckoutClaims.run(Date.now());
+          upsertCheckoutClaim.run(claim.session_id, claim.tenant_id, claim.api_key, claim.expires_at_ms);
+        }
+        db.exec('COMMIT');
+        return { duplicate: false, record: definition };
+      } catch (error) {
+        try { db.exec('ROLLBACK'); } catch { /* ignore rollback error */ }
+        throw error;
+      }
+    },
+    async recordCheckoutClaim(claimInput) {
+      const claim = normalizeCheckoutClaim(claimInput);
+      deleteExpiredCheckoutClaims.run(Date.now());
+      upsertCheckoutClaim.run(claim.session_id, claim.tenant_id, claim.api_key, claim.expires_at_ms);
+      return claim;
+    },
+    async consumeCheckoutClaim(sessionId, nowMs = Date.now()) {
+      const id = typeof sessionId === 'string' ? sessionId.trim() : '';
+      if (!id) return null;
+      const now = Number.isFinite(nowMs) ? Math.trunc(nowMs) : Date.now();
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        deleteExpiredCheckoutClaims.run(now);
+        const row = /** @type {{session_id?: unknown, tenant_id?: unknown, api_key?: unknown, expires_at_ms?: unknown} | undefined} */ (selectCheckoutClaim.get(id));
+        if (!row) {
+          db.exec('COMMIT');
+          return null;
+        }
+        deleteCheckoutClaim.run(id);
+        db.exec('COMMIT');
+        if (asNumber(row.expires_at_ms) <= now) return null;
+        return { tenant_id: String(row.tenant_id), api_key: String(row.api_key) };
+      } catch (error) {
+        try { db.exec('ROLLBACK'); } catch { /* ignore rollback error */ }
+        throw error;
+      }
     },
     async summarize(filter = {}) {
       const where = filter.tenant_id ? 'WHERE tenant_id = ?' : '';
@@ -546,6 +659,7 @@ function createSqliteStore(path, sqlite) {
       db.exec('DELETE FROM tenant_quotas');
       db.exec('DELETE FROM tenant_definitions');
       db.exec('DELETE FROM webhook_events');
+      db.exec('DELETE FROM checkout_claims');
     },
     async close() {
       if (closed) return;
@@ -597,7 +711,12 @@ function createLogStore(path) {
       if (parsed.kind === 'navigation_map' || parsed.kind === 'tenant_quota') continue;
       // The ledger is read on demand by `recordWebhookEvent` and never counts as a
       // beacon: falling through here would add a phantom event per delivery.
-      if (parsed.kind === WEBHOOK_EVENT_KIND || parsed.kind === WEBHOOK_EVENT_RELEASE_KIND) continue;
+      if (
+        parsed.kind === WEBHOOK_EVENT_KIND
+        || parsed.kind === WEBHOOK_EVENT_RELEASE_KIND
+        || parsed.kind === CHECKOUT_CLAIM_KIND
+        || parsed.kind === CHECKOUT_CLAIM_CONSUMED_KIND
+      ) continue;
       if (parsed.kind === 'tenant_definition') {
         // Last line wins, exactly like the SQLite upsert: a revocation appends a
         // new definition rather than rewriting the old one.
@@ -750,15 +869,19 @@ function createLogStore(path) {
       // Queued with the appends so a concurrent delivery of the same event cannot
       // read the file before the other one's line has landed.
       return serial(async () => {
+        const cutoffMs = Date.now() - WEBHOOK_EVENT_TTL_MS;
         const text = await readFile(path, 'utf8').catch(() => '');
         // The newest line for this id decides: a release withdraws the claim that
-        // preceded it, so the next delivery is treated as new.
+        // preceded it, and a claim older than the 24-hour TTL is expired.
         for (const line of text.split('\n').reverse()) {
           if (!line.trim()) continue;
           try {
             const parsed = JSON.parse(line);
             if (parsed?.event_id !== record.event_id) continue;
-            if (parsed.kind === WEBHOOK_EVENT_KIND) return false;
+            if (parsed.kind === WEBHOOK_EVENT_KIND) {
+              if (asNumber(parsed.received_at_ms) >= cutoffMs) return false;
+              break;
+            }
             if (parsed.kind === WEBHOOK_EVENT_RELEASE_KIND) break;
           } catch { /* ignore torn and malformed lines */ }
         }
@@ -769,6 +892,65 @@ function createLogStore(path) {
     async releaseWebhookEvent(eventId) {
       const { event_id: id } = normalizeWebhookEvent(eventId);
       await serial(() => appendFile(path, `${JSON.stringify({ kind: WEBHOOK_EVENT_RELEASE_KIND, event_id: id })}\n`, 'utf8'));
+    },
+    async applyWebhookEvent(mutation) {
+      const eventId = typeof mutation?.event_id === 'string' && mutation.event_id.trim().length > 0
+        ? normalizeWebhookEvent(mutation.event_id, mutation.received_at_ms)
+        : null;
+      const definition = mutation?.definition ? normalizeTenantDefinition(mutation.definition) : null;
+      const claim = mutation?.checkout_claim ? normalizeCheckoutClaim(mutation.checkout_claim) : null;
+      return serial(async () => {
+        const cutoffMs = Date.now() - WEBHOOK_EVENT_TTL_MS;
+        if (eventId) {
+          const text = await readFile(path, 'utf8').catch(() => '');
+          for (const line of text.split('\n').reverse()) {
+            if (!line.trim()) continue;
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed?.event_id !== eventId.event_id) continue;
+              if (parsed.kind === WEBHOOK_EVENT_KIND) {
+                if (asNumber(parsed.received_at_ms) >= cutoffMs) return { duplicate: true, record: null };
+                break;
+              }
+              if (parsed.kind === WEBHOOK_EVENT_RELEASE_KIND) break;
+            } catch { /* ignore torn and malformed lines */ }
+          }
+        }
+        /** @type {string[]} */
+        const batch = [];
+        if (eventId) batch.push(JSON.stringify({ kind: WEBHOOK_EVENT_KIND, ...eventId }));
+        if (definition) batch.push(JSON.stringify({ kind: 'tenant_definition', ...definition }));
+        if (claim) batch.push(JSON.stringify({ kind: CHECKOUT_CLAIM_KIND, ...claim }));
+        if (batch.length > 0) await appendFile(path, `${batch.join('\n')}\n`, 'utf8');
+        return { duplicate: false, record: definition };
+      });
+    },
+    async recordCheckoutClaim(claimInput) {
+      const claim = normalizeCheckoutClaim(claimInput);
+      await serial(() => appendFile(path, `${JSON.stringify({ kind: CHECKOUT_CLAIM_KIND, ...claim })}\n`, 'utf8'));
+      return claim;
+    },
+    async consumeCheckoutClaim(sessionId, nowMs = Date.now()) {
+      const id = typeof sessionId === 'string' ? sessionId.trim() : '';
+      if (!id) return null;
+      const now = Number.isFinite(nowMs) ? Math.trunc(nowMs) : Date.now();
+      return serial(async () => {
+        const text = await readFile(path, 'utf8').catch(() => '');
+        for (const line of text.split('\n').reverse()) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed?.session_id !== id) continue;
+            if (parsed.kind === CHECKOUT_CLAIM_CONSUMED_KIND) return null;
+            if (parsed.kind === CHECKOUT_CLAIM_KIND) {
+              if (asNumber(parsed.expires_at_ms) <= now) return null;
+              await appendFile(path, `${JSON.stringify({ kind: CHECKOUT_CLAIM_CONSUMED_KIND, session_id: id })}\n`, 'utf8');
+              return { tenant_id: String(parsed.tenant_id), api_key: String(parsed.api_key) };
+            }
+          } catch { /* ignore torn and malformed lines */ }
+        }
+        return null;
+      });
     },
     async readQuota(tenantId) {
       // The last line for this tenant is the current window: every accepted ingest
@@ -841,6 +1023,12 @@ function createLogStore(path) {
         let sequence = 0;
         /** @type {Map<string, TenantDefinitionRecord>} */
         const definitions = new Map();
+        /** @type {Map<string, number>} */
+        const webhookEvents = new Map();
+        /** @type {Map<string, CheckoutClaimRecord>} */
+        const checkoutClaims = new Map();
+        const webhookCutoffMs = Date.now() - WEBHOOK_EVENT_TTL_MS;
+        const claimNowMs = Date.now();
         try {
           const input = createInterface({ input: createReadStream(path, 'utf8'), crlfDelay: Infinity });
           for await (const line of input) {
@@ -855,6 +1043,38 @@ function createLogStore(path) {
             }
             if (!parsed || typeof parsed !== 'object') continue;
             if (parsed.kind === 'navigation_map' || parsed.kind === 'tenant_quota') continue;
+            if (parsed.kind === WEBHOOK_EVENT_KIND) {
+              const id = typeof parsed.event_id === 'string' ? parsed.event_id.trim() : '';
+              const receivedAt = asNumber(parsed.received_at_ms);
+              if (id && receivedAt >= webhookCutoffMs) webhookEvents.set(id, receivedAt);
+              else if (id) webhookEvents.delete(id);
+              continue;
+            }
+            if (parsed.kind === WEBHOOK_EVENT_RELEASE_KIND) {
+              const id = typeof parsed.event_id === 'string' ? parsed.event_id.trim() : '';
+              if (id) webhookEvents.delete(id);
+              continue;
+            }
+            if (parsed.kind === CHECKOUT_CLAIM_KIND) {
+              const id = typeof parsed.session_id === 'string' ? parsed.session_id.trim() : '';
+              const expiresAt = asNumber(parsed.expires_at_ms);
+              if (id && expiresAt > claimNowMs) {
+                checkoutClaims.set(id, {
+                  session_id: id,
+                  tenant_id: String(parsed.tenant_id ?? ''),
+                  api_key: String(parsed.api_key ?? ''),
+                  expires_at_ms: expiresAt
+                });
+              } else if (id) {
+                checkoutClaims.delete(id);
+              }
+              continue;
+            }
+            if (parsed.kind === CHECKOUT_CLAIM_CONSUMED_KIND) {
+              const id = typeof parsed.session_id === 'string' ? parsed.session_id.trim() : '';
+              if (id) checkoutClaims.delete(id);
+              continue;
+            }
             if (parsed.kind === 'tenant_definition') {
               // Carried into the map and written back below: a prune prunes
               // violations, not the tenants an operator provisioned.
@@ -889,6 +1109,12 @@ function createLogStore(path) {
           // file: a crash between the two leaves an unmarked but complete set.
           for (const definition of definitions.values()) {
             await write(JSON.stringify({ kind: 'tenant_definition', ...definition }));
+          }
+          for (const [event_id, received_at_ms] of webhookEvents.entries()) {
+            await write(JSON.stringify({ kind: WEBHOOK_EVENT_KIND, event_id, received_at_ms }));
+          }
+          for (const claim of checkoutClaims.values()) {
+            await write(JSON.stringify({ kind: CHECKOUT_CLAIM_KIND, ...claim }));
           }
           // Written last because it describes everything above it, and only when
           // there is a mark worth keeping: a file of aggregates alone stays as it is.

@@ -45,6 +45,7 @@ import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readContainerReceipts, summarizeContainer } from './container-evidence.mjs';
+import { main as refreshReleaseNotes } from './release-notes.mjs';
 import { verifyCleanRoomPackage } from './verify-registry-package.mjs';
 
 /**
@@ -53,7 +54,7 @@ import { verifyCleanRoomPackage } from './verify-registry-package.mjs';
  * them, and tests/release-pipeline.spec.mjs pins those documents together, so raising it
  * is a deliberate change to all of them rather than a silent drift in one.
  */
-export const MIN_PASSING_TESTS = 228;
+export const MIN_PASSING_TESTS = 230;
 /** Strict byte budgets, identical to the build and the CI gates. */
 export const SDK_BUDGET_BYTES = 15000;
 export const LOADER_BUDGET_BYTES = 700;
@@ -69,15 +70,15 @@ const GENERATED_REPORT_DIR = 'reports/';
 
 /** @typedef {{id: string, ok: boolean, detail: string}} Check */
 
-/** @param {string} command @param {string[]} args @returns {string} */
-function run(command, args) {
-  return execFileSync(command, args, { encoding: 'utf8', maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+/** @param {string} command @param {string[]} args @param {NodeJS.ProcessEnv} [env] @returns {string} */
+function run(command, args, env = process.env) {
+  return execFileSync(command, args, { encoding: 'utf8', env, maxBuffer: 128 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-/** @param {string} command @param {string[]} args @returns {{ok: boolean, output: string}} */
-function attempt(command, args) {
+/** @param {string} command @param {string[]} args @param {NodeJS.ProcessEnv} [env] @returns {{ok: boolean, output: string}} */
+function attempt(command, args, env = process.env) {
   try {
-    return { ok: true, output: run(command, args) };
+    return { ok: true, output: run(command, args, env) };
   } catch (error) {
     const captured = /** @type {{stdout?: string, stderr?: string}} */ (error);
     return { ok: false, output: `${captured.stdout ?? ''}${captured.stderr ?? ''}` };
@@ -215,7 +216,7 @@ export async function verifyRelease(options) {
 
   if (!options.skipTests) {
     checks.push(await evaluate('test-suite', async () => {
-      const result = attempt('npm', ['test', '--silent']);
+      const result = attempt('npm', ['test', '--silent'], { ...process.env, VERIFY_RELEASE_ACTIVE: '1' });
       const passed = Number(/(\d+) passed/.exec(result.output)?.[1] ?? 0);
       const failed = Number(/(\d+) failed/.exec(result.output)?.[1] ?? 0);
       const summary = `${passed} passed, ${failed} failed (floor ${MIN_PASSING_TESTS})`;
@@ -348,6 +349,11 @@ export async function main(argv) {
   const receiptPath = fileURLToPath(new URL('../reports/release-verification.json', import.meta.url));
   await mkdir(dirname(receiptPath), { recursive: true });
   await writeFile(receiptPath, `${JSON.stringify({ ok, node: process.version, recordedAt: new Date().toISOString(), evidence, checks }, null, 2)}\n`);
+  if (ok) {
+    const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+    const notesPath = fileURLToPath(new URL('../reports/release-notes.md', import.meta.url));
+    await refreshReleaseNotes(['--tag', `v${packageJson.version}`, '--out', notesPath]);
+  }
   if (wants('--json')) {
     process.stdout.write(`${JSON.stringify({ ok, evidence, checks, recordedAt: new Date().toISOString() }, null, 2)}\n`);
   } else {

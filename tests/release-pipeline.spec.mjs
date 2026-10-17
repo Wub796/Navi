@@ -508,7 +508,7 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(228);
+  expect(MIN_PASSING_TESTS).toBe(230);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.3.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
@@ -531,7 +531,7 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   const wrangler = await readFile(join(root, 'wrangler.toml'), 'utf8');
   const worker = await readFile(join(root, 'src/worker.ts'), 'utf8');
 
-  for (const table of ['sites', 'navigation_maps', 'webhook_events']) {
+  for (const table of ['sites', 'navigation_maps', 'webhook_events', 'checkout_claims']) {
     expect(schema, `${table} must be created idempotently`).toMatch(new RegExp(`create table if not exists public\\.${table}\\b`));
     expect(schema, `${table} must have row level security enabled`).toContain(`alter table public.${table} enable row level security;`);
     expect(schema, `${table} must deny the public roles`).toContain(`revoke all on table public.${table} from anon, authenticated;`);
@@ -541,6 +541,7 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   // The replay ledger's shape is what makes a redelivery a no-op rather than a
   // second provisioning: the event id is the key the Worker conflicts on.
   expect(schema).toMatch(/create table if not exists public\.webhook_events \(\s*event_id text primary key,\s*received_at timestamptz not null default now\(\)\s*\)/);
+  expect(schema).toMatch(/create table if not exists public\.checkout_claims \(\s*session_id text primary key,\s*tenant_id text not null,\s*api_key text not null,\s*expires_at_ms bigint not null\s*\)/);
   expect(schema).toContain('create unique index if not exists idx_sites_api_key');
   expect(schema).toContain('create unique index if not exists idx_navigation_maps_site_url');
 
@@ -548,6 +549,8 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   // relies on, rather than a read that two isolates could interleave.
   expect(worker).toContain('/rest/v1/webhook_events?on_conflict=event_id');
   expect(worker).toContain('resolution=ignore-duplicates');
+  expect(worker).toContain('/rest/v1/webhook_events?received_at=lt.');
+  expect(worker).toContain('/rest/v1/checkout_claims');
 
   // The manifest is committed, so it may name the entrypoint and the secrets an
   // operator sets, and nothing that looks like a credential value.
@@ -698,13 +701,66 @@ test('the generated notes and the release collateral carry the canary attestatio
   // The provenance the publish rests on, printed from the same receipt the preflight checks.
   expect(notes).toContain(`\`evidence.revision\` is \`${receipt.evidence.revision}\``);
   expect(notes).toContain(`\`evidence.sourceTree\` is \`${receipt.evidence.sourceTree}\``);
-  expect(committed, 'the committed notes must carry the provenance paragraph').toContain(`\`evidence.sourceTree\` is \`${receipt.evidence.sourceTree}\``);
+  const inFlight = process.env.VERIFY_RELEASE_ACTIVE === '1';
+  if (!inFlight) {
+    expect(committed, 'the committed notes must carry the provenance paragraph').toContain(`\`evidence.sourceTree\` is \`${receipt.evidence.sourceTree}\``);
+    expect(committed).toContain(recorded.map(check => `| \`${check.id}\` | ${check.detail} | Passed |`).join('\n'));
+  } else {
+    expect(committed).toMatch(/`evidence\.sourceTree` is `sha256:[0-9a-f]{64}`/);
+  }
   expect(committed).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
-  expect(committed).toContain(recorded.map(check => `| \`${check.id}\` | ${check.detail} | Passed |`).join('\n'));
   const release = await readFile(join(root, 'docs/RELEASES/v0.6.3.md'), 'utf8');
   expect(release).toContain('## Container verification matrix');
   expect(release).toContain('| Check | Description | Status |');
-  for (const check of recorded) expect(release, `docs/RELEASES/v0.6.3.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
+  if (!inFlight) {
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.3.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
+  } else {
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.3.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
+  }
+});
+
+test('verify:release breaks the release-notes bootstrap deadlock when the version or receipt advances', async () => {
+  // Regression for the ordering deadlock between verify-release.mjs and release-notes.mjs:
+  // when a version bump or an intermediate failed run rewrites reports/release-verification.json,
+  // reports/release-notes.md still carries the prior sourceTree digest and version until
+  // verify:release finishes and refreshes it. During VERIFY_RELEASE_ACTIVE=1, the in-flight
+  // suite must not fail on the pre-refresh notes, and verify-release.mjs must automatically
+  // invoke the release-notes generator once the gate passes.
+  const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
+  expect(verifySource).toContain("VERIFY_RELEASE_ACTIVE: '1'");
+  expect(verifySource).toContain('refreshReleaseNotes');
+
+  const receipt = JSON.parse(await readFile(join(root, 'reports/release-verification.json'), 'utf8'));
+  const build = JSON.parse(await readFile(join(root, 'reports/build.json'), 'utf8'));
+  const containers = await readContainerReceipts(root);
+  const staleNotes = renderReleaseNotes({
+    build,
+    receipt: { ...receipt, recordedAt: '2026-10-01T00:00:00.000Z', evidence: { ...receipt.evidence, sourceTree: `sha256:${'0'.repeat(64)}` } },
+    version: '0.6.2',
+    tag: 'v0.6.2',
+    protocol: '0.3.0',
+    containers
+  });
+  const advancedReceipt = {
+    ...receipt,
+    recordedAt: '2026-10-18T00:00:00.000Z',
+    evidence: {
+      ...receipt.evidence,
+      sourceTree: `sha256:${'f'.repeat(64)}`,
+      canary: {
+        ...receipt.evidence.canary,
+        checks: receipt.evidence.canary.checks.map((/** @type {any} */ c) =>
+          c.id === 'mcp-initialize' ? { ...c, detail: c.detail.replace(/@\d+\.\d+\.\d+/, '@0.6.4') } : c
+        )
+      }
+    }
+  };
+  const refreshedNotes = renderReleaseNotes({ build, receipt: advancedReceipt, version: '0.6.4', tag: 'v0.6.4', protocol: '0.3.0', containers });
+  expect(staleNotes).toMatch(/`evidence\.sourceTree` is `sha256:[0-9a-f]{64}`/);
+  expect(staleNotes).not.toContain(advancedReceipt.evidence.sourceTree);
+  expect(refreshedNotes).toContain(`## Navi 0.6.4`);
+  expect(refreshedNotes).toContain(`\`evidence.sourceTree\` is \`${advancedReceipt.evidence.sourceTree}\``);
+  expect(refreshedNotes).toContain('navi-mcp-server@0.6.4');
 });
 
 test('container receipts are discovered by target, not by the path they sit in', async () => {

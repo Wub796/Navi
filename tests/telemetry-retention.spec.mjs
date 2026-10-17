@@ -260,8 +260,14 @@ test('the billing ledger is durable, per event id, and survives a sweep in both 
     const file = tempFile(mode === 'sqlite' ? 'db' : 'log');
     let store = await createStore(file, { mode });
     try {
-      expect(await store.recordWebhookEvent('evt_once', 1_700_000_000_000), `${mode}: first delivery`).toBe(true);
+      const freshMs = Date.now() - 10_000;
+      const staleMs = Date.now() - (86_400_000 + 60_000);
+      expect(await store.recordWebhookEvent('evt_stale', staleMs), `${mode}: stale delivery recorded`).toBe(true);
+      expect(await store.recordWebhookEvent('evt_once', freshMs), `${mode}: first delivery`).toBe(true);
       expect(await store.recordWebhookEvent('evt_once'), `${mode}: redelivery`).toBe(false);
+      // Entries older than the 24-hour retention window are pruned when recording
+      // a new event, so an ancient id is treated as new rather than held forever.
+      expect(await store.recordWebhookEvent('evt_stale'), `${mode}: expired 24h entry pruned`).toBe(true);
       // The ledger keys on the event id, so a different event is not a duplicate of it.
       expect(await store.recordWebhookEvent('evt_other')).toBe(true);
       // A failed delivery withdraws its claim, so Stripe's resend is handled rather
@@ -270,8 +276,8 @@ test('the billing ledger is durable, per event id, and survives a sweep in both 
       expect(await store.recordWebhookEvent('evt_once'), `${mode}: released claim`).toBe(true);
       // Deliveries are not beacons: neither backend may count a ledger line as telemetry.
       expect(await store.summarize()).toMatchObject({ events: 0 });
-      // A scheduled sweep must not take the ledger with it, or a retry after every
-      // prune would provision again.
+      // A scheduled sweep must not take the in-window ledger with it, or a retry after
+      // every prune would provision again.
       await store.pruneViolations({ max_age_days: DEFAULT_RETENTION_DAYS });
       await store.close();
 

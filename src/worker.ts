@@ -32,6 +32,10 @@ const DEFAULT_MAX_EVENTS_PER_WINDOW = 10000;
 const DEFAULT_PROVISION_WINDOW_SECONDS = 2592000;
 /** Replay window enforced around a Stripe signature timestamp, in seconds. */
 const SIGNATURE_TOLERANCE_SECONDS = 300;
+/** Retention window for the webhook event-id ledger, in milliseconds (24 hours). */
+const WEBHOOK_EVENT_TTL_MS = 86_400_000;
+/** Validity window for a one-time post-checkout API-key claim, in milliseconds (15 minutes). */
+const CHECKOUT_CLAIM_TTL_MS = 900_000;
 /** Random bytes in a generated `navi_live_` key. */
 const TENANT_KEY_BYTES = 32;
 
@@ -193,8 +197,8 @@ function billingTenantId(object: any): string {
   return typeof object?.client_reference_id === 'string' ? object.client_reference_id.trim() : '';
 }
 
-/** @param {Env} env @param {any} object @returns {Promise<Response>} */
-async function provisionSite(env: Env, object: any): Promise<Response> {
+/** @param {Env} env @param {any} object @param {string} [eventType] @returns {Promise<Response>} */
+async function provisionSite(env: Env, object: any, eventType = ''): Promise<Response> {
   const tenantId = billingTenantId(object);
   if (!tenantId) return json(400, { error: 'Missing tenant_id' });
   const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
@@ -227,6 +231,20 @@ async function provisionSite(env: Env, object: any): Promise<Response> {
       }),
     });
     if (!upsert.ok) return json(500, { error: 'Internal server error' });
+    const rawSessionId = typeof object?.id === 'string' ? object.id.trim() : '';
+    if (eventType === 'checkout.session.completed' && rawSessionId.startsWith('cs_')) {
+      const claimUpsert = await fetch(`${base}/rest/v1/checkout_claims?on_conflict=session_id`, {
+        method: 'POST',
+        headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({
+          session_id: rawSessionId,
+          tenant_id: tenantId,
+          api_key: apiKey,
+          expires_at_ms: Date.now() + CHECKOUT_CLAIM_TTL_MS,
+        }),
+      });
+      if (!claimUpsert.ok) return json(500, { error: 'Internal server error' });
+    }
     return json(200, { ok: true, tenant_id: tenantId, api_key: apiKey });
   } catch {
     return json(500, { error: 'Internal server error' });
@@ -260,9 +278,16 @@ async function suspendSite(env: Env, object: any): Promise<Response> {
  * @param {Env} env @param {string} eventId @returns {Promise<boolean>}
  */
 async function claimWebhookEvent(env: Env, eventId: string): Promise<boolean> {
-  const response = await fetch(`${supabaseBase(env)}/rest/v1/webhook_events?on_conflict=event_id`, {
+  const base = supabaseBase(env);
+  const headers = supabaseHeaders(env);
+  const cutoffIso = new Date(Date.now() - WEBHOOK_EVENT_TTL_MS).toISOString();
+  await fetch(`${base}/rest/v1/webhook_events?received_at=lt.${encodeURIComponent(cutoffIso)}`, {
+    method: 'DELETE',
+    headers,
+  }).catch(() => {});
+  const response = await fetch(`${base}/rest/v1/webhook_events?on_conflict=event_id`, {
     method: 'POST',
-    headers: { ...supabaseHeaders(env), Prefer: 'resolution=ignore-duplicates,return=representation' },
+    headers: { ...headers, Prefer: 'resolution=ignore-duplicates,return=representation' },
     body: JSON.stringify({ event_id: eventId }),
   });
   if (!response.ok) throw new Error(`the webhook ledger answered ${response.status}`);
@@ -317,7 +342,7 @@ async function handleBilling(request: Request, env: Env): Promise<Response> {
     if (!claimed) return json(200, { ok: true, duplicate: true });
   }
   let response: Response;
-  if (PROVISIONING_EVENT_TYPES.has(type)) response = await provisionSite(env, object);
+  if (PROVISIONING_EVENT_TYPES.has(type)) response = await provisionSite(env, object, type);
   else if (type === 'customer.subscription.deleted') response = await suspendSite(env, object);
   else response = json(200, { ok: true, ignored: true });
   // A failed delivery is one Stripe will resend; leaving the claim behind would
@@ -326,6 +351,38 @@ async function handleBilling(request: Request, env: Env): Promise<Response> {
     try { await releaseWebhookEvent(env, eventId); } catch { /* the ledger is unreachable; the 500 stands */ }
   }
   return response;
+}
+
+/** @param {URL} url @param {Env} env @returns {Promise<Response>} */
+async function handleBillingSession(url: URL, env: Env): Promise<Response> {
+  const sessionId = (url.searchParams.get('session_id') ?? '').trim();
+  if (!sessionId || !sessionId.startsWith('cs_')) {
+    return json(404, { error: 'Session not found or already claimed' });
+  }
+  try {
+    const base = supabaseBase(env);
+    const headers = supabaseHeaders(env);
+    const now = Date.now();
+    await fetch(`${base}/rest/v1/checkout_claims?expires_at_ms=lte.${now}`, {
+      method: 'DELETE',
+      headers,
+    }).catch(() => {});
+    const response = await fetch(
+      `${base}/rest/v1/checkout_claims?session_id=eq.${encodeURIComponent(sessionId)}&expires_at_ms=gt.${now}`,
+      {
+        method: 'DELETE',
+        headers: { ...headers, Prefer: 'return=representation' },
+      },
+    );
+    if (!response.ok) return json(500, { error: 'Internal server error' });
+    const rows: unknown = await response.json();
+    if (!Array.isArray(rows) || !rows[0] || typeof rows[0].tenant_id !== 'string' || typeof rows[0].api_key !== 'string') {
+      return json(404, { error: 'Session not found or already claimed' });
+    }
+    return json(200, { ok: true, tenant_id: rows[0].tenant_id, api_key: rows[0].api_key });
+  } catch {
+    return json(500, { error: 'Internal server error' });
+  }
 }
 
 /**
@@ -375,6 +432,10 @@ export default {
     if (url.pathname === '/v1/billing/webhook') {
       if (request.method !== 'POST') return json(404, { error: 'Not found' });
       return handleBilling(request, env);
+    }
+    if (url.pathname === '/v1/billing/session') {
+      if (request.method !== 'GET') return json(404, { error: 'Not found' });
+      return handleBillingSession(url, env);
     }
     if (url.pathname !== '/v1/sitemap/update' || request.method !== 'POST') {
       return json(404, { error: 'Not found' });

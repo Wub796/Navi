@@ -116,6 +116,10 @@ export const NAVI_PROTOCOL_VERSION = '0.3.0';
 export const DEFAULT_MCP_SSE_URL = 'http://127.0.0.1:3001/sse';
 /** Path that receives Stripe billing events and provisions tenants from them. */
 export const BILLING_ENDPOINT_PATH = '/v1/billing/webhook';
+/** Path that lets a post-checkout customer claim their provisioned key once. */
+export const BILLING_SESSION_ENDPOINT_PATH = '/v1/billing/session';
+/** Validity window for a one-time Checkout Session API-key claim, in ms (15m). */
+export const CHECKOUT_CLAIM_TTL_MS = 900_000;
 /** Replay window this route enforces around a signature timestamp, in seconds. */
 export const STRIPE_SIGNATURE_TOLERANCE_SECONDS = 300;
 /** Hard cap for one billing event body; Stripe events are JSON, not page data. */
@@ -367,6 +371,8 @@ Endpoints
   GET  /v1/telemetry?key=<tenant_key>
   POST /v1/telemetry/violations
   POST /v1/billing/webhook            provision or revoke a tenant from Stripe
+  GET  /v1/billing/session?session_id=cs_...
+                                      one-time post-checkout API-key claim
   GET  /v1/tenants/<tenant_id>/security-audit
   POST /v1/tenants/<tenant_id>/maintenance/prune
   GET  /healthz
@@ -503,6 +509,7 @@ function routeLabel(path) {
   if (path === '/v1/telemetry') return 'telemetry';
   if (path === '/v1/telemetry/violations') return 'telemetry_violations';
   if (path === BILLING_ENDPOINT_PATH) return 'billing_webhook';
+  if (path === BILLING_SESSION_ENDPOINT_PATH) return 'billing_session';
   if (path === '/healthz') return 'healthz';
   if (path === '/metrics') return 'metrics';
   if (path === '/.well-known/navi.json') return 'discovery';
@@ -702,7 +709,7 @@ function validateViolation(payload, allowedTenantIds, keyTenantId) {
 /**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, readQuota?(tenantId: string): Promise<{tenant_id: string, window_start_ms: number, event_count: number} | null>, upsertTenantDefinition(definition: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'}): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}>, readTenantDefinition(tenantId: string): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null>, readTenantDefinitions(): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}[]>, recordWebhookEvent?(eventId: string, receivedAtMs?: number): Promise<boolean>, releaseWebhookEvent?(eventId: string): Promise<void>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, readQuota?(tenantId: string): Promise<{tenant_id: string, window_start_ms: number, event_count: number} | null>, upsertTenantDefinition(definition: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'}): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}>, readTenantDefinition(tenantId: string): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null>, readTenantDefinitions(): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}[]>, recordWebhookEvent?(eventId: string, receivedAtMs?: number): Promise<boolean>, releaseWebhookEvent?(eventId: string): Promise<void>, applyWebhookEvent?(mutation: {event_id?: string | null, received_at_ms?: number, definition?: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'} | null, checkout_claim?: {session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number} | null}): Promise<{duplicate: boolean, record: {tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null}>, recordCheckoutClaim?(claim: {session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number}): Promise<{session_id: string, tenant_id: string, api_key: string, expires_at_ms: number}>, consumeCheckoutClaim?(sessionId: string, nowMs?: number): Promise<{tenant_id: string, api_key: string} | null>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
  * @typedef {{host?: string, port?: number, tenants?: import('./tenants.js').TenantRegistry, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter, maxEventsPerWindow?: number, quotaWindowSeconds?: number, metricsToken?: string, stripeWebhookSecret?: string}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: import('./tenants.js').TenantRegistry, limiter: RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
  */
@@ -1145,9 +1152,10 @@ export async function createNaviHostServer(options = {}) {
 
   /**
    * Create or refresh a tenant from a verified checkout/subscription event.
-   * @param {any} object @returns {Promise<{status: number, body: Record<string, unknown>}>}
+   * @param {any} object @param {string} [eventId] @param {string} [eventType]
+   * @returns {Promise<{status: number, body: Record<string, unknown>}>}
    */
-  async function provisionTenant(object) {
+  async function provisionTenant(object, eventId = '', eventType = '') {
     const tenantId = billingTenantId(object);
     if (!tenantId) return { status: 400, body: { error: 'Missing tenant_id' } };
     const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
@@ -1156,13 +1164,33 @@ export async function createNaviHostServer(options = {}) {
     // The key is minted once. An update that carries no api_key must not rotate the
     // credential a tenant's page already embeds.
     const apiKey = explicitKey || existing?.api_key || `navi_live_${randomBytes(TENANT_KEY_BYTES).toString('hex')}`;
-    const record = await store.upsertTenantDefinition({
+    const definitionInput = {
       tenant_id: tenantId,
       api_key: apiKey,
       allowed_origins: parseAllowedOrigins(metadata.allowed_origins),
       max_events_per_window: metadataInteger(metadata.max_events_per_window, 10000, 0),
       window_seconds: metadataInteger(metadata.window_seconds, 2592000, 1)
-    });
+    };
+    const rawSessionId = typeof object?.id === 'string' ? object.id.trim() : '';
+    const checkoutClaim = eventType === 'checkout.session.completed' && rawSessionId.startsWith('cs_')
+      ? { session_id: rawSessionId, tenant_id: tenantId, api_key: apiKey, expires_at_ms: Date.now() + CHECKOUT_CLAIM_TTL_MS }
+      : null;
+    if (typeof store.applyWebhookEvent === 'function') {
+      const applied = await store.applyWebhookEvent({
+        event_id: eventId || null,
+        definition: definitionInput,
+        checkout_claim: checkoutClaim
+      });
+      if (applied.duplicate) return { status: 200, body: { ok: true, duplicate: true } };
+      const record = applied.record ?? (await store.upsertTenantDefinition(definitionInput));
+      registerTenantDefinition(record);
+      log(`billing: provisioned ${record.tenant_id}`);
+      return { status: 200, body: { ok: true, tenant_id: record.tenant_id, api_key: record.api_key } };
+    }
+    const record = await store.upsertTenantDefinition(definitionInput);
+    if (checkoutClaim && typeof store.recordCheckoutClaim === 'function') {
+      await store.recordCheckoutClaim(checkoutClaim);
+    }
     registerTenantDefinition(record);
     log(`billing: provisioned ${record.tenant_id}`);
     return { status: 200, body: { ok: true, tenant_id: record.tenant_id, api_key: record.api_key } };
@@ -1171,13 +1199,14 @@ export async function createNaviHostServer(options = {}) {
   /**
    * Revoke a tenant without deleting it: the row and the key stay, the ceiling
    * becomes zero, and every ingest then answers 429 rather than 401.
-   * @param {any} object @returns {Promise<{status: number, body: Record<string, unknown>}>}
+   * @param {any} object @param {string} [eventId]
+   * @returns {Promise<{status: number, body: Record<string, unknown>}>}
    */
-  async function suspendTenant(object) {
+  async function suspendTenant(object, eventId = '') {
     const tenantId = billingTenantId(object);
     if (!tenantId) return { status: 400, body: { error: 'Missing tenant_id' } };
     const existing = typeof store.readTenantDefinition === 'function' ? await store.readTenantDefinition(tenantId) : null;
-    const record = await store.upsertTenantDefinition({
+    const definitionInput = /** @type {const} */ ({
       tenant_id: tenantId,
       api_key: existing?.api_key ?? `navi_live_${randomBytes(TENANT_KEY_BYTES).toString('hex')}`,
       allowed_origins: existing?.allowed_origins ?? ['*'],
@@ -1185,6 +1214,18 @@ export async function createNaviHostServer(options = {}) {
       window_seconds: existing?.window_seconds ?? 2592000,
       status: 'suspended'
     });
+    if (typeof store.applyWebhookEvent === 'function') {
+      const applied = await store.applyWebhookEvent({
+        event_id: eventId || null,
+        definition: definitionInput
+      });
+      if (applied.duplicate) return { status: 200, body: { ok: true, duplicate: true } };
+      const record = applied.record ?? (await store.upsertTenantDefinition(definitionInput));
+      registerTenantDefinition(record);
+      log(`billing: suspended ${record.tenant_id}`);
+      return { status: 200, body: { ok: true, tenant_id: record.tenant_id, status: 'suspended' } };
+    }
+    const record = await store.upsertTenantDefinition(definitionInput);
     registerTenantDefinition(record);
     log(`billing: suspended ${record.tenant_id}`);
     return { status: 200, body: { ok: true, tenant_id: record.tenant_id, status: 'suspended' } };
@@ -1285,19 +1326,30 @@ export async function createNaviHostServer(options = {}) {
           const eventId = typeof event?.id === 'string' ? event.id.trim() : '';
           void (async () => {
             let claimed = false;
+            const hasAtomic = typeof store.applyWebhookEvent === 'function';
             try {
-              if (eventId && typeof store.recordWebhookEvent === 'function') {
+              if (!hasAtomic && eventId && typeof store.recordWebhookEvent === 'function') {
                 claimed = await store.recordWebhookEvent(eventId);
                 if (!claimed) {
                   sendJson(res, 200, { ok: true, duplicate: true });
                   return;
                 }
               }
-              const outcome = PROVISIONING_EVENT_TYPES.has(type)
-                ? await provisionTenant(object)
-                : type === REVOCATION_EVENT_TYPE
-                  ? await suspendTenant(object)
-                  : { status: 200, body: { ok: true, ignored: true } };
+              let outcome;
+              if (PROVISIONING_EVENT_TYPES.has(type)) {
+                outcome = await provisionTenant(object, eventId, type);
+              } else if (type === REVOCATION_EVENT_TYPE) {
+                outcome = await suspendTenant(object, eventId);
+              } else {
+                if (typeof store.applyWebhookEvent === 'function' && eventId) {
+                  const applied = await store.applyWebhookEvent({ event_id: eventId });
+                  if (applied.duplicate) {
+                    sendJson(res, 200, { ok: true, duplicate: true });
+                    return;
+                  }
+                }
+                outcome = { status: 200, body: { ok: true, ignored: true } };
+              }
               // A refused delivery is one Stripe will resend. The claim has to be
               // withdrawn, or that resend is swallowed as a duplicate and the tenant
               // is silently never provisioned.
@@ -1317,6 +1369,21 @@ export async function createNaviHostServer(options = {}) {
         });
       });
       return;
+    }
+
+    if (path === BILLING_SESSION_ENDPOINT_PATH) {
+      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /v1/billing/session?session_id=<cs_id>.');
+      const sessionId = (url.searchParams.get('session_id') ?? '').trim();
+      if (!sessionId || !sessionId.startsWith('cs_') || typeof store.consumeCheckoutClaim !== 'function') {
+        return sendJson(res, 404, { error: 'Session not found or already claimed' });
+      }
+      try {
+        const claimed = await store.consumeCheckoutClaim(sessionId);
+        if (!claimed) return sendJson(res, 404, { error: 'Session not found or already claimed' });
+        return sendJson(res, 200, { ok: true, tenant_id: claimed.tenant_id, api_key: claimed.api_key });
+      } catch {
+        return sendJson(res, 500, { error: 'Internal server error' });
+      }
     }
 
     if (path === '/v1/sitemap/update') {

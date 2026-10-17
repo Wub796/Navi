@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createNaviHostServer, MAX_PAYLOAD_BYTES, SCRIPT_CACHE_CONTROL } from '../server/index.js';
+import { createStore } from '../server/store.js';
 import { DEV_TENANT_ID, DEV_TENANT_KEY, isOriginAllowed, loadTenants, tenantConfigFor } from '../server/tenants.js';
 
 /**
@@ -422,6 +423,21 @@ test('a signed checkout provisions a tenant that ingests, survives a restart, an
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, duplicate: true });
 
+    // Self-serve post-checkout claim: GET /v1/billing/session?session_id=cs_test
+    // returns the provisioned api_key once with Cache-Control: no-store, then 404s.
+    response = await fetch(`${base()}/v1/billing/session?session_id=cs_test`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toContain('no-store');
+    expect(await response.json()).toEqual({ ok: true, tenant_id: 'tenant-stripe', api_key: key });
+
+    response = await fetch(`${base()}/v1/billing/session?session_id=cs_test`);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Session not found or already claimed' });
+
+    response = await fetch(`${base()}/v1/billing/session`);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Session not found or already claimed' });
+
     // The minted key authenticates both ingest routes immediately, and the
     // provisioned origin list is already enforced.
     response = await crawl(key, 'https://app.example.com/checkout');
@@ -478,6 +494,54 @@ test('a signed checkout provisions a tenant that ingests, survives a restart, an
     expect(await response.json()).toEqual({ ok: true, duplicate: true });
   } finally {
     await host.close();
+  }
+});
+
+test('webhook ledger prunes entries older than 24h and rolls back atomically on write failure', async () => {
+  const storeFile = join(tmpdir(), `navi-billing-atomic-${process.pid}-${Date.now()}.db`);
+  const store = await createStore(storeFile, { mode: 'sqlite' });
+  try {
+    // 1. 24-hour TTL pruning during recordWebhookEvent / applyWebhookEvent.
+    const expiredMs = Date.now() - (86_400_000 + 5_000);
+    expect(await store.recordWebhookEvent('evt_ttl_expired', expiredMs)).toBe(true);
+    expect(await store.recordWebhookEvent('evt_ttl_fresh', Date.now())).toBe(true);
+    // Recording a new event prunes the expired entry, so evt_ttl_expired can be claimed again.
+    expect(await store.recordWebhookEvent('evt_ttl_expired', Date.now())).toBe(true);
+    expect(await store.recordWebhookEvent('evt_ttl_fresh', Date.now())).toBe(false);
+
+    // 2. Atomic SQLite transaction rollback: if a write inside applyWebhookEvent fails
+    // (for example, a unique-key collision on idx_tenant_definitions_key or an invalid
+    // checkout claim after the event-id insert), the BEGIN IMMEDIATE transaction rolls back
+    // so the event_id is never left claimed without the tenant state applied.
+    await store.applyWebhookEvent({
+      event_id: 'evt_seed_owner',
+      definition: { tenant_id: 'tenant-owner', api_key: 'navi_live_shared_unique_key' }
+    });
+    await expect(
+      store.applyWebhookEvent({
+        event_id: 'evt_must_rollback',
+        definition: { tenant_id: 'tenant-colliding', api_key: 'navi_live_shared_unique_key' }
+      })
+    ).rejects.toThrow();
+    expect(await store.readTenantDefinition('tenant-colliding')).toBeNull();
+    // Because the transaction rolled back, evt_must_rollback was not left in webhook_events:
+    const retry = await store.applyWebhookEvent({
+      event_id: 'evt_must_rollback',
+      definition: { tenant_id: 'tenant-colliding', api_key: 'navi_live_distinct_key' }
+    });
+    expect(retry.duplicate).toBe(false);
+    expect(retry.record?.api_key).toBe('navi_live_distinct_key');
+
+    // 3. Expired checkout claims are rejected with null.
+    await store.recordCheckoutClaim({
+      session_id: 'cs_expired_test',
+      tenant_id: 'tenant-owner',
+      api_key: 'navi_live_shared_unique_key',
+      expires_at_ms: Date.now() - 1_000
+    });
+    expect(await store.consumeCheckoutClaim('cs_expired_test')).toBeNull();
+  } finally {
+    await store.close();
   }
 });
 
