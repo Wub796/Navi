@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
 import { readFile, readdir, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { NaviSession, MAX_PAGES_PER_SESSION, handleMessage } from '../src/mcp/server.js';
 import { createSseServer, SESSION_MAX_TTL_MS, MAX_PENDING_MESSAGES } from '../src/mcp/sse.js';
 import { containedGet, createContainmentProxy, isPrivateAddress, resolveDestination } from '../src/mcp/containment.js';
@@ -203,12 +204,18 @@ test('hard TTL closes a real browser even when a tool call is held open', async 
 test('disposal during launch cannot resurrect Chromium and external context disposal purges files', async () => {
   const starting = session(true);
   const launched = starting.initialize().then(() => null, error => error);
-  await expect.poll(() => starting.downloadDirectory).not.toBeNull();
-  const startingDirectory = /** @type {string} */ (starting.downloadDirectory);
+  // Close in the turn the launch begins. `close()` flips the flag before the launch
+  // path resumes past its first await, so the browser it spawns is refused and
+  // disposed — which is the interleaving this test is about. Polling for the download
+  // directory first made that a race instead: on a loaded runner the launch can finish
+  // before the poll returns, and the assertion below then measured scheduling rather
+  // than the session. The directory the launch creates after the close is still
+  // checked, by the cleanup assertion below.
   await starting.close();
   expect(await launched).not.toBeNull();
   expect(starting.browser).toBeNull();
-  await expect(stat(startingDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
+  const surviving = (await readdir(tmpdir())).filter(name => name.startsWith(`navi-downloads-${starting.sessionId}-`));
+  expect(surviving, 'a refused launch must remove the directory it created').toEqual([]);
   const f = await fixture(); const active = session(true);
   try {
     expect(body(await active.navigate({ url: f.origin })).ok).toBe(true);
