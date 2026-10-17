@@ -243,11 +243,16 @@ jobs:
       - name: Install dependencies from the lockfile
         run: npm ci --no-audit --no-fund
 
+      # The artifact keeps the paths it was uploaded with — `reports/…` and
+      # `test-results/…` share no single parent, so the archive root is the workspace
+      # root — and it is unpacked there for the same reason. A `path: reports` nests it
+      # as `reports/reports/…` and silently leaves the committed receipt in place, which
+      # is the revision before the tag rather than the one the gate just verified.
       - name: Download the verification receipt
         uses: actions/download-artifact@v4
         with:
           name: release-receipt
-          path: reports
+          path: .
 
       # The container receipts are the evidence for the runtime posture this release
       # claims, so they travel into the published record beside the release receipt.
