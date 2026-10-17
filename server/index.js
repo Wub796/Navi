@@ -45,6 +45,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { beginProcessLifecycle, createStore, DEFAULT_RETENTION_DAYS, DEFAULT_VIOLATION_LIMIT, MAX_RETENTION_DAYS, MAX_VIOLATION_LIMIT } from './store.js';
 import { isOriginAllowed, loadTenants, normalizeTenantEntry, tenantConfigFor, tenantFor, tenantIds } from './tenants.js';
+import { BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage } from './billing-success.js';
 import { validateCrawlerPayload } from '../src/crawler-payload.js';
 
 /** Process boot timestamp, shared by every listener in this process. */
@@ -118,6 +119,8 @@ export const DEFAULT_MCP_SSE_URL = 'http://127.0.0.1:3001/sse';
 export const BILLING_ENDPOINT_PATH = '/v1/billing/webhook';
 /** Path that lets a post-checkout customer claim their provisioned key once. */
 export const BILLING_SESSION_ENDPOINT_PATH = '/v1/billing/session';
+/** Path a Checkout `success_url` redirects to, rendering the key as a page once. */
+export const BILLING_SUCCESS_ENDPOINT_PATH = '/v1/billing/success';
 /** Validity window for a one-time Checkout Session API-key claim, in ms (15m). */
 export const CHECKOUT_CLAIM_TTL_MS = 900_000;
 /** Replay window this route enforces around a signature timestamp, in seconds. */
@@ -373,6 +376,8 @@ Endpoints
   POST /v1/billing/webhook            provision or revoke a tenant from Stripe
   GET  /v1/billing/session?session_id=cs_...
                                       one-time post-checkout API-key claim
+  GET  /v1/billing/success?session_id=cs_...
+                                      the same claim, rendered as an onboarding page
   GET  /v1/tenants/<tenant_id>/security-audit
   POST /v1/tenants/<tenant_id>/maintenance/prune
   GET  /healthz
@@ -481,6 +486,39 @@ function sendError(res, status, code, message, extraHeaders = {}) {
 }
 
 /**
+ * @param {import('node:http').ServerResponse} res
+ * @param {number} status
+ * @param {string} html
+ * @param {Record<string, string>} [extraHeaders]
+ */
+function sendHtml(res, status, html, extraHeaders = {}) {
+  res.writeHead(status, {
+    ...BILLING_PAGE_HEADERS,
+    'Content-Length': Buffer.byteLength(html),
+    ...extraHeaders
+  });
+  res.end(html);
+}
+
+/**
+ * The origin a customer's browser used, for the loader URL in the onboarding page.
+ *
+ * `Host` is what the browser asked for and what the embed snippet must name, but it
+ * is caller-supplied and lands in the page, so anything that is not a plain
+ * host[:port] is replaced rather than reflected. The scheme comes from the proxy
+ * header when there is one, because this service is usually behind a terminator
+ * that speaks HTTP to it.
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {string}
+ */
+function requestOrigin(req) {
+  const forwarded = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]?.trim().toLowerCase();
+  const proto = forwarded === 'https' ? 'https' : 'http';
+  const host = String(req.headers.host ?? '').trim();
+  return `${proto}://${/^[A-Za-z0-9.-]+(?::\d{1,5})?$/.test(host) ? host : '127.0.0.1'}`;
+}
+
+/**
  * Prometheus text. Unauthenticated like `/healthz`, and aggregate-only: a scrape
  * carries counters and one `tenant_id` per throttled tenant, never a URL, a
  * session identifier or a key. `/metrics` never consults the limiter.
@@ -510,6 +548,7 @@ function routeLabel(path) {
   if (path === '/v1/telemetry/violations') return 'telemetry_violations';
   if (path === BILLING_ENDPOINT_PATH) return 'billing_webhook';
   if (path === BILLING_SESSION_ENDPOINT_PATH) return 'billing_session';
+  if (path === BILLING_SUCCESS_ENDPOINT_PATH) return 'billing_success';
   if (path === '/healthz') return 'healthz';
   if (path === '/metrics') return 'metrics';
   if (path === '/.well-known/navi.json') return 'discovery';
@@ -1383,6 +1422,37 @@ export async function createNaviHostServer(options = {}) {
         return sendJson(res, 200, { ok: true, tenant_id: claimed.tenant_id, api_key: claimed.api_key });
       } catch {
         return sendJson(res, 500, { error: 'Internal server error' });
+      }
+    }
+
+    // The onboarding page a Checkout `success_url` redirects to. It consumes the
+    // same one-time claim the JSON route does, so a customer who reaches either
+    // surface first sees the key and the other answers 404 — and unlike the JSON
+    // route this one is opened by a browser, so every answer is a page.
+    if (path === BILLING_SUCCESS_ENDPOINT_PATH) {
+      if (method !== 'GET') {
+        return sendHtml(res, 405, renderBillingClaimErrorPage({
+          title: 'Use a GET request',
+          detail: 'This address renders the one-time key page, which a browser opens with GET. Nothing was claimed by this request.'
+        }), { Allow: 'GET' });
+      }
+      const sessionId = (url.searchParams.get('session_id') ?? '').trim();
+      if (!sessionId.startsWith('cs_') || typeof store.consumeCheckoutClaim !== 'function') {
+        return sendHtml(res, 404, renderBillingClaimErrorPage());
+      }
+      try {
+        const claimed = await store.consumeCheckoutClaim(sessionId);
+        if (!claimed) return sendHtml(res, 404, renderBillingClaimErrorPage());
+        return sendHtml(res, 200, renderBillingSuccessPage({
+          tenant_id: claimed.tenant_id,
+          api_key: claimed.api_key,
+          loader_url: `${requestOrigin(req)}/v1/loader.js`
+        }));
+      } catch {
+        return sendHtml(res, 500, renderBillingClaimErrorPage({
+          title: 'Something went wrong',
+          detail: 'The key could not be retrieved just now, and the link is still unused. Try it again in a moment.'
+        }));
       }
     }
 

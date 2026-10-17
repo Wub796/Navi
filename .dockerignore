@@ -17,3 +17,4 @@
 !scripts/build.mjs
 !scripts/docker-entrypoint.sh
 !scripts/check-sandbox.mjs
+!server/billing-success.js

@@ -54,11 +54,15 @@ function fakeSupabase(options = {}) {
   const events = new Set();
   /** @type {Map<string, {tenant_id: string, api_key: string, expires_at: number}>} */
   const claims = new Map();
+  /** The stored maps, keyed `siteId|url`, so a test can see what a call persisted. */
+  const maps = new Map();
   /** @type {{url: string, init: RequestInit}[]} */
   const calls = [];
   const lookupFails = { value: options.lookupFails === true };
   /** Set to make the webhook function answer 500, which is a transaction that aborted. */
   const failApply = { value: false };
+  /** Set to make the ingest's map write fail, which must roll its charge back. */
+  const failStorage = { value: false };
 
   /** @param {any} body */
   const consumeQuota = body => {
@@ -69,22 +73,37 @@ function fakeSupabase(options = {}) {
     if (!allowed.includes('*') && (!body.p_origin || !allowed.includes(body.p_origin) || headerRefused)) {
       return { found: true, id: site.id, forbidden: true, allowed: false, allowed_origins: allowed };
     }
-    if (site.max_events_per_window === null || site.max_events_per_window === undefined) {
-      return { found: true, id: site.id, forbidden: false, allowed: true, limit: null, remaining: null, retry_after_seconds: 0, allowed_origins: allowed };
+    // Every effect below is undone if the map write fails, which is what the real
+    // function gets from running in one transaction.
+    const snapshot = { window_start_ms: site.window_start_ms, event_count: site.event_count };
+    let limit = null;
+    let remaining = null;
+    if (site.max_events_per_window !== null && site.max_events_per_window !== undefined) {
+      limit = site.max_events_per_window;
+      const windowSeconds = site.window_seconds || 3600;
+      const windowMs = windowSeconds * 1000;
+      if (limit === 0) return { found: true, id: site.id, forbidden: false, allowed: false, limit: 0, remaining: 0, retry_after_seconds: windowSeconds, allowed_origins: allowed };
+      const active = Number.isFinite(site.window_start_ms) && site.window_start_ms > 0 && body.p_now_ms - site.window_start_ms < windowMs;
+      const windowStart = active ? site.window_start_ms : body.p_now_ms;
+      const consumed = active ? site.event_count : 0;
+      if (consumed >= limit) {
+        return { found: true, id: site.id, forbidden: false, allowed: false, limit, remaining: 0, retry_after_seconds: Math.max(1, Math.ceil((windowStart + windowMs - body.p_now_ms) / 1000)), allowed_origins: allowed };
+      }
+      site.window_start_ms = windowStart;
+      site.event_count = consumed + 1;
+      remaining = Math.max(limit - (consumed + 1), 0);
     }
-    const limit = site.max_events_per_window;
-    const windowSeconds = site.window_seconds || 3600;
-    const windowMs = windowSeconds * 1000;
-    if (limit === 0) return { found: true, id: site.id, forbidden: false, allowed: false, limit: 0, remaining: 0, retry_after_seconds: windowSeconds, allowed_origins: allowed };
-    const active = Number.isFinite(site.window_start_ms) && site.window_start_ms > 0 && body.p_now_ms - site.window_start_ms < windowMs;
-    const windowStart = active ? site.window_start_ms : body.p_now_ms;
-    const consumed = active ? site.event_count : 0;
-    if (consumed >= limit) {
-      return { found: true, id: site.id, forbidden: false, allowed: false, limit, remaining: 0, retry_after_seconds: Math.max(1, Math.ceil((windowStart + windowMs - body.p_now_ms) / 1000)), allowed_origins: allowed };
+
+    if (body.p_url && body.p_payload) {
+      if (failStorage.value) {
+        site.window_start_ms = snapshot.window_start_ms;
+        site.event_count = snapshot.event_count;
+        throw new Error('navigation_maps insert failed');
+      }
+      maps.set(`${site.id}|${body.p_url}`, body.p_payload);
     }
-    site.window_start_ms = windowStart;
-    site.event_count = consumed + 1;
-    return { found: true, id: site.id, forbidden: false, allowed: true, limit, remaining: limit - consumed - 1, retry_after_seconds: 0, allowed_origins: allowed };
+
+    return { found: true, id: site.id, forbidden: false, allowed: true, limit, remaining, retry_after_seconds: 0, allowed_origins: allowed };
   };
 
   /** @param {any} body */
@@ -142,9 +161,11 @@ function fakeSupabase(options = {}) {
     sites,
     events,
     claims,
+    maps,
     calls,
     lookupFails,
     failApply,
+    failStorage,
     fetch: fetchImpl,
     /** @param {string} id */
     site: id => sites.get(id)
@@ -219,13 +240,18 @@ test('Worker sitemap endpoint enforces route, bearer auth, JSON and schema contr
     response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, url: validPayload.url, targets: 1 });
-    expect(calls).toHaveLength(2);
+    // One round trip. The charge, the origin decision and the map write are one
+    // statement, so a request cannot be charged and then lose its map to a second
+    // call that fails.
+    expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain('/rest/v1/rpc/consume_site_quota');
-    // The tenant is resolved, charged and origin-checked by the database, so the
-    // isolate sends the key and the two origins rather than a read it could race.
-    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({ p_api_key: 'api-key', p_origin: 'https://shop.example', p_header_origin: null });
-    expect(calls[1].url).toContain('/navigation_maps?on_conflict=site_id,url');
-    expect(calls[1].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({
+      p_api_key: 'api-key',
+      p_origin: 'https://shop.example',
+      p_header_origin: null,
+      p_url: validPayload.url
+    });
+    expect(supabase.maps.has(`site-1|${validPayload.url}`)).toBe(true);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -275,8 +301,6 @@ test('Worker sitemap endpoint meters a site against max_events_per_window, persi
   if (!site) throw new Error('fixture site missing');
   const calls = supabase.calls;
   globalThis.fetch = supabase.fetch;
-  /** @param {string} fragment @returns {{url: string, init: RequestInit} | undefined} */
-  const call = fragment => calls.find(entry => entry.url.includes(fragment));
   try {
     const headers = { Authorization: 'Bearer api-key' };
     // One event of a ceiling of two: the charge happens inside the function, under
@@ -297,7 +321,8 @@ test('Worker sitemap endpoint meters a site against max_events_per_window, persi
     expect(Number(response.headers.get('retry-after'))).toBeLessThanOrEqual(60);
     expect(response.headers.get('x-quota-limit')).toBe('2');
     expect(response.headers.get('x-quota-remaining')).toBe('0');
-    expect(call('/navigation_maps')).toBeUndefined();
+    // The refusal is the only request: no second call was made to store anything.
+    expect(calls).toHaveLength(1);
 
     // The window has expired: the next accepted event opens a fresh one at 1 rather
     // than carrying the exhausted count across the boundary.
@@ -309,7 +334,7 @@ test('Worker sitemap endpoint meters a site against max_events_per_window, persi
     expect(response.status).toBe(200);
     expect(site.event_count).toBe(1);
     expect(site.window_start_ms).toBeGreaterThan(expiredStart);
-    expect(call('/navigation_maps')?.init.method).toBe('POST');
+    expect(supabase.maps.has(`site-1|${validPayload.url}`)).toBe(true);
 
     // An unmetered site (no ceiling at all) still ingests, and the function leaves
     // its window untouched because there is nothing to charge.
@@ -319,7 +344,8 @@ test('Worker sitemap endpoint meters a site against max_events_per_window, persi
     response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
     expect(response.status).toBe(200);
     expect(site.event_count).toBe(0);
-    expect(call('/navigation_maps')?.init.method).toBe('POST');
+    // Unmetered still stores: the map write is not conditioned on a ceiling.
+    expect(supabase.maps.has(`site-1|${validPayload.url}`)).toBe(true);
 
     // A ceiling of exactly 0 is how a revoked subscription is stored: it is a
     // suspension, not an absence of metering, and it refuses before the map write.
@@ -329,7 +355,90 @@ test('Worker sitemap endpoint meters a site against max_events_per_window, persi
     expect(response.status).toBe(429);
     expect(response.headers.get('x-quota-limit')).toBe('0');
     expect(response.headers.get('x-quota-remaining')).toBe('0');
-    expect(call('/navigation_maps')).toBeUndefined();
+    expect(calls).toHaveLength(1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Worker fails the ingest when the map write aborts and does not keep the charge', async () => {
+  const originalFetch = globalThis.fetch;
+  const supabase = fakeSupabase({ sites: [{ id: 'site-1', api_key: 'api-key', max_events_per_window: 5, window_seconds: 60, window_start_ms: Date.now(), event_count: 1 }] });
+  const site = supabase.site('site-1');
+  if (!site) throw new Error('fixture site missing');
+  globalThis.fetch = supabase.fetch;
+  try {
+    const headers = { Authorization: 'Bearer api-key' };
+    supabase.failStorage.value = true;
+    let response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Internal server error' });
+    expect(site.event_count, 'a failed map write must not leave the event charged').toBe(1);
+    expect(supabase.maps.size).toBe(0);
+
+    // The same request succeeds once storage recovers, so nothing is left wedged.
+    supabase.failStorage.value = false;
+    response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(200);
+    expect(site.event_count).toBe(2);
+    expect(supabase.maps.has(`site-1|${validPayload.url}`)).toBe(true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Worker renders the one-time onboarding page and refuses a second visit', async () => {
+  const originalFetch = globalThis.fetch;
+  const supabase = fakeSupabase();
+  supabase.claims.set('cs_page', { tenant_id: 'acme', api_key: 'navi_live_page', expires_at: Date.now() + 900_000 });
+  globalThis.fetch = supabase.fetch;
+  const pageUrl = 'https://worker.example/v1/billing/success?session_id=cs_page';
+  try {
+    const page = await workerRequest(pageUrl);
+    expect(page.status).toBe(200);
+    // A browser renders this, so the answer is a document with the headers that keep
+    // a credential out of caches, referrers and frames.
+    expect(page.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(page.headers.get('cache-control')).toBe('no-store');
+    expect(page.headers.get('content-security-policy')).toContain("default-src 'none'");
+    expect(page.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+    expect(page.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(page.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(page.headers.get('x-frame-options')).toBe('DENY');
+    const body = await page.text();
+    expect(body).toContain('navi_live_page');
+    expect(body).toContain('acme');
+    // The snippet is escaped for display, so what the customer copies is the tag the
+    // browser would have parsed rather than markup injected into the page.
+    expect(body).toContain('data-key=&quot;navi_live_page&quot;');
+    expect(body).toContain('https://worker.example/v1/loader.js');
+    expect(body).toContain('Authorization: Bearer navi_live_page');
+    expect(body).toMatch(/shown once/i);
+    expect(body).toContain('noindex');
+
+    // The claim is consumed by rendering it, so a refresh is an error page that
+    // never repeats the key.
+    const again = await workerRequest(pageUrl);
+    expect(again.status).toBe(404);
+    expect(again.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(again.headers.get('cache-control')).toBe('no-store');
+    const errorBody = await again.text();
+    expect(errorBody).not.toContain('navi_live_page');
+    expect(errorBody).toMatch(/expired or already been used/i);
+
+    // Nothing is claimed for a value that cannot be a Checkout Session id.
+    for (const query of ['', '?session_id=', '?session_id=nope']) {
+      const response = await workerRequest(`https://worker.example/v1/billing/success${query}`);
+      expect(response.status).toBe(404);
+      expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    }
+
+    // A browser opens this with GET; anything else is a page too, not JSON.
+    const post = await workerRequest(pageUrl, { method: 'POST' });
+    expect(post.status).toBe(405);
+    expect(post.headers.get('allow')).toBe('GET');
+    expect(post.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(await post.text()).not.toContain('navi_live_page');
   } finally {
     globalThis.fetch = originalFetch;
   }

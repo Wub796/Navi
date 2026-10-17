@@ -508,7 +508,7 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(240);
+  expect(MIN_PASSING_TESTS).toBe(244);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.4.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
@@ -573,7 +573,7 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   // pinned search_path, and executable by the service role alone.
   const functions = [
     ['apply_stripe_webhook', 'public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz)'],
-    ['consume_site_quota', 'public.consume_site_quota(text, bigint, text, text)'],
+    ['consume_site_quota', 'public.consume_site_quota(text, bigint, text, text, text, jsonb)'],
     ['claim_checkout_session', 'public.claim_checkout_session(text)']
   ];
   for (const [name, signature] of functions) {
@@ -590,6 +590,15 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   expect(schema).toContain("interval '24 hours'");
   expect(schema).toMatch(/from public\.sites\s+where api_key = p_api_key and active = true\s+for update/);
   expect(schema).toMatch(/delete from public\.checkout_claims\s+where session_id = p_session_id and expires_at > now\(\)\s+returning \* into claimed/);
+  // The ingest write and its charge are one transaction: the map upsert lives inside
+  // the function, after the increment, so a storage failure takes the charge with it.
+  expect(schema).toMatch(/insert into public\.navigation_maps \(site_id, url, payload, updated_at\)[\s\S]{0,240}on conflict \(site_id, url\) do update/);
+  // The earlier four-argument shape is dropped rather than left behind: `create or
+  // replace` with a new argument list would add an overload, not replace it.
+  expect(schema).toContain('drop function if exists public.consume_site_quota(text, bigint, text, text);');
+  // PostgREST serves an introspected snapshot, so applying the DDL has to ask it to
+  // reload or a deployment looks healthy and answers 404 for a function that exists.
+  expect(schema).toContain("notify pgrst, 'reload schema';");
 
   // The Worker delegates to those functions and no longer writes the ledger or the
   // claim table itself: a second path that could get the order wrong is a second bug.
@@ -600,6 +609,26 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   expect(worker).not.toContain('/rest/v1/webhook_events');
   expect(worker).not.toContain('/rest/v1/checkout_claims');
   expect(worker).not.toContain('resolution=ignore-duplicates');
+  // Nor does it write the map itself any more: the ingest call carries the payload
+  // into the same transaction as the charge.
+  expect(worker).not.toContain('/rest/v1/navigation_maps');
+  expect(worker).toContain('p_url: validated.url');
+  expect(worker).toContain('p_payload: validated');
+
+  // The onboarding page is one implementation behind two routes, not two pages: the
+  // Worker and the host service must serve the same document and the same headers.
+  const host = await readFile(join(root, 'server/index.js'), 'utf8');
+  const page = await readFile(join(root, 'server/billing-success.js'), 'utf8');
+  expect(worker).toContain("'/v1/billing/success'");
+  expect(host).toContain("BILLING_SUCCESS_ENDPOINT_PATH = '/v1/billing/success'");
+  expect(worker).toContain("from '../server/billing-success.js'");
+  expect(host).toContain("from './billing-success.js'");
+  expect(page).toContain("default-src 'none'");
+  expect(page).toContain("'cache-control': 'no-store'");
+  // The key is shown by consuming the claim, so the page route cannot be a second
+  // way to read one the JSON route already handed out.
+  expect(worker).toContain("callRpc(env, 'claim_checkout_session'");
+  expect(host).toContain('store.consumeCheckoutClaim(sessionId)');
 
   // The manifest is committed, so it may name the entrypoint and the secrets an
   // operator sets, and nothing that looks like a credential value.

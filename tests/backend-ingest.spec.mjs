@@ -545,6 +545,69 @@ test('webhook ledger prunes entries older than 24h and rolls back atomically on 
   }
 });
 
+test('the host serves the one-time onboarding page and never repeats a claimed key', async () => {
+  const host = await createNaviHostServer({ port: 0, storeFile: join(tmpdir(), `navi-billing-success-${process.pid}-${Date.now()}.db`) });
+  const base = `http://127.0.0.1:${host.port}`;
+  try {
+    expect(typeof host.store.recordCheckoutClaim, 'the store must be able to hold a checkout claim').toBe('function');
+    await host.store.recordCheckoutClaim?.({ session_id: 'cs_page', tenant_id: 'tenant-page', api_key: 'navi_live_page_key' });
+
+    // A Checkout `success_url` redirect is opened by a browser, so the answer is a
+    // document: the page, with the headers that keep a credential out of caches,
+    // referrers and frames.
+    let response = await fetch(`${base}/v1/billing/success?session_id=cs_page`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
+    expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('x-frame-options')).toBe('DENY');
+    const page = await response.text();
+    expect(page).toContain('navi_live_page_key');
+    expect(page).toContain('tenant-page');
+    // The snippet is escaped for display, so what a customer copies is the tag the
+    // browser would have parsed rather than markup injected into the page.
+    expect(page).toContain('data-key=&quot;navi_live_page_key&quot;');
+    expect(page).toContain(`src=&quot;${base}/v1/loader.js&quot;`);
+    expect(page).toContain('Authorization: Bearer navi_live_page_key');
+    expect(page).toMatch(/shown once/i);
+    expect(page).toContain('noindex');
+
+    // Rendering the page consumed the claim, so a refresh is an error page and the
+    // key is nowhere in it.
+    response = await fetch(`${base}/v1/billing/success?session_id=cs_page`);
+    expect(response.status).toBe(404);
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const errorPage = await response.text();
+    expect(errorPage).not.toContain('navi_live_page_key');
+    expect(errorPage).toMatch(/expired or already been used/i);
+
+    // Missing and non-checkout ids are the same answer, and claim nothing.
+    for (const query of ['', '?session_id=', '?session_id=nope']) {
+      response = await fetch(`${base}/v1/billing/success${query}`);
+      expect(response.status).toBe(404);
+      expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    }
+
+    // A non-GET is a page too, and it claims nothing.
+    await host.store.recordCheckoutClaim?.({ session_id: 'cs_post', tenant_id: 'tenant-page', api_key: 'navi_live_post_key' });
+    response = await fetch(`${base}/v1/billing/success?session_id=cs_post`, { method: 'POST' });
+    expect(response.status).toBe(405);
+    expect(response.headers.get('allow')).toBe('GET');
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(await response.text()).not.toContain('navi_live_post_key');
+    // ...and the claim it did not touch is still redeemable over JSON.
+    response = await fetch(`${base}/v1/billing/session?session_id=cs_post`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, tenant_id: 'tenant-page', api_key: 'navi_live_post_key' });
+  } finally {
+    await host.close();
+  }
+});
+
 test('reports health and refuses unknown routes', async () => {
   const health = await fetch(`${state.base}/healthz`);
   expect(health.status).toBe(200);

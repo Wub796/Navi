@@ -289,6 +289,38 @@ test('the quota charge is serialised, refuses a forbidden origin for free and ro
   expect(json(`select public.consume_site_quota('nope', 1, null, null)::text;`)).toEqual({ found: false });
 });
 
+test('the map write commits with the charge and rolls back with it', () => {
+  run(`select public.apply_stripe_webhook('evt_1', 'acme', 'navi_live_a', '["https://app.example.com"]'::jsonb, 2, 60, true);`);
+
+  // One call charges the event and stores the map it was handed.
+  expect(json(`select public.consume_site_quota('navi_live_a', 1000, 'https://app.example.com', null, 'https://app.example.com/checkout', '{"url":"https://app.example.com/checkout","actions":[]}'::jsonb)::text;`)).toMatchObject({ allowed: true, remaining: 1 });
+  expect(run("select payload->>'url' from public.navigation_maps where url = 'https://app.example.com/checkout';")).toBe('https://app.example.com/checkout');
+  expect(run('select event_count from public.sites;')).toBe('1');
+
+  // A second event for the same URL replaces the stored map rather than appending.
+  run(`select public.consume_site_quota('navi_live_a', 1001, 'https://app.example.com', null, 'https://app.example.com/checkout', '{"url":"https://app.example.com/checkout","actions":[{"name":"Pay"}]}'::jsonb);`);
+  expect(run('select count(*) from public.navigation_maps;')).toBe('1');
+  expect(run("select payload->'actions'->0->>'name' from public.navigation_maps;")).toBe('Pay');
+
+  // A refused event stores nothing: the ceiling is spent, so the map never lands.
+  expect(json(`select public.consume_site_quota('navi_live_a', 1002, 'https://app.example.com', null, 'https://app.example.com/refused', '{"url":"https://app.example.com/refused"}'::jsonb)::text;`)).toMatchObject({ allowed: false });
+  expect(run("select count(*) from public.navigation_maps where url = 'https://app.example.com/refused';")).toBe('0');
+
+  // A storage failure aborts the call, so the charge goes with it. Without the
+  // single transaction the tenant would be billed for an event that was not stored.
+  run("alter table public.navigation_maps add constraint navi_storage_probe check (url <> 'https://boom.example');");
+  const before = run('select event_count from public.sites;');
+  const failed = run(`select public.consume_site_quota('navi_live_a', 61002, 'https://app.example.com', null, 'https://boom.example', '{"url":"https://boom.example"}'::jsonb);`, { allowFailure: true });
+  expect(failed).toContain('ERROR');
+  expect(run('select event_count from public.sites;'), 'a failed storage write must take the charge with it').toBe(before);
+  expect(run("select count(*) from public.navigation_maps where url = 'https://boom.example';")).toBe('0');
+  run('alter table public.navigation_maps drop constraint navi_storage_probe;');
+
+  // The same call succeeds once the failure is gone, so nothing is left poisoned.
+  expect(json(`select public.consume_site_quota('navi_live_a', 61003, 'https://app.example.com', null, 'https://app.example.com/after', '{"url":"https://app.example.com/after"}'::jsonb)::text;`)).toMatchObject({ allowed: true });
+  expect(run("select count(*) from public.navigation_maps where url = 'https://app.example.com/after';")).toBe('1');
+});
+
 test('concurrent charges admit exactly the ceiling, never more', async () => {
   run(`select public.apply_stripe_webhook('evt_1', 'acme', 'navi_live_a', '["*"]'::jsonb, 3, 60, true);`);
   // Eight isolates charging at once against a ceiling of three. Without the row

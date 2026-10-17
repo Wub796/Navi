@@ -261,8 +261,13 @@ begin
 end;
 $$;
 
+-- An earlier release defined this with four parameters. `create or replace` with a
+-- different argument list would add an overload and leave the old function callable
+-- through PostgREST, so the old shape is dropped explicitly.
+drop function if exists public.consume_site_quota(text, bigint, text, text);
+
 /**
- * Charge one event against a site's window, under a row lock.
+ * Charge one event against a site's window and store its map, under a row lock.
  *
  * A read-modify-write from two isolates both read the same `event_count` and both
  * write `count + 1`, so a ceiling of 100 can admit far more than 100 events.
@@ -274,12 +279,19 @@ $$;
  * is storing, which is the only origin the payload itself attests to;
  * `p_header_origin` is the request's `Origin` header, already normalised by the
  * Worker. An empty string is "present but unparseable" and matches nothing.
+ *
+ * `p_url` and `p_payload` are the map to store. When both are given the upsert runs
+ * in this transaction, after the charge: one call stores and charges, and a storage
+ * failure takes the charge down with it instead of leaving a tenant paying for an
+ * event that was never written. Passing neither is a metering-only call.
  */
 create or replace function public.consume_site_quota(
   p_api_key text,
   p_now_ms bigint,
   p_origin text default null,
-  p_header_origin text default null
+  p_header_origin text default null,
+  p_url text default null,
+  p_payload jsonb default null
 ) returns jsonb
 language plpgsql
 security definer
@@ -320,69 +332,69 @@ begin
     );
   end if;
 
-  -- NULL is unmetered: no ceiling was ever provisioned, so there is nothing to
-  -- charge and no window to roll.
-  if site.max_events_per_window is null then
-    return jsonb_build_object(
-      'found', true,
-      'id', site.id,
-      'forbidden', false,
-      'allowed', true,
-      'limit', null,
-      'remaining', null,
-      'retry_after_seconds', 0,
-      'allowed_origins', to_jsonb(site.allowed_origins)
-    );
+  -- A metered site is charged here. An unmetered one skips the charge and still
+  -- reaches the map write below, so neither plan can accept an event and drop it.
+  if site.max_events_per_window is not null then
+    limit_count := site.max_events_per_window;
+    effective_window_seconds := coalesce(nullif(site.window_seconds, 0), 3600);
+    window_ms := effective_window_seconds::bigint * 1000;
+
+    -- A ceiling of 0 is a suspension, not an absence of metering: it refuses with
+    -- the full window as its retry hint rather than being read as unmetered.
+    if limit_count = 0 then
+      return jsonb_build_object(
+        'found', true,
+        'id', site.id,
+        'forbidden', false,
+        'allowed', false,
+        'limit', 0,
+        'remaining', 0,
+        'retry_after_seconds', greatest(1, effective_window_seconds),
+        'allowed_origins', to_jsonb(site.allowed_origins)
+      );
+    end if;
+
+    if site.window_start_ms is not null
+       and site.window_start_ms > 0
+       and p_now_ms - site.window_start_ms < window_ms then
+      window_start := site.window_start_ms;
+      consumed := greatest(coalesce(site.event_count, 0), 0);
+    else
+      window_start := p_now_ms;
+      consumed := 0;
+    end if;
+
+    if consumed >= limit_count then
+      retry_after := greatest(1, ceil((window_start + window_ms - p_now_ms) / 1000.0)::integer);
+      return jsonb_build_object(
+        'found', true,
+        'id', site.id,
+        'forbidden', false,
+        'allowed', false,
+        'limit', limit_count,
+        'remaining', 0,
+        'retry_after_seconds', retry_after,
+        'allowed_origins', to_jsonb(site.allowed_origins)
+      );
+    end if;
+
+    update public.sites
+       set window_start_ms = window_start,
+           event_count = consumed + 1,
+           updated_at = now()
+     where id = site.id;
   end if;
 
-  limit_count := site.max_events_per_window;
-  effective_window_seconds := coalesce(nullif(site.window_seconds, 0), 3600);
-  window_ms := effective_window_seconds::bigint * 1000;
-
-  -- A ceiling of 0 is a suspension, not an absence of metering: it refuses with
-  -- the full window as its retry hint rather than being read as unmetered.
-  if limit_count = 0 then
-    return jsonb_build_object(
-      'found', true,
-      'id', site.id,
-      'forbidden', false,
-      'allowed', false,
-      'limit', 0,
-      'remaining', 0,
-      'retry_after_seconds', greatest(1, effective_window_seconds),
-      'allowed_origins', to_jsonb(site.allowed_origins)
-    );
+  -- The map is written inside this transaction, after the charge: an insert that
+  -- fails aborts the call, so the increment above is rolled back with it and the
+  -- tenant is not charged for an event that was never stored.
+  if p_url is not null and p_payload is not null then
+    insert into public.navigation_maps (site_id, url, payload, updated_at)
+    values (site.id, p_url, p_payload, now())
+    on conflict (site_id, url) do update
+      set payload = excluded.payload,
+          updated_at = now();
   end if;
-
-  if site.window_start_ms is not null
-     and site.window_start_ms > 0
-     and p_now_ms - site.window_start_ms < window_ms then
-    window_start := site.window_start_ms;
-    consumed := greatest(coalesce(site.event_count, 0), 0);
-  else
-    window_start := p_now_ms;
-    consumed := 0;
-  end if;
-
-  if consumed >= limit_count then
-    retry_after := greatest(1, ceil((window_start + window_ms - p_now_ms) / 1000.0)::integer);
-    return jsonb_build_object(
-      'found', true,
-      'id', site.id,
-      'forbidden', false,
-      'allowed', false,
-      'limit', limit_count,
-      'remaining', 0,
-      'retry_after_seconds', retry_after,
-      'allowed_origins', to_jsonb(site.allowed_origins)
-    );
-  end if;
-
-  update public.sites
-     set window_start_ms = window_start,
-         event_count = consumed + 1,
-         updated_at = now()
-   where id = site.id;
 
   return jsonb_build_object(
     'found', true,
@@ -390,7 +402,8 @@ begin
     'forbidden', false,
     'allowed', true,
     'limit', limit_count,
-    'remaining', greatest(limit_count - (consumed + 1), 0),
+    -- NULL for an unmetered site: there is no ceiling to report a remainder of.
+    'remaining', case when limit_count is null then null else greatest(limit_count - (coalesce(consumed, 0) + 1), 0) end,
     'retry_after_seconds', 0,
     'allowed_origins', to_jsonb(site.allowed_origins)
   );
@@ -441,9 +454,15 @@ $$;
 -- `authenticated` is every signed-in end user of a Supabase project; neither may
 -- charge a tenant's quota or read a provisioned key.
 revoke all on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz) from public, anon, authenticated;
-revoke all on function public.consume_site_quota(text, bigint, text, text) from public, anon, authenticated;
+revoke all on function public.consume_site_quota(text, bigint, text, text, text, jsonb) from public, anon, authenticated;
 revoke all on function public.claim_checkout_session(text) from public, anon, authenticated;
 
 grant execute on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz) to service_role;
-grant execute on function public.consume_site_quota(text, bigint, text, text) to service_role;
+grant execute on function public.consume_site_quota(text, bigint, text, text, text, jsonb) to service_role;
 grant execute on function public.claim_checkout_session(text) to service_role;
+
+-- PostgREST serves the tables and functions it last introspected, so a function
+-- added or replaced here is invisible over HTTP until that cache is refreshed. The
+-- notification is what makes applying this file sufficient on its own; without it
+-- a deployment looks healthy and answers 404 for a function that exists.
+notify pgrst, 'reload schema';

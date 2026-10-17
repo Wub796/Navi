@@ -1,5 +1,6 @@
 import { validateCrawlerPayload } from './crawler-payload.js';
 import type { CrawlerPayload } from './dom-crawler.js';
+import { BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage } from '../server/billing-success.js';
 
 export interface Env {
   SUPABASE_URL: string;
@@ -26,6 +27,18 @@ type RpcResult = Record<string, unknown>;
 const json = (status: number, body: Record<string, unknown>, extraHeaders: Record<string, string> = {}): Response => new Response(JSON.stringify(body), {
   status,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extraHeaders },
+});
+
+/**
+ * An HTML response for the onboarding page, with the shared header set (CSP,
+ * `no-store`, `no-referrer`) applied by the renderer's module rather than restated
+ * here, so the Worker and the host service cannot disagree about them.
+ * @param {number} status @param {string} body @param {Record<string, string>} [extraHeaders]
+ * @returns {Response}
+ */
+const html = (status: number, body: string, extraHeaders: Record<string, string> = {}): Response => new Response(body, {
+  status,
+  headers: { ...BILLING_PAGE_HEADERS, ...extraHeaders },
 });
 
 function extractOrigin(urlValue: string): string | null {
@@ -321,6 +334,39 @@ async function handleBilling(request: Request, env: Env): Promise<Response> {
   return recordIgnoredEvent(env, eventId);
 }
 
+/**
+ * Render the post-checkout onboarding page, consuming the claim to do it.
+ *
+ * The same claim the JSON route consumes, deliberately: a key is shown once, so
+ * whichever surface a customer reaches first is the one that reveals it and the
+ * other answers 404. The page is a plain document with no script, and the headers
+ * carry the CSP that enforces it.
+ * @param {URL} url @param {Env} env @param {string} pageOrigin
+ * @returns {Promise<Response>}
+ */
+async function handleBillingSuccess(url: URL, env: Env, pageOrigin: string): Promise<Response> {
+  const sessionId = (url.searchParams.get('session_id') ?? '').trim();
+  // Nothing is claimed for a value that cannot be a Checkout Session id, so a
+  // scanner cannot burn a customer's one-time link by guessing at it.
+  if (!sessionId.startsWith('cs_')) return html(404, renderBillingClaimErrorPage());
+  try {
+    const result = await callRpc(env, 'claim_checkout_session', { p_session_id: sessionId });
+    if (result.ok !== true || typeof result.tenant_id !== 'string' || typeof result.api_key !== 'string') {
+      return html(404, renderBillingClaimErrorPage());
+    }
+    return html(200, renderBillingSuccessPage({
+      tenant_id: result.tenant_id,
+      api_key: result.api_key,
+      loader_url: `${pageOrigin}/v1/loader.js`,
+    }));
+  } catch {
+    return html(500, renderBillingClaimErrorPage({
+      title: 'Something went wrong',
+      detail: 'The key could not be retrieved just now, and the link is still unused. Try it again in a moment.',
+    }));
+  }
+}
+
 /** @param {URL} url @param {Env} env @returns {Promise<Response>} */
 async function handleBillingSession(url: URL, env: Env): Promise<Response> {
   const sessionId = (url.searchParams.get('session_id') ?? '').trim();
@@ -348,6 +394,18 @@ export default {
     if (url.pathname === '/v1/billing/session') {
       if (request.method !== 'GET') return json(404, { error: 'Not found' });
       return handleBillingSession(url, env);
+    }
+    if (url.pathname === '/v1/billing/success') {
+      // A browser follows a Stripe redirect with GET; anything else is answered as
+      // the same page-shaped error rather than a JSON body a browser would render
+      // as text.
+      if (request.method !== 'GET') {
+        return html(405, renderBillingClaimErrorPage({
+          title: 'Use a GET request',
+          detail: 'This address renders the one-time key page, which a browser opens with GET. Nothing was claimed by this request.',
+        }), { allow: 'GET' });
+      }
+      return handleBillingSuccess(url, env, url.origin);
     }
     if (url.pathname !== '/v1/sitemap/update' || request.method !== 'POST') {
       return json(404, { error: 'Not found' });
@@ -377,11 +435,17 @@ export default {
       const headerOrigin = rawOrigin === null || rawOrigin.trim().length === 0
         ? null
         : (extractOrigin(rawOrigin.trim()) ?? '');
+      // One call: the charge, the origin decision and the map write are one
+      // transaction, so the map cannot be stored without being charged for and the
+      // charge cannot survive a storage failure. `p_url`/`p_payload` are what make
+      // it the ingest call rather than a metering-only one.
       const quota = await callRpc(env, 'consume_site_quota', {
         p_api_key: apiKey,
         p_now_ms: Date.now(),
         p_origin: extractOrigin(validated.url),
         p_header_origin: headerOrigin,
+        p_url: validated.url,
+        p_payload: validated,
       });
       if (quota.found !== true) return json(401, { error: 'Unauthorized' });
       if (quota.forbidden === true) return json(403, { error: 'Forbidden origin' });
@@ -392,14 +456,6 @@ export default {
           'X-Quota-Remaining': '0',
         });
       }
-
-      const siteId = String(quota.id);
-      const upsert = await fetch(`${supabaseBase(env)}/rest/v1/navigation_maps?on_conflict=site_id,url`, {
-        method: 'POST',
-        headers: { ...supabaseHeaders(env), Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify({ site_id: siteId, url: validated.url, payload: validated }),
-      });
-      if (!upsert.ok) return json(500, { error: 'Internal server error' });
       return json(200, { ok: true, url: validated.url, targets: validated.actions.length });
     } catch {
       return json(500, { error: 'Internal server error' });
