@@ -141,4 +141,4 @@ This runs ten paired tasks per execution path against a disposable live, multi-s
 
 The checkout is also available through `npm run dev` at `/tcr-checkout.html` for UI review, using the same disposable fixture backend. SDK mutation silence is a scheduling signal, not proof of a server commit: the independent outcome oracle remains essential.
 
-The package is **0.6.2**. The immutable `v0.6.1` tag stays where it is; this change creates the annotated `v0.6.2` tag and publishes the package from it through the keyless OIDC pipeline, but pushes no image and deploys nothing to production.
+The package is **0.6.2**. The immutable `v0.6.1` tag stays where it is; this change creates the annotated `v0.6.2` tag and runs the keyless OIDC publish pipeline from it, but pushes no image and deploys nothing to production.
