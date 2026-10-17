@@ -58,21 +58,21 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 
 ### Verification
 
-Provenance: `evidence.revision` is `a56cec31a8fc978d183093c14192a9a00ac975cc` and `evidence.sourceTree` is `sha256:093060e719363635a10755b1d2a0ca3443a6087f6ad48f315a0b5d25538e32d3` — a digest of every tracked
+Provenance: `evidence.revision` is `4dc26381d21217d30bb6d0c0df4f84ce5da20acc` and `evidence.sourceTree` is `sha256:e5528dade055ba276525b10a367a9616d8f382426349bff58329be70732d376f` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-17T22:45:58.652Z: **12/12 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-17T22:57:32.230Z: **11/11 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 5 generated path(s) |
-| `version-tag` | pass | v0.6.5 does not exist yet; it will be created after all checks pass |
+| `git-clean` | pass | clean apart from 6 generated path(s) |
+| `version-tag` | pass | v0.6.5 does not exist yet (create it with --tag once this gate is green) |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
 | `test-suite` | pass | 245 passed, 0 failed, 0 skipped (floor 245) |
@@ -80,7 +80,6 @@ Recorded by `npm run verify:release` at 2026-10-17T22:45:58.652Z: **12/12 checks
 | `pack-check` | pass | every published path is an intended release artifact |
 | `cleanroom-package-canary` | pass | 6/6 clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake) |
 | `rebuild-stable` | pass | rebuilt to identical bytes (14929 B bundle, 689 B loader) |
-| `create-tag` | pass | created v0.6.5 at a56cec3 |
 
 ### Discovery
 

@@ -1,11 +1,11 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-17T22:45:58.652Z",
+  "recordedAt": "2026-10-17T22:57:32.230Z",
   "evidence": {
-    "revision": "a56cec31a8fc978d183093c14192a9a00ac975cc",
+    "revision": "4dc26381d21217d30bb6d0c0df4f84ce5da20acc",
     "branch": "main",
-    "sourceTree": "sha256:093060e719363635a10755b1d2a0ca3443a6087f6ad48f315a0b5d25538e32d3",
+    "sourceTree": "sha256:e5528dade055ba276525b10a367a9616d8f382426349bff58329be70732d376f",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
@@ -88,12 +88,12 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 5 generated path(s)"
+      "detail": "clean apart from 6 generated path(s)"
     },
     {
       "id": "version-tag",
       "ok": true,
-      "detail": "v0.6.5 does not exist yet; it will be created after all checks pass"
+      "detail": "v0.6.5 does not exist yet (create it with --tag once this gate is green)"
     },
     {
       "id": "artifact-budget",
@@ -129,11 +129,6 @@
       "id": "rebuild-stable",
       "ok": true,
       "detail": "rebuilt to identical bytes (14929 B bundle, 689 B loader)"
-    },
-    {
-      "id": "create-tag",
-      "ok": true,
-      "detail": "created v0.6.5 at a56cec3"
     }
   ]
 }
