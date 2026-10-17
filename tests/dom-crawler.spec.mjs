@@ -158,7 +158,7 @@ test('Worker sitemap endpoint enforces per-tenant allowed_origins with HTTP 403 
 
 test('Worker sitemap endpoint meters a site against max_events_per_window, persists the window and rolls it over', async () => {
   const originalFetch = globalThis.fetch;
-  /** @type {{id: string, max_events_per_window: number, window_seconds: number, window_start_ms: number, event_count: number}} */
+  /** @type {{id: string, max_events_per_window: number | null, window_seconds: number, window_start_ms: number, event_count: number}} */
   const site = { id: 'site-1', max_events_per_window: 2, window_seconds: 60, window_start_ms: Date.now(), event_count: 1 };
   /** @type {{url: string, init: RequestInit}[]} */
   const calls = [];
