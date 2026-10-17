@@ -1,4 +1,4 @@
-## Navi 0.6.4
+## Navi 0.6.5
 
 Distributed browser runtime for agent-driven pages: deterministic action maps, differential
 updates, guarded execution and settlement receipts. Protocol version `0.3.0` — read out of
@@ -34,8 +34,8 @@ container receipts rather than restated here.
 
 | Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |
 |---|---|---|---|---|---|---:|---:|
-| linux/arm64 | `sha256:3f8c81ad9ee7780f12bbe3f9b8989c6674b416f295d9a118772a384ff93e1bc4` | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
-| linux/arm64 | `sha256:3f8c81ad9ee7780f12bbe3f9b8989c6674b416f295d9a118772a384ff93e1bc4` | `docker-compose.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
+| linux/arm64 | `sha256:7b7c005081e1e140afbb69173a79ca4c7b732354e06cb1e1f83600c206f2d787` | `deploy/docker-compose.prod.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
+| linux/arm64 | `sha256:7b7c005081e1e140afbb69173a79ca4c7b732354e06cb1e1f83600c206f2d787` | `docker-compose.yml` | uid 1000 (v22.23.3) | dropped (`CapEff 0`, `NoNewPrivs 1`) | sqlite, `-wal` sidecar present | SIGKILL 137 → counter 1; graceful stop → 0 | 18/18 pass |
 
 ### Clean-Room Package Canary Attestation
 
@@ -51,31 +51,31 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 | :--- | :--- | :--- |
 | `manifest-layout` | all 13 required manifest exports present (dist/navi.min.js, dist/loader.min.js, dist/mcp.mjs, bin/navi-mcp.js, …) | Passed |
 | `sri-and-budgets` | dist/navi.min.js (14929 B) matches sha384-TmtbTx4Um3FaZ25ht…; dist/loader.min.js is 689 B (<=700 B) | Passed |
-| `zero-leak-isolation` | 0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (19 files total) | Passed |
-| `mcp-initialize` | negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.4 (Navi protocol 0.3.0) | Passed |
+| `zero-leak-isolation` | 0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (20 files total) | Passed |
+| `mcp-initialize` | negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.5 (Navi protocol 0.3.0) | Passed |
 | `mcp-tools-list` | tools/list declared navi_navigate, navi_get_actions, navi_execute_action, navi_assert_state, navi_set_session (Navi protocol 0.3.0) | Passed |
 | `mcp-sigterm-teardown` | clean teardown on SIGTERM with exit code 0 | Passed |
 
 ### Verification
 
-Provenance: `evidence.revision` is `9d884aa845cb0bbd0ea5d656a20d970cff25668c` and `evidence.sourceTree` is `sha256:070657b75f0d12c88af0901dbb395105af8427207a488df6475c322c8cd8cb83` — a digest of every tracked
+Provenance: `evidence.revision` is `a15b691f38b944dc2eb193f3910bfaa48329fdcb` and `evidence.sourceTree` is `sha256:63049fdd50980867b3cb83173bab3676ac41c9821dd137d4bbbafa8e4eda5369` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-17T19:30:56.790Z: **11/11 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-17T22:43:05.088Z: **11/11 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 6 generated path(s) |
-| `version-tag` | pass | v0.6.4 points at HEAD |
+| `git-clean` | pass | clean apart from 0 generated path(s) |
+| `version-tag` | pass | v0.6.5 does not exist yet (create it with --tag once this gate is green) |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
-| `test-suite` | pass | 240 passed, 0 failed, 0 skipped (floor 240) |
+| `test-suite` | pass | 245 passed, 0 failed, 0 skipped (floor 245) |
 | `ci-gates` | pass | All selected gates passed. |
 | `pack-check` | pass | every published path is an intended release artifact |
 | `cleanroom-package-canary` | pass | 6/6 clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake) |
@@ -91,7 +91,7 @@ configuration for Claude Desktop, Cursor and page embeds: [docs/INTEGRATION-MATR
 
 ### Honest limits
 
-These notes are generated from this repository's own gate receipts on v0.6.4. The npm publish
+These notes are generated from this repository's own gate receipts on v0.6.5. The npm publish
 is verified by the workflow, not by a hosted CI run reproduced here; the remote SSE transport
 is exercised against this repository's own SSE tests rather than a third-party client; and
 each architecture's container verification is recorded only where a receipt exists — a

@@ -1,25 +1,25 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-17T19:30:56.790Z",
+  "recordedAt": "2026-10-17T22:43:05.088Z",
   "evidence": {
-    "revision": "9d884aa845cb0bbd0ea5d656a20d970cff25668c",
+    "revision": "a15b691f38b944dc2eb193f3910bfaa48329fdcb",
     "branch": "main",
-    "sourceTree": "sha256:070657b75f0d12c88af0901dbb395105af8427207a488df6475c322c8cd8cb83",
+    "sourceTree": "sha256:63049fdd50980867b3cb83173bab3676ac41c9821dd137d4bbbafa8e4eda5369",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
-    "floor": 240,
+    "floor": 245,
     "tests": [
-      240,
+      245,
       0
     ],
     "containers": [
       {
         "architecture": "linux/arm64",
         "compose": "deploy/docker-compose.prod.yml",
-        "imageId": "sha256:3f8c81ad9ee7780f12bbe3f9b8989c6674b416f295d9a118772a384ff93e1bc4",
-        "recordedAt": "2026-10-17T19:07:09.196Z",
+        "imageId": "sha256:7b7c005081e1e140afbb69173a79ca4c7b732354e06cb1e1f83600c206f2d787",
+        "recordedAt": "2026-10-17T22:40:06.628Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -27,8 +27,8 @@
       {
         "architecture": "linux/arm64",
         "compose": "docker-compose.yml",
-        "imageId": "sha256:3f8c81ad9ee7780f12bbe3f9b8989c6674b416f295d9a118772a384ff93e1bc4",
-        "recordedAt": "2026-10-17T19:06:50.156Z",
+        "imageId": "sha256:7b7c005081e1e140afbb69173a79ca4c7b732354e06cb1e1f83600c206f2d787",
+        "recordedAt": "2026-10-17T22:39:45.661Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -54,12 +54,12 @@
         {
           "id": "zero-leak-isolation",
           "ok": true,
-          "detail": "0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (19 files total)"
+          "detail": "0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (20 files total)"
         },
         {
           "id": "mcp-initialize",
           "ok": true,
-          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.4 (Navi protocol 0.3.0)"
+          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.5 (Navi protocol 0.3.0)"
         },
         {
           "id": "mcp-tools-list",
@@ -88,12 +88,12 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 6 generated path(s)"
+      "detail": "clean apart from 0 generated path(s)"
     },
     {
       "id": "version-tag",
       "ok": true,
-      "detail": "v0.6.4 points at HEAD"
+      "detail": "v0.6.5 does not exist yet (create it with --tag once this gate is green)"
     },
     {
       "id": "artifact-budget",
@@ -108,7 +108,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "240 passed, 0 failed, 0 skipped (floor 240)"
+      "detail": "245 passed, 0 failed, 0 skipped (floor 245)"
     },
     {
       "id": "ci-gates",
