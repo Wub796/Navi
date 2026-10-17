@@ -45,7 +45,7 @@ const billingRequest = (body, signature = stripeSignature(body), env = workerEnv
  * itself is executed against a real PostgreSQL cluster in
  * `supabase-schema.spec.mjs`; this exists so the Worker's own status-code mapping is
  * testable without a database, and it is deliberately small rather than clever.
- * @param {{sites?: any[], lookupFails?: boolean}} [options]
+ * @param {{sites?: any[]}} [options]
  */
 function fakeSupabase(options = {}) {
   /** @type {Map<string, any>} */
@@ -58,7 +58,6 @@ function fakeSupabase(options = {}) {
   const maps = new Map();
   /** @type {{url: string, init: RequestInit}[]} */
   const calls = [];
-  const lookupFails = { value: options.lookupFails === true };
   /** Set to make the webhook function answer 500, which is a transaction that aborted. */
   const failApply = { value: false };
   /** Set to make the ingest's map write fail, which must roll its charge back. */
@@ -114,8 +113,10 @@ function fakeSupabase(options = {}) {
     }
     if (!body.p_site_id) return { duplicate: false, ignored: true };
     const existing = sites.get(body.p_site_id);
-    if (!existing && !body.p_api_key) return { duplicate: false, tenant_id: body.p_site_id, missing: true, api_key: null };
-    const site = existing ?? { id: body.p_site_id, api_key: body.p_api_key, allowed_origins: ['*'], max_events_per_window: null, window_seconds: null, window_start_ms: null, event_count: 0, active: true };
+    if (!existing && !body.p_api_key && !body.p_candidate_api_key) return { duplicate: false, tenant_id: body.p_site_id, missing: true, api_key: null };
+    // The candidate is for the insert branch only; an existing row keeps its key
+    // unless the event itself names one, exactly as the SQL's `do update` does.
+    const site = existing ?? { id: body.p_site_id, api_key: body.p_api_key ?? body.p_candidate_api_key, allowed_origins: ['*'], max_events_per_window: null, window_seconds: null, window_start_ms: null, event_count: 0, active: true };
     if (body.p_api_key) site.api_key = body.p_api_key;
     if (body.p_allowed_origins) site.allowed_origins = body.p_allowed_origins;
     if (body.p_max_events_per_window !== null && body.p_max_events_per_window !== undefined) site.max_events_per_window = body.p_max_events_per_window;
@@ -148,12 +149,7 @@ function fakeSupabase(options = {}) {
       const handler = /** @type {Record<string, (body: any) => any>} */ (handlers)[rpc[1]];
       return Response.json(handler(JSON.parse(String(init.body))));
     }
-    if (url.includes('select=id,api_key')) {
-      if (lookupFails.value) return new Response('upstream failure', { status: 500 });
-      const id = /id=eq\.([^&]+)/.exec(url)?.[1] ?? '';
-      const site = sites.get(decodeURIComponent(id));
-      return Response.json(site ? [{ id: site.id, api_key: site.api_key }] : []);
-    }
+    if (url.includes('select=id,api_key')) throw new Error(`provisioning must not read the tenant first: ${url}`);
     return new Response(null, { status: 201 });
   };
 
@@ -163,7 +159,6 @@ function fakeSupabase(options = {}) {
     claims,
     maps,
     calls,
-    lookupFails,
     failApply,
     failStorage,
     fetch: fetchImpl,
@@ -490,21 +485,26 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
     expect(provisioned.ok).toBe(true);
     expect(provisioned.tenant_id).toBe('acme');
     expect(provisioned.api_key).toMatch(/^navi_live_[0-9a-f]{64}$/);
-    // One call, not four: the ledger claim, the tenant upsert and the checkout
-    // claim commit together, so no request can be answered between them.
+    // One call, not two: the tenant row, its minted key and the checkout claim commit
+    // in one statement, so a key handed to a page always belongs to a tenant that exists.
     const apply = calls.find(call => call.url.includes('/rpc/apply_stripe_webhook'));
     expect(apply?.init.method).toBe('POST');
+    expect(calls.filter(call => call.url.includes('/rest/v1/sites')), 'a new tenant needs no read first').toHaveLength(0);
     const applyBody = JSON.parse(String(apply?.init.body));
     expect(applyBody).toMatchObject({
       p_event_id: 'evt_1',
       p_site_id: 'acme',
-      p_api_key: provisioned.api_key,
+      p_api_key: null,
       p_allowed_origins: ['https://app.example.com', 'https://admin.example.com'],
       p_max_events_per_window: 50,
       p_window_seconds: 600,
       p_active: true,
       p_session_id: 'cs_test'
     });
+    // The minted key travels as the candidate, so the function can insert it without
+    // a second request, and the row's key is what the response reports.
+    expect(applyBody.p_candidate_api_key).toMatch(/^navi_live_[0-9a-f]{64}$/);
+    expect(applyBody.p_candidate_api_key).toBe(provisioned.api_key);
     // The claim is 15 minutes out, and it is written by the same statement as the
     // tenant, so a handed-out key always belongs to a site that exists.
     const claimTtl = Date.parse(applyBody.p_claim_expires_at) - Date.now();
@@ -551,20 +551,28 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
     expect(response.status, 'the resend must be processed, not treated as a duplicate').toBe(200);
     expect((await response.json()).ok).toBe(true);
 
-    // An update that carries no api_key keeps the credential already embedded.
+    // An update that carries no api_key keeps the credential already embedded. It is
+    // one call: the candidate the Worker generates is refused by the `do update`, so
+    // nothing has to be read back to know the key survived.
     const update = JSON.stringify({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1', metadata: { tenant_id: 'acme', max_events_per_window: '75' } } } });
+    calls.length = 0;
     response = await billingRequest(update);
     expect(response.status).toBe(200);
     expect((await response.json()).api_key).toBe(provisioned.api_key);
+    const updateCall = calls.find(call => call.url.includes('/rpc/apply_stripe_webhook'));
+    expect(calls, 'provisioning is one request, in both directions').toHaveLength(1);
+    expect(JSON.parse(String(updateCall?.init.body))).toMatchObject({ p_site_id: 'acme', p_api_key: null });
+    expect(supabase.site('acme')?.api_key).toBe(provisioned.api_key);
 
-    // A failed key lookup must not fall through to minting a replacement: that
-    // would rotate the credential a live page is already embedding.
-    supabase.lookupFails.value = true;
+    // A delivery the function refuses is a 500 with no compensating write, and the
+    // credential is untouched: there is no fall-through path left to mint from.
+    supabase.failApply.value = true;
     calls.length = 0;
-    response = await billingRequest(update);
+    response = await billingRequest(update.replace('sub_1', 'sub_2'));
     expect(response.status).toBe(500);
-    expect(calls.some(call => call.url.includes('/rpc/apply_stripe_webhook')), 'a failed lookup must not write a new key').toBe(false);
-    supabase.lookupFails.value = false;
+    expect(calls).toHaveLength(1);
+    expect(supabase.site('acme')?.api_key).toBe(provisioned.api_key);
+    supabase.failApply.value = false;
 
     // A handled event with no tenant anywhere in it is a caller error, not a 200.
     const missing = JSON.stringify({ type: 'checkout.session.completed', data: { object: { metadata: {} } } });

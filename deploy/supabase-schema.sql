@@ -163,13 +163,19 @@ create policy checkout_claims_service_role_all on public.checkout_claims
  * `p_event_id` is the replay ledger key. When it is already present this returns
  * `{ duplicate: true }` before touching a single tenant row, so a redelivery is
  * a database decision rather than a race two isolates could win.
- *
  * `p_api_key` NULL means "keep the key this site already has": that is what a
  * subscription update or a cancellation carries, and rotating a credential a live
  * page is already embedding because the event omitted it is the bug this exists
- * to prevent. A NULL key for a site that does not exist returns `{ missing: true }`
- * rather than minting one — there is no tenant to provision, and a cancellation
- * for an unknown id must not create a working credential.
+ * to prevent.
+ *
+ * `p_candidate_api_key` is the key to mint if — and only if — this is a new tenant
+ * row. It never wins over an existing key on conflict, so a caller can generate one
+ * per delivery without a read first, which is what makes provisioning one round trip.
+ * An explicit `p_api_key` still rotates, because that is what the event asked for.
+ *
+ * A delivery with no key of either kind for a site that does not exist returns
+ * `{missing: true}` rather than minting one — there is no tenant to provision, and a
+ * cancellation for an unknown id must not create a working credential.
  *
  * `p_site_id` NULL records the event id and nothing else, so an event this
  * deployment ignores is still deduplicated on resend.
@@ -183,7 +189,8 @@ create or replace function public.apply_stripe_webhook(
   p_window_seconds integer,
   p_active boolean,
   p_session_id text default null,
-  p_claim_expires_at timestamptz default null
+  p_claim_expires_at timestamptz default null,
+  p_candidate_api_key text default null
 ) returns jsonb
 language plpgsql
 security definer
@@ -212,7 +219,7 @@ begin
   end if;
 
   select api_key into existing_key from public.sites where id = p_site_id;
-  if existing_key is null and p_api_key is null then
+  if existing_key is null and p_api_key is null and p_candidate_api_key is null then
     return jsonb_build_object('duplicate', false, 'tenant_id', p_site_id, 'missing', true, 'api_key', null);
   end if;
 
@@ -220,7 +227,7 @@ begin
     id, api_key, allowed_origins, max_events_per_window, window_seconds, active, updated_at
   ) values (
     p_site_id,
-    coalesce(p_api_key, existing_key),
+    coalesce(p_api_key, p_candidate_api_key, existing_key),
     coalesce(
       (select array_agg(origin) from jsonb_array_elements_text(p_allowed_origins) as origins(origin)),
       array['*']::text[]
@@ -231,6 +238,8 @@ begin
     now()
   )
   on conflict (id) do update set
+    -- `site.`, never `excluded.`: the candidate exists for the insert branch only, so
+    -- an update cannot rotate the credential a live page is already embedding.
     api_key = coalesce(p_api_key, site.api_key),
     -- An event that carries no origin list leaves the tenant's allow-list alone;
     -- coercing it to `['*']` on every update would silently widen a restriction.
@@ -265,6 +274,11 @@ $$;
 -- different argument list would add an overload and leave the old function callable
 -- through PostgREST, so the old shape is dropped explicitly.
 drop function if exists public.consume_site_quota(text, bigint, text, text);
+
+-- The same reason, for the webhook: v0.6.4's nine-argument shape has no candidate
+-- parameter, so a Worker that sends one would call it as an unknown argument and a
+-- stale nine-arg function would stay reachable by its old signature.
+drop function if exists public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz);
 
 /**
  * Charge one event against a site's window and store its map, under a row lock.
@@ -453,11 +467,11 @@ $$;
 -- makes these callable by the service role alone. `anon` ships in browser code and
 -- `authenticated` is every signed-in end user of a Supabase project; neither may
 -- charge a tenant's quota or read a provisioned key.
-revoke all on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz, text) from public, anon, authenticated;
 revoke all on function public.consume_site_quota(text, bigint, text, text, text, jsonb) from public, anon, authenticated;
 revoke all on function public.claim_checkout_session(text) from public, anon, authenticated;
 
-grant execute on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz) to service_role;
+grant execute on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz, text) to service_role;
 grant execute on function public.consume_site_quota(text, bigint, text, text, text, jsonb) to service_role;
 grant execute on function public.claim_checkout_session(text) to service_role;
 

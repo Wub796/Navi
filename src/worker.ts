@@ -198,10 +198,12 @@ function billingTenantId(object: any): string {
 /**
  * Provision a tenant from a verified billing event.
  *
- * The key is resolved here and written by the function, not read back afterwards:
- * an update that carries no `api_key` must keep the credential a live page is
- * already embedding, and minting a replacement would break every embed at once. A
- * failed lookup is a 500 rather than a fall-through to minting for the same reason.
+ * One round trip: the key is generated here and sent as a candidate, which the
+ * function uses only when it inserts a new row. It keeps the key on conflict, so a
+ * subscription update or a retry cannot rotate the credential a live page is already
+ * embedding, and there is no read to race with the write or to fall through from.
+ * An event that names a key in `metadata.api_key` still sets it, because that is an
+ * explicit instruction rather than an omission.
  * @param {Env} env @param {any} object @param {string} eventType @param {string} eventId
  * @returns {Promise<Response>}
  */
@@ -211,22 +213,13 @@ async function provisionSite(env: Env, object: any, eventType: string, eventId: 
   const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
   try {
     const explicitKey = typeof metadata.api_key === 'string' ? metadata.api_key.trim() : '';
-    let apiKey = explicitKey;
-    if (!apiKey) {
-      const existing = await fetch(`${supabaseBase(env)}/rest/v1/sites?id=eq.${encodeURIComponent(tenantId)}&select=id,api_key`, { headers: supabaseHeaders(env) });
-      // A failed lookup must not fall through to minting: that would silently
-      // rotate the credential a live tenant is already embedding.
-      if (!existing.ok) return json(500, { error: 'Internal server error' });
-      const rows: unknown = await existing.json();
-      if (Array.isArray(rows) && rows[0] && typeof rows[0].api_key === 'string' && rows[0].api_key.length > 0) apiKey = rows[0].api_key;
-    }
-    if (!apiKey) apiKey = randomTenantKey();
     const rawSessionId = eventType === 'checkout.session.completed' && typeof object?.id === 'string' ? object.id.trim() : '';
     const sessionId = rawSessionId.startsWith('cs_') ? rawSessionId : null;
     const result = await callRpc(env, 'apply_stripe_webhook', {
       p_event_id: eventId || null,
       p_site_id: tenantId,
-      p_api_key: apiKey,
+      p_api_key: explicitKey || null,
+      p_candidate_api_key: explicitKey ? null : randomTenantKey(),
       p_allowed_origins: parseAllowedOrigins(metadata.allowed_origins),
       p_max_events_per_window: metadataInteger(metadata.max_events_per_window, DEFAULT_MAX_EVENTS_PER_WINDOW, 0),
       p_window_seconds: metadataInteger(metadata.window_seconds, DEFAULT_PROVISION_WINDOW_SECONDS, 1),
@@ -237,8 +230,11 @@ async function provisionSite(env: Env, object: any, eventType: string, eventId: 
       p_claim_expires_at: sessionId ? new Date(Date.now() + CHECKOUT_CLAIM_TTL_MS).toISOString() : null,
     });
     if (result.duplicate) return json(200, { ok: true, duplicate: true });
-    const effective = typeof result.api_key === 'string' && result.api_key.length > 0 ? result.api_key : apiKey;
-    return json(200, { ok: true, tenant_id: tenantId, api_key: effective });
+    // The function answers with the key the row actually holds. No key means no
+    // tenant row (a schema older than this Worker, for instance), so answering 200
+    // with a credential that authenticates nothing would be the one wrong answer.
+    if (typeof result.api_key !== 'string' || result.api_key.length === 0) return json(500, { error: 'Internal server error' });
+    return json(200, { ok: true, tenant_id: tenantId, api_key: result.api_key });
   } catch {
     return json(500, { error: 'Internal server error' });
   }

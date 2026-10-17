@@ -162,6 +162,11 @@ test('the schema applies twice without error and leaves the tables, policies and
     'consume_site_quota:false:false:true'
   ].join('\n'));
 
+  // One shape per function, not an overload set: `create or replace` with a new
+  // argument list adds a function, so the file drops the previous signature itself.
+  const overloads = run("select p.proname || ':' || count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' group by p.proname order by p.proname;");
+  expect(overloads).toBe(['apply_stripe_webhook:1', 'claim_checkout_session:1', 'consume_site_quota:1'].join('\n'));
+
   // And the public role cannot reach a table either, while the service role can.
   expect(run('set role anon; select count(*) from public.sites;', { allowFailure: true })).toContain('permission denied');
   expect(run('set role service_role; select count(*) from public.sites;')).toBe('0');
@@ -204,6 +209,22 @@ test('an update without a key or an origin list preserves both, and a cancellati
   // A cancellation for a tenant that does not exist must not mint a credential.
   expect(json(`select public.apply_stripe_webhook('evt_4', 'ghost', null, null, 0, null, true)::text;`)).toEqual({ duplicate: false, tenant_id: 'ghost', missing: true, api_key: null });
   expect(run("select count(*) from public.sites where id = 'ghost';")).toBe('0');
+});
+
+test('a candidate key mints on insert and never rotates the row it conflicts with', () => {
+  // This is what lets the Worker provision without reading the site first: the key it
+  // generated is only ever used by the insert branch, so a retry or a subscription
+  // update cannot replace the credential a live page is already embedding.
+  const created = json(`select public.apply_stripe_webhook('evt_c1', 'fresh', null, '["https://app.example.com"]'::jsonb, 10, 60, true, null, null, 'navi_live_candidate')::text;`);
+  expect(created).toEqual({ duplicate: false, tenant_id: 'fresh', api_key: 'navi_live_candidate' });
+  expect(run("select api_key from public.sites where id = 'fresh';")).toBe('navi_live_candidate');
+
+  const updated = json(`select public.apply_stripe_webhook('evt_c2', 'fresh', null, null, 20, null, true, null, null, 'navi_live_other')::text;`);
+  expect(updated).toEqual({ duplicate: false, tenant_id: 'fresh', api_key: 'navi_live_candidate' });
+  expect(run("select api_key || ':' || max_events_per_window from public.sites where id = 'fresh';")).toBe('navi_live_candidate:20');
+
+  // An explicit key is an instruction rather than an omission, so it still sets the key.
+  expect(json(`select public.apply_stripe_webhook('evt_c3', 'fresh', 'navi_live_explicit', null, 20, null, true)::text;`).api_key).toBe('navi_live_explicit');
 });
 
 test('a webhook that fails mid-transaction leaves neither the event id nor the tenant behind', () => {

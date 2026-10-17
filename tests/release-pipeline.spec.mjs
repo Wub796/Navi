@@ -508,9 +508,9 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(244);
+  expect(MIN_PASSING_TESTS).toBe(245);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
-  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.4.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
+  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.5.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
     expect(text, `${document} must state the published floor`).toContain(String(MIN_PASSING_TESTS));
     // Naming the right number somewhere is not the promise: a second sentence still
@@ -572,7 +572,7 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   // cannot make atomic. Each must be idempotently defined, security definer with a
   // pinned search_path, and executable by the service role alone.
   const functions = [
-    ['apply_stripe_webhook', 'public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz)'],
+    ['apply_stripe_webhook', 'public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz, text)'],
     ['consume_site_quota', 'public.consume_site_quota(text, bigint, text, text, text, jsonb)'],
     ['claim_checkout_session', 'public.claim_checkout_session(text)']
   ];
@@ -596,6 +596,7 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   // The earlier four-argument shape is dropped rather than left behind: `create or
   // replace` with a new argument list would add an overload, not replace it.
   expect(schema).toContain('drop function if exists public.consume_site_quota(text, bigint, text, text);');
+  expect(schema, 'the pre-candidate webhook shape must not stay callable').toContain('drop function if exists public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz);');
   // PostgREST serves an introspected snapshot, so applying the DDL has to ask it to
   // reload or a deployment looks healthy and answers 404 for a function that exists.
   expect(schema).toContain("notify pgrst, 'reload schema';");
@@ -787,13 +788,13 @@ test('the generated notes and the release collateral carry the canary attestatio
     expect(committed).toMatch(/`evidence\.sourceTree` is `sha256:[0-9a-f]{64}`/);
   }
   expect(committed).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
-  const release = await readFile(join(root, 'docs/RELEASES/v0.6.4.md'), 'utf8');
+  const release = await readFile(join(root, 'docs/RELEASES/v0.6.5.md'), 'utf8');
   expect(release).toContain('## Container verification matrix');
   expect(release).toContain('| Check | Description | Status |');
   if (!inFlight) {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.4.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.5.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
   } else {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.4.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.5.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
   }
 });
 
