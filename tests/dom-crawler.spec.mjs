@@ -233,9 +233,12 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
   const calls = [];
   /** @type {string} */
   let existingApiKey = '';
+  let lookupFails = false;
   globalThis.fetch = async (input, init = {}) => {
     calls.push({ url: String(input), init });
-    if (String(input).includes('select=id,api_key')) return Response.json(existingApiKey ? [{ id: 'acme', api_key: existingApiKey }] : []);
+    if (String(input).includes('select=id,api_key')) {
+      return lookupFails ? new Response('upstream failure', { status: 500 }) : Response.json(existingApiKey ? [{ id: 'acme', api_key: existingApiKey }] : []);
+    }
     if (String(input).includes('on_conflict=id')) return Response.json([{ id: 'acme' }], { status: 201 });
     if (String(input).includes('/sites?id=eq.')) return new Response(null, { status: 204 });
     return new Response(null, { status: 201 });
@@ -299,6 +302,15 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
     response = await billingRequest(update);
     expect(response.status).toBe(200);
     expect((await response.json()).api_key).toBe(provisioned.api_key);
+
+    // A failed key lookup must not fall through to minting a replacement: that
+    // would rotate the credential a live page is already embedding.
+    lookupFails = true;
+    calls.length = 0;
+    response = await billingRequest(update);
+    expect(response.status).toBe(500);
+    expect(calls.some(call => call.url.includes('on_conflict=id')), 'a failed lookup must not write a new key').toBe(false);
+    lookupFails = false;
 
     // A handled event with no tenant anywhere in it is a caller error, not a 200.
     const missing = JSON.stringify({ type: 'checkout.session.completed', data: { object: { metadata: {} } } });

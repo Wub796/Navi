@@ -207,10 +207,11 @@ async function provisionSite(env: Env, object: any): Promise<Response> {
       // Reuse the key this site already has: an update event without metadata must
       // not rotate the credential a tenant page is already embedding.
       const existing = await fetch(`${base}/rest/v1/sites?id=eq.${encodeURIComponent(tenantId)}&select=id,api_key`, { headers });
-      if (existing.ok) {
-        const rows: unknown = await existing.json();
-        if (Array.isArray(rows) && rows[0] && typeof rows[0].api_key === 'string' && rows[0].api_key.length > 0) apiKey = rows[0].api_key;
-      }
+      // A failed lookup must not fall through to minting: that would silently
+      // rotate the credential a live tenant is already embedding.
+      if (!existing.ok) return json(500, { error: 'Internal server error' });
+      const rows: unknown = await existing.json();
+      if (Array.isArray(rows) && rows[0] && typeof rows[0].api_key === 'string' && rows[0].api_key.length > 0) apiKey = rows[0].api_key;
     }
     if (!apiKey) apiKey = randomTenantKey();
     const upsert = await fetch(`${base}/rest/v1/sites?on_conflict=id`, {
