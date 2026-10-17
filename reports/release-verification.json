@@ -1,25 +1,25 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-17T04:08:06.953Z",
+  "recordedAt": "2026-10-17T17:16:19.268Z",
   "evidence": {
-    "revision": "9dfac711a2843682a7e948af5b5b30caa14c8fc4",
+    "revision": "182c3350dc5b13b008dbc0d4747658acac93f78c",
     "branch": "main",
-    "sourceTree": "sha256:bd2c6fdefa7fe72345e5da18e173aa2ad9086c40aecaedb22926f41c619f7ba8",
+    "sourceTree": "sha256:3f78c0c174a4099e75c2a2eb988316dd78af6cbc2f3a88294c0fea30ea728fc8",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
-    "floor": 222,
+    "floor": 228,
     "tests": [
-      222,
+      228,
       0
     ],
     "containers": [
       {
         "architecture": "linux/arm64",
         "compose": "deploy/docker-compose.prod.yml",
-        "imageId": "sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad",
-        "recordedAt": "2026-10-17T03:48:49.419Z",
+        "imageId": "sha256:60212743a49d41b8d47530147317b1335758a9fac3f41eb148d2a71ac5c50769",
+        "recordedAt": "2026-10-17T17:06:44.215Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -27,8 +27,8 @@
       {
         "architecture": "linux/arm64",
         "compose": "docker-compose.yml",
-        "imageId": "sha256:33a673014cb0dda48ba19ff358378186ee5a78746a306c2f1d6121c1cecae9ad",
-        "recordedAt": "2026-10-17T03:48:30.813Z",
+        "imageId": "sha256:60212743a49d41b8d47530147317b1335758a9fac3f41eb148d2a71ac5c50769",
+        "recordedAt": "2026-10-17T17:06:29.571Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -59,7 +59,7 @@
         {
           "id": "mcp-initialize",
           "ok": true,
-          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.2 (Navi protocol 0.3.0)"
+          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.3 (Navi protocol 0.3.0)"
         },
         {
           "id": "mcp-tools-list",
@@ -88,12 +88,12 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 0 generated path(s)"
+      "detail": "clean apart from 9 generated path(s)"
     },
     {
       "id": "version-tag",
       "ok": true,
-      "detail": "v0.6.2 does not exist yet (create it with --tag once this gate is green)"
+      "detail": "v0.6.3 does not exist yet (create it with --tag once this gate is green)"
     },
     {
       "id": "artifact-budget",
@@ -108,7 +108,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "222 passed, 0 failed (floor 222)"
+      "detail": "228 passed, 0 failed (floor 228)"
     },
     {
       "id": "ci-gates",

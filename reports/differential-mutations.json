@@ -1,5 +1,5 @@
 {
-  "recordedAt": "2026-10-17T04:06:53.090Z",
+  "recordedAt": "2026-10-17T17:15:04.811Z",
   "node": "v22.23.3",
   "tokenizer": "cl100k_base",
   "workload": "24-control list plus 4 surrounding controls, 100 sequential single-target mutations (alternating actionability toggle, label re-render and newly mounted control), one delta read and one full read per step",
