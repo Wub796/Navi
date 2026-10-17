@@ -1,9 +1,9 @@
 {
-  "ok": false,
+  "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-17T03:51:47.142Z",
+  "recordedAt": "2026-10-17T04:08:06.953Z",
   "evidence": {
-    "revision": "9ef8da40e5feb4b26ffccb9f35a2bbb6fae4fda7",
+    "revision": "9dfac711a2843682a7e948af5b5b30caa14c8fc4",
     "branch": "main",
     "sourceTree": "sha256:bd2c6fdefa7fe72345e5da18e173aa2ad9086c40aecaedb22926f41c619f7ba8",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
@@ -11,7 +11,7 @@
     "loaderBytes": 689,
     "floor": 222,
     "tests": [
-      216,
+      222,
       0
     ],
     "containers": [
@@ -88,7 +88,7 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 8 generated path(s)"
+      "detail": "clean apart from 0 generated path(s)"
     },
     {
       "id": "version-tag",
@@ -107,8 +107,8 @@
     },
     {
       "id": "test-suite",
-      "ok": false,
-      "detail": "216 passed, 0 failed (floor 222)\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.373Z\",\"session_id\":null,\"target_url\":\"http://127.0.0.1:53998/trap\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.569Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.572Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap-image\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.572Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap-frame\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.683Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap-redirect\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.720Z\",\"session_id\":\"8e8b3301-e0fe-413a-a8cd-5873dca50425\",\"target_url\":\"http://127.0.0.1:53998/trap-redirect\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.741Z\",\"session_id\":null,\"target_url\":\"http://127.0.0.1:53998/trap-proxy\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n{\"level\":\"WARN\",\"type\":\"SECURITY_CONTAINMENT_VIOLATION\",\"timestamp\":\"2026-10-17T03:51:39.742Z\",\"session_id\":null,\"target_url\":\"https://127.0.0.1:3001/\",\"resolved_ip\":\"127.0.0.1\",\"category\":\"loopback_or_local\",\"action\":\"BLOCKED\"}\n(node:9642) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)"
+      "ok": true,
+      "detail": "222 passed, 0 failed (floor 222)"
     },
     {
       "id": "ci-gates",

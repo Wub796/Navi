@@ -58,34 +58,24 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 
 ### Verification
 
-Provenance: `evidence.revision` is `9ef8da40e5feb4b26ffccb9f35a2bbb6fae4fda7` and `evidence.sourceTree` is `sha256:bd2c6fdefa7fe72345e5da18e173aa2ad9086c40aecaedb22926f41c619f7ba8` — a digest of every tracked
+Provenance: `evidence.revision` is `9dfac711a2843682a7e948af5b5b30caa14c8fc4` and `evidence.sourceTree` is `sha256:bd2c6fdefa7fe72345e5da18e173aa2ad9086c40aecaedb22926f41c619f7ba8` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-17T03:51:47.142Z: **10/11 checks passed**, receipt `ok: false`.
+Recorded by `npm run verify:release` at 2026-10-17T04:08:06.953Z: **11/11 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 8 generated path(s) |
+| `git-clean` | pass | clean apart from 0 generated path(s) |
 | `version-tag` | pass | v0.6.2 does not exist yet (create it with --tag once this gate is green) |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
-| `test-suite` | FAIL | 216 passed, 0 failed (floor 222)
-{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.373Z","session_id":null,"target_url":"http://127.0.0.1:53998/trap","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
-{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.569Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
-{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.572Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap-image","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
-{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.572Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap-frame","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
-{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.683Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap-redirect","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
-{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.720Z","session_id":"8e8b3301-e0fe-413a-a8cd-5873dca50425","target_url":"http://127.0.0.1:53998/trap-redirect","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
-{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.741Z","session_id":null,"target_url":"http://127.0.0.1:53998/trap-proxy","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
-{"level":"WARN","type":"SECURITY_CONTAINMENT_VIOLATION","timestamp":"2026-10-17T03:51:39.742Z","session_id":null,"target_url":"https://127.0.0.1:3001/","resolved_ip":"127.0.0.1","category":"loopback_or_local","action":"BLOCKED"}
-(node:9642) ExperimentalWarning: SQLite is an experimental feature and might change at any time
-(Use `node --trace-warnings ...` to show where the warning was created) |
+| `test-suite` | pass | 222 passed, 0 failed (floor 222) |
 | `ci-gates` | pass | All selected gates passed. |
 | `pack-check` | pass | every published path is an intended release artifact |
 | `cleanroom-package-canary` | pass | 6/6 clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake) |
