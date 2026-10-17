@@ -252,6 +252,38 @@ test('the log backend carries a provisioned tenant through compaction and a reop
   }
 });
 
+test('the billing ledger is durable, per event id, and survives a sweep in both backends', async () => {
+  /** @type {('sqlite' | 'log')[]} */
+  const modes = ['log'];
+  if (await sqliteAvailable()) modes.push('sqlite');
+  for (const mode of modes) {
+    const file = tempFile(mode === 'sqlite' ? 'db' : 'log');
+    let store = await createStore(file, { mode });
+    try {
+      expect(await store.recordWebhookEvent('evt_once', 1_700_000_000_000), `${mode}: first delivery`).toBe(true);
+      expect(await store.recordWebhookEvent('evt_once'), `${mode}: redelivery`).toBe(false);
+      // The ledger keys on the event id, so a different event is not a duplicate of it.
+      expect(await store.recordWebhookEvent('evt_other')).toBe(true);
+      // A failed delivery withdraws its claim, so Stripe's resend is handled rather
+      // than swallowed as a duplicate of an event that never completed.
+      await store.releaseWebhookEvent('evt_once');
+      expect(await store.recordWebhookEvent('evt_once'), `${mode}: released claim`).toBe(true);
+      // Deliveries are not beacons: neither backend may count a ledger line as telemetry.
+      expect(await store.summarize()).toMatchObject({ events: 0 });
+      // A scheduled sweep must not take the ledger with it, or a retry after every
+      // prune would provision again.
+      await store.pruneViolations({ max_age_days: DEFAULT_RETENTION_DAYS });
+      await store.close();
+
+      store = await createStore(file, { mode });
+      expect(await store.recordWebhookEvent('evt_once'), `${mode}: retains a claim across a reopen`).toBe(false);
+      expect(await store.recordWebhookEvent('evt_other'), `${mode}: retains a second claim across a reopen`).toBe(false);
+    } finally {
+      await store.close();
+    }
+  }
+});
+
 test('compaction is atomic: a reader sees the old file or the new one, and an append survives it', async () => {
   const file = tempFile('log');
   /** @type {string[]} */

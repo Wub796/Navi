@@ -54,19 +54,31 @@ create table if not exists public.navigation_maps (
 -- against this unique index; without it every update would append a new row.
 create unique index if not exists idx_navigation_maps_site_url on public.navigation_maps (site_id, url);
 
+-- Stripe retries a delivery it did not see acknowledged, and a retry must not
+-- provision or suspend a site twice. The primary key is the ledger: the Worker
+-- inserts with `on_conflict=event_id` and `resolution=ignore-duplicates`, so the
+-- second delivery changes no row and is answered `{ ok, duplicate: true }`.
+create table if not exists public.webhook_events (
+  event_id text primary key,
+  received_at timestamptz not null default now()
+);
+
 alter table public.sites enable row level security;
 alter table public.navigation_maps enable row level security;
+alter table public.webhook_events enable row level security;
 
 -- Default deny: neither public role may touch these tables at all. The Worker is
 -- unaffected because the service-role key bypasses RLS.
 revoke all on table public.sites from anon, authenticated;
 revoke all on table public.navigation_maps from anon, authenticated;
+revoke all on table public.webhook_events from anon, authenticated;
 
 -- Granted explicitly rather than inherited from the project's default privileges:
 -- a table created from a SQL editor session that has none would otherwise leave the
 -- Worker reading and writing with a role that was never given the table.
 grant all on table public.sites to service_role;
 grant all on table public.navigation_maps to service_role;
+grant all on table public.webhook_events to service_role;
 do $$
 begin
   -- Guarded because a table that predates the identity column has no sequence.
@@ -82,4 +94,8 @@ create policy sites_service_role_all on public.sites
 
 drop policy if exists navigation_maps_service_role_all on public.navigation_maps;
 create policy navigation_maps_service_role_all on public.navigation_maps
+  for all to service_role using (true) with check (true);
+
+drop policy if exists webhook_events_service_role_all on public.webhook_events;
+create policy webhook_events_service_role_all on public.webhook_events
   for all to service_role using (true) with check (true);

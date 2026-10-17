@@ -234,8 +234,22 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
   /** @type {string} */
   let existingApiKey = '';
   let lookupFails = false;
+  // Stands in for the `webhook_events` primary key: the insert is the claim, and a
+  // conflict comes back as an empty representation, exactly as PostgREST answers
+  // `resolution=ignore-duplicates`.
+  const claimedEvents = new Set();
   globalThis.fetch = async (input, init = {}) => {
     calls.push({ url: String(input), init });
+    if (String(input).includes('/rest/v1/webhook_events')) {
+      if (init.method === 'DELETE') {
+        claimedEvents.delete(/event_id=eq\.([^&]+)/.exec(String(input))?.[1] ?? '');
+        return new Response(null, { status: 204 });
+      }
+      const { event_id: eventId } = JSON.parse(String(init.body));
+      if (claimedEvents.has(eventId)) return Response.json([]);
+      claimedEvents.add(eventId);
+      return Response.json([{ event_id: eventId }], { status: 201 });
+    }
     if (String(input).includes('select=id,api_key')) {
       return lookupFails ? new Response('upstream failure', { status: 500 }) : Response.json(existingApiKey ? [{ id: 'acme', api_key: existingApiKey }] : []);
     }
@@ -295,6 +309,27 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
       window_seconds: 600,
       active: true
     });
+
+    // Stripe resends a delivery it did not see acknowledged. The same event id is
+    // answered as a duplicate and must not upsert the site a second time.
+    calls.length = 0;
+    response = await billingRequest(checkout);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, duplicate: true });
+    expect(calls.some(call => call.url.includes('on_conflict=id')), 'a duplicate must not upsert the site').toBe(false);
+
+    // A delivery that failed is one Stripe will resend, so the claim is withdrawn:
+    // the retry provisions instead of being swallowed as a duplicate.
+    lookupFails = true;
+    const retry = JSON.stringify({ id: 'evt_retry', type: 'checkout.session.completed', data: { object: { id: 'cs_retry', client_reference_id: 'acme', metadata: {} } } });
+    calls.length = 0;
+    response = await billingRequest(retry);
+    expect(response.status).toBe(500);
+    expect(calls.some(call => call.url.includes('/rest/v1/webhook_events') && call.init.method === 'DELETE'), 'a failed delivery must release its claim').toBe(true);
+    lookupFails = false;
+    response = await billingRequest(retry);
+    expect(response.status, 'the resend must be processed, not treated as a duplicate').toBe(200);
+    expect((await response.json()).ok).toBe(true);
 
     // An update that carries no api_key keeps the credential already embedded.
     existingApiKey = provisioned.api_key;

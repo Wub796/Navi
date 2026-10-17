@@ -250,6 +250,38 @@ async function suspendSite(env: Env, object: any): Promise<Response> {
   }
 }
 
+/**
+ * Claim a Stripe event id, answering whether this delivery is the first one.
+ *
+ * PostgREST compiles `resolution=ignore-duplicates` into `ON CONFLICT (event_id)
+ * DO NOTHING` and returns the inserted rows, so a duplicate comes back as an empty
+ * array. That makes "first delivery wins" one atomic statement rather than a read
+ * followed by a write two isolates could interleave.
+ * @param {Env} env @param {string} eventId @returns {Promise<boolean>}
+ */
+async function claimWebhookEvent(env: Env, eventId: string): Promise<boolean> {
+  const response = await fetch(`${supabaseBase(env)}/rest/v1/webhook_events?on_conflict=event_id`, {
+    method: 'POST',
+    headers: { ...supabaseHeaders(env), Prefer: 'resolution=ignore-duplicates,return=representation' },
+    body: JSON.stringify({ event_id: eventId }),
+  });
+  if (!response.ok) throw new Error(`the webhook ledger answered ${response.status}`);
+  const rows: unknown = await response.json();
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+/**
+ * Withdraw a claim whose delivery failed, so Stripe's resend is not swallowed.
+ * @param {Env} env @param {string} eventId @returns {Promise<void>}
+ */
+async function releaseWebhookEvent(env: Env, eventId: string): Promise<void> {
+  const response = await fetch(`${supabaseBase(env)}/rest/v1/webhook_events?event_id=eq.${encodeURIComponent(eventId)}`, {
+    method: 'DELETE',
+    headers: supabaseHeaders(env),
+  });
+  if (!response.ok) throw new Error(`the webhook ledger answered ${response.status}`);
+}
+
 /** @param {Request} request @param {Env} env @returns {Promise<Response>} */
 async function handleBilling(request: Request, env: Env): Promise<Response> {
   const secret = (env.STRIPE_WEBHOOK_SECRET ?? '').trim();
@@ -272,9 +304,28 @@ async function handleBilling(request: Request, env: Env): Promise<Response> {
   }
   const type = typeof event?.type === 'string' ? event.type : '';
   const object = event?.data?.object && typeof event.data.object === 'object' ? event.data.object : {};
-  if (PROVISIONING_EVENT_TYPES.has(type)) return provisionSite(env, object);
-  if (type === 'customer.subscription.deleted') return suspendSite(env, object);
-  return json(200, { ok: true, ignored: true });
+  const eventId = typeof event?.id === 'string' ? event.id.trim() : '';
+  let claimed = false;
+  if (eventId) {
+    try {
+      claimed = await claimWebhookEvent(env, eventId);
+    } catch {
+      return json(500, { error: 'Internal server error' });
+    }
+    // The ledger is claimed before anything is written, so a redelivery cannot
+    // upsert the site again or re-run a suspension.
+    if (!claimed) return json(200, { ok: true, duplicate: true });
+  }
+  let response: Response;
+  if (PROVISIONING_EVENT_TYPES.has(type)) response = await provisionSite(env, object);
+  else if (type === 'customer.subscription.deleted') response = await suspendSite(env, object);
+  else response = json(200, { ok: true, ignored: true });
+  // A failed delivery is one Stripe will resend; leaving the claim behind would
+  // make that resend a silent no-op, which is worse than acting twice.
+  if (claimed && response.status >= 300) {
+    try { await releaseWebhookEvent(env, eventId); } catch { /* the ledger is unreachable; the 500 stands */ }
+  }
+  return response;
 }
 
 /**

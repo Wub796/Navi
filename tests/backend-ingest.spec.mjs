@@ -415,6 +415,13 @@ test('a signed checkout provisions a tenant that ingests, survives a restart, an
     expect(provisioned.api_key).toMatch(/^navi_live_[0-9a-f]{64}$/);
     const key = provisioned.api_key;
 
+    // Stripe resends a delivery it did not see acknowledged. The same event id is
+    // answered without provisioning again, and without handing back - let alone
+    // minting - a different credential.
+    response = await webhook(checkout);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, duplicate: true });
+
     // The minted key authenticates both ingest routes immediately, and the
     // provisioned origin list is already enforced.
     response = await crawl(key, 'https://app.example.com/checkout');
@@ -433,15 +440,21 @@ test('a signed checkout provisions a tenant that ingests, survives a restart, an
     expect(response.status, 'a provisioned key must survive a restart').toBe(200);
 
     // An update without an api_key keeps the credential already handed out.
-    const update = JSON.stringify({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1', metadata: { tenant_id: 'tenant-stripe', max_events_per_window: '9' } } } });
+    const update = JSON.stringify({ id: 'evt_update', type: 'customer.subscription.updated', data: { object: { id: 'sub_1', metadata: { tenant_id: 'tenant-stripe', max_events_per_window: '9' } } } });
     response = await webhook(update);
     expect(response.status).toBe(200);
     expect((await response.json()).api_key).toBe(key);
 
-    const cancellation = JSON.stringify({ type: 'customer.subscription.deleted', data: { object: { id: 'sub_1', metadata: { tenant_id: 'tenant-stripe' } } } });
+    const cancellation = JSON.stringify({ id: 'evt_cancel', type: 'customer.subscription.deleted', data: { object: { id: 'sub_1', metadata: { tenant_id: 'tenant-stripe' } } } });
     response = await webhook(cancellation);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, tenant_id: 'tenant-stripe', status: 'suspended' });
+
+    // A redelivered cancellation is a duplicate too, and the ledger is durable:
+    // it was written to the same store the definition lives in.
+    response = await webhook(cancellation);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, duplicate: true });
 
     // Suspension is a quota answer, not an authentication one: the key stays valid.
     response = await crawl(key, 'https://app.example.com/checkout');
@@ -457,6 +470,12 @@ test('a signed checkout provisions a tenant that ingests, survives a restart, an
     host = await start();
     response = await crawl(key, 'https://app.example.com/checkout');
     expect(response.status, 'a suspended tenant must stay suspended across a restart').toBe(429);
+
+    // The ledger is durable too: after reopening the store, the redelivered
+    // cancellation is still a duplicate rather than a second suspension.
+    response = await webhook(cancellation);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, duplicate: true });
   } finally {
     await host.close();
   }

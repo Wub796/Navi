@@ -54,7 +54,7 @@ import { createInterface } from 'node:readline';
  * @typedef {{tenant_id: string, window_start_ms: number, event_count: number}} QuotaState
  * @typedef {{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}} TenantDefinitionRecord
  * @typedef {{tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'}} TenantDefinitionInput
- * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, consumeQuota(options: QuotaOptions): Promise<QuotaVerdict>, readQuota(tenantId: string): Promise<QuotaState | null>, upsertTenantDefinition(definition: TenantDefinitionInput): Promise<TenantDefinitionRecord>, readTenantDefinition(tenantId: string): Promise<TenantDefinitionRecord | null>, readTenantDefinitions(): Promise<TenantDefinitionRecord[]>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
+ * @typedef {{mode: 'sqlite' | 'log', file: string, pragmas: StorePragmas | null, append(record: TelemetryRecord): Promise<void>, summarize(filter?: SummaryFilter): Promise<TelemetrySummary>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<NavigationMapRecord | null>, consumeQuota(options: QuotaOptions): Promise<QuotaVerdict>, readQuota(tenantId: string): Promise<QuotaState | null>, upsertTenantDefinition(definition: TenantDefinitionInput): Promise<TenantDefinitionRecord>, readTenantDefinition(tenantId: string): Promise<TenantDefinitionRecord | null>, readTenantDefinitions(): Promise<TenantDefinitionRecord[]>, recordWebhookEvent(eventId: string, receivedAtMs?: number): Promise<boolean>, releaseWebhookEvent(eventId: string): Promise<void>, recordViolation(violation: ViolationInput): Promise<ContainmentViolation>, queryViolations(filter: ViolationFilter): Promise<ContainmentViolation[]>, pruneViolations(options: RetentionOptions): Promise<PruneResult>, checkpoint(options?: CheckpointOptions): Promise<CheckpointResult>, reset(): Promise<void>, close(): Promise<void>}} TelemetryStore
  */
 
 /** Default number of violation rows one query returns. */
@@ -63,6 +63,22 @@ export const DEFAULT_VIOLATION_LIMIT = 50;
 export const MAX_VIOLATION_LIMIT = 200;
 /** Discriminator that separates a violation line from an aggregate line. */
 export const VIOLATION_KIND = 'containment_violation';
+/**
+ * Discriminator for one processed billing event. Stripe retries a delivery it did
+ * not see acknowledged, and a retry must not provision or suspend a tenant twice;
+ * this line is the ledger that makes a second delivery answer `duplicate`.
+ */
+export const WEBHOOK_EVENT_KIND = 'webhook_event';
+/**
+ * Withdraws a claim made by `recordWebhookEvent`.
+ *
+ * A claim is taken before the event is acted on, because two simultaneous
+ * deliveries must not both act. That ordering owes a compensation: a delivery that
+ * ended in an error is one Stripe will resend, and leaving the claim behind would
+ * turn the resend into a silent no-op. The append-only log needs an explicit
+ * release line; SQLite deletes the row.
+ */
+export const WEBHOOK_EVENT_RELEASE_KIND = 'webhook_event_release';
 /**
  * Discriminator for the single log-mode line that records the highest violation
  * id the file has ever carried. Without it, compacting away the newest rows
@@ -136,6 +152,18 @@ function normalizeTenantDefinition(input) {
     status: input?.status === 'suspended' ? 'suspended' : 'active',
     updated_at: new Date().toISOString()
   };
+}
+
+/**
+ * Validate one event id for the billing ledger. An empty id is refused rather
+ * than silently treated as "new": every retry would then re-run the event.
+ * @param {unknown} eventId @param {unknown} [receivedAtMs] @returns {{event_id: string, received_at_ms: number}}
+ */
+function normalizeWebhookEvent(eventId, receivedAtMs) {
+  const id = typeof eventId === 'string' ? eventId.trim() : '';
+  if (!id) throw new TypeError('recordWebhookEvent needs an event_id');
+  const received = Number.isSafeInteger(receivedAtMs) && Number(receivedAtMs) >= 0 ? Number(receivedAtMs) : Date.now();
+  return { event_id: id, received_at_ms: received };
 }
 
 /**
@@ -369,6 +397,15 @@ function createSqliteStore(path, sqlite) {
     updated_at TEXT NOT NULL
   )`);
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_definitions_key ON tenant_definitions(api_key)');
+  // The billing ledger. The primary key is what makes "first delivery wins" a
+  // database decision: `DO NOTHING` reports zero changed rows for a retry, so two
+  // concurrent deliveries of one event cannot both be told they were first.
+  db.exec(`CREATE TABLE IF NOT EXISTS webhook_events (
+    event_id TEXT PRIMARY KEY,
+    received_at_ms INTEGER NOT NULL
+  )`);
+  const insertWebhookEvent = db.prepare('INSERT INTO webhook_events (event_id, received_at_ms) VALUES (?, ?) ON CONFLICT(event_id) DO NOTHING');
+  const deleteWebhookEvent = db.prepare('DELETE FROM webhook_events WHERE event_id = ?');
   const upsertNavigationMap = db.prepare('INSERT INTO navigation_maps (site_id, url, payload, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(site_id, url) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at');
   const selectNavigationMap = db.prepare('SELECT site_id, url, payload, updated_at FROM navigation_maps WHERE site_id = ? AND url = ?');
   const selectTenantQuota = db.prepare('SELECT window_start_ms, event_count FROM tenant_quotas WHERE tenant_id = ?');
@@ -442,6 +479,14 @@ function createSqliteStore(path, sqlite) {
     async readTenantDefinitions() {
       return /** @type {any[]} */ (selectTenantDefinitions.all()).map(row => /** @type {TenantDefinitionRecord} */ (toTenantDefinition(row)));
     },
+    async recordWebhookEvent(eventId, receivedAtMs) {
+      const record = normalizeWebhookEvent(eventId, receivedAtMs);
+      const result = /** @type {{changes?: unknown}} */ (insertWebhookEvent.run(record.event_id, record.received_at_ms));
+      return asNumber(result?.changes) > 0;
+    },
+    async releaseWebhookEvent(eventId) {
+      deleteWebhookEvent.run(normalizeWebhookEvent(eventId).event_id);
+    },
     async summarize(filter = {}) {
       const where = filter.tenant_id ? 'WHERE tenant_id = ?' : '';
       const args = filter.tenant_id ? [filter.tenant_id] : [];
@@ -500,6 +545,7 @@ function createSqliteStore(path, sqlite) {
       db.exec('DELETE FROM navigation_maps');
       db.exec('DELETE FROM tenant_quotas');
       db.exec('DELETE FROM tenant_definitions');
+      db.exec('DELETE FROM webhook_events');
     },
     async close() {
       if (closed) return;
@@ -549,6 +595,9 @@ function createLogStore(path) {
       }
       if (!parsed || typeof parsed !== 'object') continue;
       if (parsed.kind === 'navigation_map' || parsed.kind === 'tenant_quota') continue;
+      // The ledger is read on demand by `recordWebhookEvent` and never counts as a
+      // beacon: falling through here would add a phantom event per delivery.
+      if (parsed.kind === WEBHOOK_EVENT_KIND || parsed.kind === WEBHOOK_EVENT_RELEASE_KIND) continue;
       if (parsed.kind === 'tenant_definition') {
         // Last line wins, exactly like the SQLite upsert: a revocation appends a
         // new definition rather than rewriting the old one.
@@ -695,6 +744,31 @@ function createLogStore(path) {
     },
     async readTenantDefinitions() {
       return [...(await scanLog()).definitions.values()].sort((left, right) => left.tenant_id.localeCompare(right.tenant_id));
+    },
+    async recordWebhookEvent(eventId, receivedAtMs) {
+      const record = normalizeWebhookEvent(eventId, receivedAtMs);
+      // Queued with the appends so a concurrent delivery of the same event cannot
+      // read the file before the other one's line has landed.
+      return serial(async () => {
+        const text = await readFile(path, 'utf8').catch(() => '');
+        // The newest line for this id decides: a release withdraws the claim that
+        // preceded it, so the next delivery is treated as new.
+        for (const line of text.split('\n').reverse()) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed?.event_id !== record.event_id) continue;
+            if (parsed.kind === WEBHOOK_EVENT_KIND) return false;
+            if (parsed.kind === WEBHOOK_EVENT_RELEASE_KIND) break;
+          } catch { /* ignore torn and malformed lines */ }
+        }
+        await appendFile(path, `${JSON.stringify({ kind: WEBHOOK_EVENT_KIND, ...record })}\n`, 'utf8');
+        return true;
+      });
+    },
+    async releaseWebhookEvent(eventId) {
+      const { event_id: id } = normalizeWebhookEvent(eventId);
+      await serial(() => appendFile(path, `${JSON.stringify({ kind: WEBHOOK_EVENT_RELEASE_KIND, event_id: id })}\n`, 'utf8'));
     },
     async readQuota(tenantId) {
       // The last line for this tenant is the current window: every accepted ingest

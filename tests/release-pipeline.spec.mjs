@@ -508,9 +508,9 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(226);
+  expect(MIN_PASSING_TESTS).toBe(228);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
-  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.2.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
+  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.3.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
     expect(text, `${document} must state the published floor`).toContain(String(MIN_PASSING_TESTS));
     // Naming the right number somewhere is not the promise: a second sentence still
@@ -520,6 +520,42 @@ test('the published test floor is one number, stated everywhere it is promised',
       expect(Number(claimed), `${document} still names a ${claimed} floor`).toBe(MIN_PASSING_TESTS);
     }
   }
+});
+
+test('the edge deployment contract pins its schema, deny rules and entrypoint', async () => {
+  // The Worker cannot provision or charge a tenant if a column, a unique index or a
+  // grant is missing, and the schema is applied by hand, so the file is the contract.
+  // Asserting it here means a table added to the Worker without an idempotent,
+  // deny-by-default definition fails the suite instead of a deployment.
+  const schema = await readFile(join(root, 'deploy/supabase-schema.sql'), 'utf8');
+  const wrangler = await readFile(join(root, 'wrangler.toml'), 'utf8');
+  const worker = await readFile(join(root, 'src/worker.ts'), 'utf8');
+
+  for (const table of ['sites', 'navigation_maps', 'webhook_events']) {
+    expect(schema, `${table} must be created idempotently`).toMatch(new RegExp(`create table if not exists public\\.${table}\\b`));
+    expect(schema, `${table} must have row level security enabled`).toContain(`alter table public.${table} enable row level security;`);
+    expect(schema, `${table} must deny the public roles`).toContain(`revoke all on table public.${table} from anon, authenticated;`);
+    expect(schema, `${table} must grant service_role explicitly`).toContain(`grant all on table public.${table} to service_role;`);
+    expect(schema, `${table} must have a service_role policy`).toContain(`${table}_service_role_all on public.${table}`);
+  }
+  // The replay ledger's shape is what makes a redelivery a no-op rather than a
+  // second provisioning: the event id is the key the Worker conflicts on.
+  expect(schema).toMatch(/create table if not exists public\.webhook_events \(\s*event_id text primary key,\s*received_at timestamptz not null default now\(\)\s*\)/);
+  expect(schema).toContain('create unique index if not exists idx_sites_api_key');
+  expect(schema).toContain('create unique index if not exists idx_navigation_maps_site_url');
+
+  // The Worker must address the ledger with the atomic duplicate rule the schema
+  // relies on, rather than a read that two isolates could interleave.
+  expect(worker).toContain('/rest/v1/webhook_events?on_conflict=event_id');
+  expect(worker).toContain('resolution=ignore-duplicates');
+
+  // The manifest is committed, so it may name the entrypoint and the secrets an
+  // operator sets, and nothing that looks like a credential value.
+  expect(wrangler).toMatch(/^name = "navi-edge"$/m);
+  expect(wrangler).toMatch(/^main = "src\/worker\.ts"$/m);
+  expect(wrangler).toMatch(/^compatibility_date = "\d{4}-\d{2}-\d{2}"$/m);
+  expect(wrangler).not.toMatch(/^\[vars\]/m);
+  expect(wrangler).not.toMatch(/whsec_|sk_live|eyJ[a-zA-Z0-9_-]{10,}|SERVICE_ROLE_KEY\s*=\s*"[^"]+"/);
 });
 
 test('release notes state only what the receipts recorded', () => {
@@ -630,7 +666,7 @@ test('the generated notes and the release collateral carry the canary attestatio
   const build = JSON.parse(await readFile(join(root, 'reports/build.json'), 'utf8'));
   const canary = receipt.evidence.canary;
   expect(canary?.ok, 'the committed receipt must record a green clean-room canary').toBe(true);
-  const notes = renderReleaseNotes({ build, receipt, version: '0.6.2', tag: 'v0.6.2', protocol: '0.3.0', containers: await readContainerReceipts(root) });
+  const notes = renderReleaseNotes({ build, receipt, version: '0.6.3', tag: 'v0.6.3', protocol: '0.3.0', containers: await readContainerReceipts(root) });
 
   // Both attestations, each under its own section, in one document.
   expect(notes).toContain('### Container verification');
@@ -665,10 +701,10 @@ test('the generated notes and the release collateral carry the canary attestatio
   expect(committed, 'the committed notes must carry the provenance paragraph').toContain(`\`evidence.sourceTree\` is \`${receipt.evidence.sourceTree}\``);
   expect(committed).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
   expect(committed).toContain(recorded.map(check => `| \`${check.id}\` | ${check.detail} | Passed |`).join('\n'));
-  const release = await readFile(join(root, 'docs/RELEASES/v0.6.2.md'), 'utf8');
+  const release = await readFile(join(root, 'docs/RELEASES/v0.6.3.md'), 'utf8');
   expect(release).toContain('## Container verification matrix');
   expect(release).toContain('| Check | Description | Status |');
-  for (const check of recorded) expect(release, `docs/RELEASES/v0.6.2.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
+  for (const check of recorded) expect(release, `docs/RELEASES/v0.6.3.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
 });
 
 test('container receipts are discovered by target, not by the path they sit in', async () => {

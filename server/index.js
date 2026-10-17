@@ -702,7 +702,7 @@ function validateViolation(payload, allowedTenantIds, keyTenantId) {
 /**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, readQuota?(tenantId: string): Promise<{tenant_id: string, window_start_ms: number, event_count: number} | null>, upsertTenantDefinition(definition: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'}): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}>, readTenantDefinition(tenantId: string): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null>, readTenantDefinitions(): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}[]>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, readQuota?(tenantId: string): Promise<{tenant_id: string, window_start_ms: number, event_count: number} | null>, upsertTenantDefinition(definition: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'}): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}>, readTenantDefinition(tenantId: string): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null>, readTenantDefinitions(): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}[]>, recordWebhookEvent?(eventId: string, receivedAtMs?: number): Promise<boolean>, releaseWebhookEvent?(eventId: string): Promise<void>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
  * @typedef {{host?: string, port?: number, tenants?: import('./tenants.js').TenantRegistry, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter, maxEventsPerWindow?: number, quotaWindowSeconds?: number, metricsToken?: string, stripeWebhookSecret?: string}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: import('./tenants.js').TenantRegistry, limiter: RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
  */
@@ -1278,16 +1278,37 @@ export async function createNaviHostServer(options = {}) {
           }
           const type = typeof event?.type === 'string' ? event.type : '';
           const object = event?.data?.object && typeof event.data.object === 'object' ? event.data.object : {};
+          // Stripe resends a delivery it did not see acknowledged. The id is claimed
+          // before anything is written, so a retry that arrives while the first is
+          // still in flight cannot provision twice, and a retry after it completed
+          // is answered `duplicate` rather than acting again.
+          const eventId = typeof event?.id === 'string' ? event.id.trim() : '';
           void (async () => {
+            let claimed = false;
             try {
+              if (eventId && typeof store.recordWebhookEvent === 'function') {
+                claimed = await store.recordWebhookEvent(eventId);
+                if (!claimed) {
+                  sendJson(res, 200, { ok: true, duplicate: true });
+                  return;
+                }
+              }
               const outcome = PROVISIONING_EVENT_TYPES.has(type)
                 ? await provisionTenant(object)
                 : type === REVOCATION_EVENT_TYPE
                   ? await suspendTenant(object)
                   : { status: 200, body: { ok: true, ignored: true } };
+              // A refused delivery is one Stripe will resend. The claim has to be
+              // withdrawn, or that resend is swallowed as a duplicate and the tenant
+              // is silently never provisioned.
+              if (claimed && outcome.status >= 300) await store.releaseWebhookEvent?.(eventId);
               sendJson(res, outcome.status, outcome.body);
             } catch (error) {
               log(`billing: ${type || 'unknown'} event failed: ${error instanceof Error ? error.message : String(error)}`);
+              if (claimed) {
+                try { await store.releaseWebhookEvent?.(eventId); }
+                catch { log(`billing: could not release the claim on ${eventId}`); }
+              }
               if (!res.headersSent) sendJson(res, 500, { error: 'Internal server error' });
             } finally {
               resolveBody();
