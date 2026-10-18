@@ -1,25 +1,25 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-17T23:06:28.197Z",
+  "recordedAt": "2026-10-18T16:26:35.072Z",
   "evidence": {
-    "revision": "4b6da8eb096ae78aff815cfb400d12876d70399a",
+    "revision": "c2854c351d721ee39dcada22ed7b256487e9c5cd",
     "branch": "main",
-    "sourceTree": "sha256:320151565912bc6b21f25da957cfbfef109629647a4998b3b3f896d545e0238b",
+    "sourceTree": "sha256:f5078ab2b6d8d4e899f7cdebe698dbd4874a17fe48c9e6e4c9e720e1eb1b49b0",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
-    "floor": 245,
+    "floor": 248,
     "tests": [
-      245,
+      248,
       0
     ],
     "containers": [
       {
         "architecture": "linux/arm64",
         "compose": "deploy/docker-compose.prod.yml",
-        "imageId": "sha256:7b7c005081e1e140afbb69173a79ca4c7b732354e06cb1e1f83600c206f2d787",
-        "recordedAt": "2026-10-17T22:40:06.628Z",
+        "imageId": "sha256:8cafbfea1432aa3491773d35c4a562d79a2dc366a7ea68823680769a648e37af",
+        "recordedAt": "2026-10-18T16:20:12.073Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -27,8 +27,8 @@
       {
         "architecture": "linux/arm64",
         "compose": "docker-compose.yml",
-        "imageId": "sha256:7b7c005081e1e140afbb69173a79ca4c7b732354e06cb1e1f83600c206f2d787",
-        "recordedAt": "2026-10-17T22:39:45.661Z",
+        "imageId": "sha256:8cafbfea1432aa3491773d35c4a562d79a2dc366a7ea68823680769a648e37af",
+        "recordedAt": "2026-10-18T16:19:56.549Z",
         "ok": true,
         "passed": 18,
         "checks": 18
@@ -44,7 +44,7 @@
         {
           "id": "manifest-layout",
           "ok": true,
-          "detail": "all 13 required manifest exports present (dist/navi.min.js, dist/loader.min.js, dist/mcp.mjs, bin/navi-mcp.js, …)"
+          "detail": "all 31 required manifest exports present (dist/navi.min.js, dist/loader.min.js, dist/mcp.mjs, bin/navi-mcp.js, …)"
         },
         {
           "id": "sri-and-budgets",
@@ -54,12 +54,12 @@
         {
           "id": "zero-leak-isolation",
           "ok": true,
-          "detail": "0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (20 files total)"
+          "detail": "0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (34 files total)"
         },
         {
           "id": "mcp-initialize",
           "ok": true,
-          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.5 (Navi protocol 0.3.0)"
+          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.6 (Navi protocol 0.3.0)"
         },
         {
           "id": "mcp-tools-list",
@@ -93,7 +93,7 @@
     {
       "id": "version-tag",
       "ok": true,
-      "detail": "v0.6.5 does not exist yet (create it with --tag once this gate is green)"
+      "detail": "v0.6.6 does not exist yet (create it with --tag once this gate is green)"
     },
     {
       "id": "artifact-budget",
@@ -108,7 +108,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "245 passed, 0 failed, 0 skipped (floor 245)"
+      "detail": "248 passed, 0 failed, 0 skipped (floor 248)"
     },
     {
       "id": "ci-gates",
