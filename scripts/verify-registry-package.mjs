@@ -265,7 +265,7 @@ export async function runCleanRoomMcpHandshake(packageDir) {
       params: {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'navi-cleanroom-canary', version: '0.6.5' }
+        clientInfo: { name: 'navi-cleanroom-canary', version: '0.6.6' }
       }
     });
     const negotiatedVersion = initReply?.result?.protocolVersion;
