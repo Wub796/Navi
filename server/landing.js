@@ -85,18 +85,24 @@ const STYLE = `
       border-radius: 12px;
       padding: 1.1rem 1.25rem;
       margin: 0 0 1.25rem;
+      /* The endpoint table keeps its paths whole, so on a narrow viewport the card
+         scrolls instead of breaking the path across two lines. */
+      overflow-x: auto;
     }
     .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); margin: 0 0 1.25rem; }
     .grid section { margin: 0; }
-    code, pre { font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    code, pre { font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    td code { white-space: nowrap; }
     pre {
       margin: 0;
+      overflow-wrap: anywhere;
       padding: .9rem 1rem;
       background: #f2f4f7;
       border-radius: 8px;
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .muted code { overflow-wrap: anywhere; }
     .cta {
       display: inline-block;
       font-weight: 650;
