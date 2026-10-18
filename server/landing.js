@@ -199,7 +199,7 @@ navi-mcp --transport sse</code></pre>
     <section>
       <h2>Embed the loader</h2>
       <pre><code>${escapeHtml(embed)}</code></pre>
-      <p class="muted">The loader is served from this origin; the key is issued to your tenant.</p>
+      <p class="muted">The snippet points at this origin. If the loader is served from another host, substitute that host; the key is issued to your tenant.</p>
     </section>
   </div>
 
