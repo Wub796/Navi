@@ -197,6 +197,8 @@ Planned endpoints:
 | `POST /v1/billing/webhook` | provision or revoke a tenant | Stripe HMAC-SHA256 signature, 300 s replay window, 24 h event-id ledger, `metadata.tenant_id` | implemented |
 | `GET /v1/billing/session` | one-time post-checkout key claim | `?session_id=cs_…`, 15 min TTL, consumed on first read, `no-store` | implemented |
 | `GET /v1/billing/success` | the same claim, rendered for a `success_url` redirect | `?session_id=cs_…`, `text/html`, script-free page, CSP `default-src 'none'`, `no-store` | implemented |
+| `GET /` | the edge root: what the service is and how to call it | anonymous, `text/html`, script-free page, CSP `default-src 'none'; style-src 'unsafe-inline'`, `no-store`, no `Referer` | implemented |
+| `GET /healthz` | edge liveness | anonymous, `no-store`, no storage access; `405` + `Allow: GET` for any other method | implemented |
 | `POST /v1/telemetry` | aggregate counts | strict schema + canonical origin + 2048-byte cap | implemented |
 | `GET /v1/telemetry?key=…` | tenant aggregate | tenant key; private, no-store | implemented |
 | `POST /v1/telemetry/violations` | one containment violation | tenant key; six categories; sanitized origin+path; 2048-byte cap | implemented |

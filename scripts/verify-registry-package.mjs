@@ -226,6 +226,12 @@ export async function runCleanRoomMcpHandshake(packageDir) {
     ];
   }
 
+  // The client identifies itself with the version it is verifying. Reading it from the
+  // packed manifest rather than a literal is what keeps the handshake evidence about
+  // the artifact under test: a stale constant here once labelled a 0.6.6 run as 0.6.5.
+  const packedVersion = JSON.parse(await readFile(join(packageDir, 'package.json'), 'utf8')).version;
+  const clientVersion = typeof packedVersion === 'string' ? packedVersion : '0.0.0';
+
   const child = spawn(process.execPath, [binPath], {
     cwd: packageDir,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -266,7 +272,7 @@ export async function runCleanRoomMcpHandshake(packageDir) {
       params: {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'navi-cleanroom-canary', version: '0.6.6' }
+        clientInfo: { name: 'navi-cleanroom-canary', version: clientVersion }
       }
     });
     const negotiatedVersion = initReply?.result?.protocolVersion;

@@ -25,7 +25,7 @@ hook API. The skill itself lives at
 
 `.git/hooks/pre-push` runs the CI quality stage whenever `main` is being pushed: gate self-test,
 build, bundle budget, typecheck, the Chromium suite, and the traversal long-task gate — about two
-and a half minutes on this workstation, the 248-test suite being almost all of it. It blocks the
+and a half minutes on this workstation, the 249-test suite being almost all of it. It blocks the
 push on a non-zero exit and prints the skill reminder when it passes. Pushes to any other branch
 are deliberately not gated, so iterate freely there.
 
