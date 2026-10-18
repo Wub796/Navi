@@ -2,7 +2,9 @@
 //
 // Deliberately built on `node:http` with no framework, no middleware chain and
 // no runtime dependency, so it can be dropped next to a CDN or run as a sidecar
-// without a build step:
+// without a build step. This file is the composition root: it resolves
+// configuration, owns the store/lifecycle and the server, and dispatches to the
+// route modules beside it.
 //
 //   GET  /v1/navi.js?key=<tenant_key>   serve the shipped browser bundle
 //   GET  /v1/loader.js                  serve the tenant embed loader
@@ -12,6 +14,9 @@
 //   POST /v1/telemetry/violations       ingest one containment violation
 //   GET  /v1/tenants/<id>/security-audit read that tenant's blocked destinations
 //   POST /v1/tenants/<id>/maintenance/prune  prune that tenant's expired records
+//   POST /v1/billing/webhook            provision or revoke a tenant from Stripe
+//   GET  /v1/billing/session?session_id=cs_...   one-time API-key claim
+//   GET  /v1/billing/success?session_id=cs_...   the same claim as a page
 //   GET  /healthz                       liveness, store mode and tenant count
 //   GET  /metrics                       Prometheus counters for a scraper
 //   GET  /.well-known/navi.json         public agent discovery document
@@ -38,232 +43,30 @@
 // store.
 
 import { createServer } from 'node:http';
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
-import { isIP } from 'node:net';
+import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { beginProcessLifecycle, createStore, DEFAULT_RETENTION_DAYS, DEFAULT_VIOLATION_LIMIT, MAX_RETENTION_DAYS, MAX_VIOLATION_LIMIT } from './store.js';
-import { isOriginAllowed, loadTenants, normalizeTenantEntry, tenantConfigFor, tenantFor, tenantIds } from './tenants.js';
-import { BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage } from './billing-success.js';
-import { validateCrawlerPayload } from '../src/crawler-payload.js';
+import { beginProcessLifecycle, createStore, DEFAULT_RETENTION_DAYS } from './store.js';
+import { loadTenants, tenantIds } from './tenants.js';
+import { createBillingRoutes } from './billing.js';
+import { createHostMetrics } from './metrics.js';
+import { createIngestRoutes } from './ingest.js';
+import { createMaintenanceRoutes } from './maintenance.js';
+import { createPublicRoutes } from './public-routes.js';
+import { createQuota } from './quota.js';
+import { RATE_LIMIT_BURST, RATE_LIMIT_PER_MINUTE, createRateLimiter } from './rate-limit.js';
+import { sendError } from './http.js';
+import {
+  AGENT_BRIDGE_LINK, AUDIT_ENDPOINT_PATTERN, BILLING_ENDPOINT_PATH, BILLING_SESSION_ENDPOINT_PATH,
+  BILLING_SUCCESS_ENDPOINT_PATH, DEFAULT_MCP_SSE_URL, DISCOVERY_ENDPOINT_PATH, HEALTH_ENDPOINT_PATH,
+  LOADER_ENDPOINT_PATH, METRICS_ENDPOINT_PATH, PRUNE_ENDPOINT_PATTERN, SCRIPT_ENDPOINT_PATH,
+  SITEMAP_ENDPOINT_PATH, SOURCE_ENDPOINT_PATH, SOURCE_REPOSITORY_URL, TELEMETRY_ENDPOINT_PATH,
+  VIOLATION_ENDPOINT_PATH, routeLabel
+} from './endpoints.js';
 
-/** Process boot timestamp, shared by every listener in this process. */
-const START_TIME_SECONDS = Math.floor(Date.now() / 1000);
-
-/** Hard cap for one telemetry beacon body. */
-export const MAX_PAYLOAD_BYTES = 2048;
-/** Cache policy for the distributed scripts; the SRI hash is the ETag. */
-export const SCRIPT_CACHE_CONTROL = 'public, max-age=3600, stale-while-revalidate=86400';
-/**
- * Both scripts are served with `Access-Control-Allow-Origin: *`, because the
- * supported embed uses `crossorigin="anonymous"` plus an `integrity` hash: the
- * browser then fetches the script in CORS mode and verifies it before executing.
- * The bytes are public and tenant-keyed, so the wildcard exposes nothing that a
- * plain <script> tag did not already expose.
- */
-export const SCRIPT_CORS = '*';
-/** Largest counter value accepted; anything bigger is not a plausible page metric. */
-export const MAX_COUNTER = 1_000_000;
 export const DEFAULT_PORT = 8790;
 export const DEFAULT_HOST = '127.0.0.1';
 export const DEFAULT_STORE_FILE = 'server/telemetry.db';
-/** Cache policy for the discovery document: public, and cheap enough to re-read. */
-export const DISCOVERY_CACHE_CONTROL = 'public, max-age=300, stale-while-revalidate=3600';
-/** The relation every response advertises, so the document is reachable without a hard-coded path. */
-export const AGENT_BRIDGE_LINK = '</.well-known/navi.json>; rel="agent-bridge"';
-/**
- * Where the Corresponding Source for the running version lives, and the default
- * target of `GET /v1/source`.
- *
- * Normative rather than decorative: AGPL-3.0 section 13 obliges a service like
- * this one to offer its Corresponding Source to the users interacting with it over
- * a network, so changing this to a vanity URL would make the service non-compliant.
- * Override it with `NAVI_SOURCE_URL` when hosting a modified version, because the
- * obligation attaches to the source of the version actually answering requests —
- * upstream's repository does not discharge it for a fork.
- */
-export const SOURCE_REPOSITORY_URL = 'https://github.com/Wub796/Navi';
-/** Path that offers the Corresponding Source by redirecting to it. */
-export const SOURCE_ENDPOINT_PATH = '/v1/source';
-/** Public path this host distributes the browser bundle on, as advertised to agents. */
-export const SCRIPT_ENDPOINT_PATH = '/v1/navi.js';
-/**
- * Tenant-scoped routes whose tenant id is a path segment, so the route itself
- * cannot be a fixed string. Declared once and used both for routing and for the
- * metric label: two literals would be two chances to disagree about which path
- * was answered.
- */
-export const AUDIT_ENDPOINT_PATTERN = /^\/v1\/tenants\/([^/]+)\/security-audit$/;
-export const PRUNE_ENDPOINT_PATTERN = /^\/v1\/tenants\/([^/]+)\/maintenance\/prune$/;
-/** Everything the browser bundle can be asked to do, advertised verbatim. */
-export const AGENT_CAPABILITIES = ['viewport_indexing', 'differential_actions', 'settlement_receipts'];
-/**
- * MCP protocol revision the paired MCP server speaks. Deliberately a literal and
- * not an import: this service is dependency-free by design, and a host must not
- * have to load the agent runtime to answer a discovery request.
- * `tests/auto-discovery.spec.mjs` asserts it equals `PROTOCOL_VERSION` in
- * `src/mcp/server.js`.
- */
-export const MCP_PROTOCOL_REVISION = '2025-11-25';
-/**
- * Navi protocol version this document advertises. The number is a literal in three
- * places, because the SDK cannot import anything: `src/navi.js` (the browser
- * bundle), `src/adapter.js`, and here. `tests/auto-discovery.spec.mjs` asserts all
- * three agree, so a bump that misses one fails the suite rather than shipping.
- */
-export const NAVI_PROTOCOL_VERSION = '0.3.0';
-/** Default advertised MCP SSE endpoint: loopback, on the port the paired server binds. */
-export const DEFAULT_MCP_SSE_URL = 'http://127.0.0.1:3001/sse';
-/** Path that receives Stripe billing events and provisions tenants from them. */
-export const BILLING_ENDPOINT_PATH = '/v1/billing/webhook';
-/** Path that lets a post-checkout customer claim their provisioned key once. */
-export const BILLING_SESSION_ENDPOINT_PATH = '/v1/billing/session';
-/** Path a Checkout `success_url` redirects to, rendering the key as a page once. */
-export const BILLING_SUCCESS_ENDPOINT_PATH = '/v1/billing/success';
-/** Validity window for a one-time Checkout Session API-key claim, in ms (15m). */
-export const CHECKOUT_CLAIM_TTL_MS = 900_000;
-/** Replay window this route enforces around a signature timestamp, in seconds. */
-export const STRIPE_SIGNATURE_TOLERANCE_SECONDS = 300;
-/** Hard cap for one billing event body; Stripe events are JSON, not page data. */
-export const MAX_BILLING_PAYLOAD_BYTES = 1024 * 1024;
-/** How many random bytes a generated tenant key carries. */
-export const TENANT_KEY_BYTES = 32;
-/** Stripe events that create or refresh a tenant. */
-export const PROVISIONING_EVENT_TYPES = new Set(['checkout.session.completed', 'customer.subscription.created', 'customer.subscription.updated']);
-/** Stripe events that revoke one. */
-export const REVOCATION_EVENT_TYPE = 'customer.subscription.deleted';
-
-/**
- * Parse a `Stripe-Signature` header.
- *
- * Stripe sends `t=<unix seconds>,v1=<hex hmac>` and may send several `v1` entries
- * while a secret is being rolled. A malformed header is `null` rather than a
- * partial result: every field this route needs must be present and well formed
- * before anything is compared.
- * @param {unknown} header
- * @returns {{timestamp: number, signatures: string[]} | null}
- */
-export function parseStripeSignature(header) {
-  if (typeof header !== 'string' || header.trim().length === 0) return null;
-  /** @type {number | null} */
-  let timestamp = null;
-  /** @type {string[]} */
-  const signatures = [];
-  for (const part of header.split(',')) {
-    const index = part.indexOf('=');
-    if (index === -1) continue;
-    const key = part.slice(0, index).trim();
-    const value = part.slice(index + 1).trim();
-    if (key === 't' && /^\d+$/.test(value)) timestamp = Number(value);
-    else if (key === 'v1' && /^[0-9a-fA-F]{64}$/.test(value)) signatures.push(value.toLowerCase());
-  }
-  return timestamp === null || signatures.length === 0 ? null : { timestamp, signatures };
-}
-
-/**
- * Verify a Stripe webhook signature over the exact bytes that arrived.
- *
- * The digest covers `${t}.${rawBody}`, the timestamp is inside the signed string
- * so it cannot be edited, and the tolerance is checked before the digest because
- * an expired signature is refused whether or not its HMAC is valid. The compare
- * is constant time: a byte-by-byte early return would leak how much of a guess
- * was right.
- * @param {string} rawBody @param {unknown} header @param {string} secret
- * @param {number} [nowSeconds] @returns {boolean}
- */
-export function verifyStripeSignature(rawBody, header, secret, nowSeconds = Math.floor(Date.now() / 1000)) {
-  if (!secret) return false;
-  const parsed = parseStripeSignature(header);
-  if (!parsed) return false;
-  if (Math.abs(nowSeconds - parsed.timestamp) > STRIPE_SIGNATURE_TOLERANCE_SECONDS) return false;
-  const expected = createHmac('sha256', secret).update(`${parsed.timestamp}.${rawBody}`, 'utf8').digest();
-  return parsed.signatures.some(signature => {
-    const provided = Buffer.from(signature, 'hex');
-    return provided.length === expected.length && timingSafeEqual(provided, expected);
-  });
-}
-
-/**
- * Read an optional integer out of Stripe metadata, which is always strings.
- * An unusable value falls back to the documented default rather than yielding
- * `NaN` in a quota column.
- * @param {unknown} value @param {number} fallback @param {number} minimum @returns {number}
- */
-export function metadataInteger(value, fallback, minimum) {
-  if (value === undefined || value === null || value === '') return fallback;
-  const number = Number(value);
-  return Number.isInteger(number) && number >= minimum ? number : fallback;
-}
-
-/**
- * Read the optional `allowed_origins` metadata value: a JSON array, a comma- or
- * pipe-separated list, or a single origin. Each entry is reduced to its origin so
- * a trailing slash in metadata cannot make a legitimate pixel fail the check, and
- * `*` is preserved as the wildcard it is. Absent or unusable means unrestricted,
- * which is the behaviour a tenant had before it was provisioned.
- * @param {unknown} value @returns {string[]}
- */
-export function parseAllowedOrigins(value) {
-  /** @type {unknown[]} */
-  let items = [];
-  if (Array.isArray(value)) {
-    items = value;
-  } else if (typeof value === 'string' && value.trim().length > 0) {
-    const text = value.trim();
-    if (text.startsWith('[')) {
-      try {
-        const parsed = JSON.parse(text);
-        if (Array.isArray(parsed)) items = parsed;
-      } catch { /* fall through to the separated form */ }
-    }
-    if (items.length === 0) items = text.split(/[|,]/);
-  }
-  const origins = items
-    .filter((/** @type {unknown} */ item) => typeof item === 'string' && item.trim().length > 0)
-    .map(item => String(item).trim())
-    .map(origin => {
-      if (origin === '*') return '*';
-      try { return new URL(origin).origin; }
-      catch { return origin; }
-    });
-  return origins.length > 0 ? [...new Set(origins)] : ['*'];
-}
-
-/** The complete, exact set of accepted telemetry keys. */
-export const TELEMETRY_FIELDS = ['tenant_id', 'url_origin', 'actions_indexed', 'actions_executed', 'execution_failures'];
-/**
- * The complete, exact set of accepted violation fields. The destination arrives
- * already sanitized by the MCP server, so no page URL, query string or credential
- * is representable here — this route cannot become a second ingestion path for
- * page data.
- */
-export const VIOLATION_FIELDS = ['tenant_id', 'session_id', 'category', 'target_url', 'resolved_ip'];
-/**
- * Categories a violation may be filed under. Duplicated from the MCP server's
- * taxonomy rather than imported: this service is dependency-free and must not
- * load the agent runtime to answer a request, and `tests/containment-persistence
- * .spec.mjs` asserts the two lists agree so the copy cannot drift silently.
- */
-export const VIOLATION_CATEGORIES = ['metadata_endpoint', 'private_ipv4', 'loopback_or_local', 'cgnat_or_multicast', 'ipv6_special', 'dns_rebinding_rejected'];
-/** Longest sanitized destination accepted, matching the MCP server's log cap. */
-export const MAX_VIOLATION_URL_CHARS = 512;
-/** Longest session identifier accepted. */
-export const MAX_SESSION_ID_CHARS = 128;
-/** Ingestion ceiling per tenant: requests per minute, replenished continuously. */
-export const RATE_LIMIT_PER_MINUTE = 120;
-/** How many requests a tenant may send back to back before that ceiling applies. */
-export const RATE_LIMIT_BURST = 30;
-/** How long an untouched tenant bucket is remembered, in milliseconds. */
-export const RATE_LIMIT_IDLE_MS = 10 * 60 * 1000;
-/** Sweep cadence for idle buckets, in milliseconds. */
-export const RATE_LIMIT_SWEEP_MS = 60 * 1000;
-/**
- * Bucket count that triggers a sweep on the next request. The timer alone is not
- * enough: a flood of distinct tenant ids would otherwise grow the map for a full
- * sweep interval before anything removed the entries.
- */
-export const RATE_LIMIT_SWEEP_THRESHOLD = 1000;
 /** How often the automatic retention sweep runs, in milliseconds. */
 export const RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /**
@@ -275,81 +78,29 @@ export const RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
  */
 export const SHUTDOWN_DEADLINE_MS = 5000;
 
-/**
- * @typedef {{allowed: boolean, remaining: number, retryAfterSeconds: number}} RateVerdict
- * @typedef {{enabled: boolean, perMinute: number, burst: number, size: number, take(key: string): RateVerdict, sweep(at?: number): number, reset(): void, close(): void}} RateLimiter
- */
-
-/**
- * A token bucket per tenant, held in this process and nowhere else.
- *
- * Bounded memory is the whole reason this is a class of its own: a bucket is
- * created on first use, refilled continuously at `perMinute`, and forgotten once
- * it has been untouched for `idleMs`, so the map is a function of how many
- * tenants are active right now rather than of how many have ever been seen.
- * `perMinute` or `burst` of `0` disables limiting entirely.
- * @param {{perMinute?: number, burst?: number, idleMs?: number, sweepIntervalMs?: number, now?: () => number, timer?: boolean}} [options]
- * @returns {RateLimiter}
- */
-export function createRateLimiter(options = {}) {
-  const perMinute = options.perMinute ?? RATE_LIMIT_PER_MINUTE;
-  const burst = options.burst ?? RATE_LIMIT_BURST;
-  const idleMs = options.idleMs ?? RATE_LIMIT_IDLE_MS;
-  const enabled = perMinute > 0 && burst > 0;
-  const now = options.now ?? (() => Date.now());
-  /** Tokens added per millisecond: a minute's allowance spread across the minute. */
-  const refillPerMs = perMinute / 60000;
-  /** @type {Map<string, {tokens: number, at: number}>} */
-  const buckets = new Map();
-  /** @param {number} [at] @returns {number} buckets removed */
-  const sweep = (at = now()) => {
-    let removed = 0;
-    for (const [key, bucket] of buckets) {
-      if (at - bucket.at >= idleMs) {
-        buckets.delete(key);
-        removed += 1;
-      }
-    }
-    return removed;
-  };
-  let timer = /** @type {ReturnType<typeof setInterval> | null} */ (null);
-  if (enabled && options.timer !== false) {
-    timer = setInterval(() => sweep(), options.sweepIntervalMs ?? RATE_LIMIT_SWEEP_MS);
-    // Never hold the process open, and never a reason for a test to hang.
-    timer.unref?.();
-  }
-  return {
-    enabled,
-    perMinute,
-    burst,
-    get size() { return buckets.size; },
-    /** @param {string} key @returns {RateVerdict} */
-    take(key) {
-      if (!enabled) return { allowed: true, remaining: 0, retryAfterSeconds: 0 };
-      const at = now();
-      let bucket = buckets.get(key);
-      if (!bucket) {
-        if (buckets.size >= RATE_LIMIT_SWEEP_THRESHOLD) sweep(at);
-        bucket = { tokens: burst, at };
-        buckets.set(key, bucket);
-      } else {
-        // Refill by elapsed time, capped at the burst allowance, so an idle tenant
-        // banks nothing beyond it.
-        bucket.tokens = Math.min(burst, bucket.tokens + (at - bucket.at) * refillPerMs);
-        bucket.at = at;
-      }
-      if (bucket.tokens < 1) {
-        const missing = 1 - bucket.tokens;
-        return { allowed: false, remaining: 0, retryAfterSeconds: Math.max(1, Math.ceil(missing / refillPerMs / 1000)) };
-      }
-      bucket.tokens -= 1;
-      return { allowed: true, remaining: Math.floor(bucket.tokens), retryAfterSeconds: 0 };
-    },
-    sweep,
-    reset() { buckets.clear(); },
-    close() { if (timer) clearInterval(timer); timer = null; }
-  };
-}
+// The constants every route and every test shares are defined once in the module
+// that owns them; they are re-exported here because `server/index.js` is the host
+// service's public surface, and a caller should not have to know the file layout.
+export { MAX_PAYLOAD_BYTES } from './http.js';
+export {
+  AGENT_BRIDGE_LINK, AGENT_CAPABILITIES, AUDIT_ENDPOINT_PATTERN, BILLING_ENDPOINT_PATH,
+  BILLING_SESSION_ENDPOINT_PATH, BILLING_SUCCESS_ENDPOINT_PATH, DEFAULT_MCP_SSE_URL,
+  DISCOVERY_CACHE_CONTROL, MCP_PROTOCOL_REVISION, NAVI_PROTOCOL_VERSION, PRUNE_ENDPOINT_PATTERN,
+  SCRIPT_CACHE_CONTROL, SCRIPT_CORS, SCRIPT_ENDPOINT_PATH, SOURCE_ENDPOINT_PATH, SOURCE_REPOSITORY_URL
+} from './endpoints.js';
+export {
+  CHECKOUT_CLAIM_TTL_MS, MAX_BILLING_PAYLOAD_BYTES, PROVISIONING_EVENT_TYPES,
+  REVOCATION_EVENT_TYPE, STRIPE_SIGNATURE_TOLERANCE_SECONDS, TENANT_KEY_BYTES,
+  metadataInteger, parseAllowedOrigins, parseStripeSignature, verifyStripeSignature
+} from './billing.js';
+export {
+  MAX_COUNTER, MAX_SESSION_ID_CHARS, MAX_VIOLATION_URL_CHARS, TELEMETRY_FIELDS,
+  VIOLATION_CATEGORIES, VIOLATION_FIELDS
+} from './ingest.js';
+export {
+  RATE_LIMIT_BURST, RATE_LIMIT_IDLE_MS, RATE_LIMIT_PER_MINUTE, RATE_LIMIT_SWEEP_MS,
+  RATE_LIMIT_SWEEP_THRESHOLD, createRateLimiter
+} from './rate-limit.js';
 
 /**
  * Read a non-negative integer from the environment, falling back when it is
@@ -452,305 +203,11 @@ async function defaultIntegrity() {
 }
 
 /**
- * The `Link` relations are not set here: they are set on the response before
- * routing, so every route carries them without restating them.
- * @param {import('node:http').ServerResponse} res
- * @param {number} status
- * @param {Record<string, unknown>} body
- * @param {Record<string, string>} [extraHeaders]
- */
-function sendJson(res, status, body, extraHeaders = {}) {
-  const payload = `${JSON.stringify(body)}\n`;
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload),
-    'X-Content-Type-Options': 'nosniff',
-    // Every JSON response here is either tenant-scoped or an error, so nothing
-    // on this service is safe for a shared cache to keep. The one exception is the
-    // discovery document, which passes its own public policy in extraHeaders.
-    'Cache-Control': 'no-store',
-    ...extraHeaders
-  });
-  res.end(payload);
-}
-
-/**
- * @param {import('node:http').ServerResponse} res
- * @param {number} status
- * @param {string} code
- * @param {string} message
- * @param {Record<string, string>} [extraHeaders]
- */
-function sendError(res, status, code, message, extraHeaders = {}) {
-  sendJson(res, status, { ok: false, error: { code, message } }, extraHeaders);
-}
-
-/**
- * @param {import('node:http').ServerResponse} res
- * @param {number} status
- * @param {string} html
- * @param {Record<string, string>} [extraHeaders]
- */
-function sendHtml(res, status, html, extraHeaders = {}) {
-  res.writeHead(status, {
-    ...BILLING_PAGE_HEADERS,
-    'Content-Length': Buffer.byteLength(html),
-    ...extraHeaders
-  });
-  res.end(html);
-}
-
-/**
- * The origin a customer's browser used, for the loader URL in the onboarding page.
- *
- * `Host` is what the browser asked for and what the embed snippet must name, but it
- * is caller-supplied and lands in the page, so anything that is not a plain
- * host[:port] is replaced rather than reflected. The scheme comes from the proxy
- * header when there is one, because this service is usually behind a terminator
- * that speaks HTTP to it.
- * @param {import('node:http').IncomingMessage} req
- * @returns {string}
- */
-function requestOrigin(req) {
-  const forwarded = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]?.trim().toLowerCase();
-  const proto = forwarded === 'https' ? 'https' : 'http';
-  const host = String(req.headers.host ?? '').trim();
-  return `${proto}://${/^[A-Za-z0-9.-]+(?::\d{1,5})?$/.test(host) ? host : '127.0.0.1'}`;
-}
-
-/**
- * Prometheus text. Unauthenticated like `/healthz`, and aggregate-only: a scrape
- * carries counters and one `tenant_id` per throttled tenant, never a URL, a
- * session identifier or a key. `/metrics` never consults the limiter.
- * @param {import('node:http').ServerResponse} res
- * @param {string} text
- */
-function sendMetrics(res, text) {
-  res.writeHead(200, {
-    'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
-    'Content-Length': Buffer.byteLength(text),
-    'X-Content-Type-Options': 'nosniff',
-    'Cache-Control': 'no-store'
-  });
-  res.end(text);
-}
-
-/**
- * The closed set of route labels the host metrics expose. Anything unmatched is
- * `other`: a label that came from the request path would let a scanner mint a
- * series per path it tried.
- * @param {string} path @returns {string}
- */
-function routeLabel(path) {
-  if (path === SCRIPT_ENDPOINT_PATH) return 'navi.js';
-  if (path === '/v1/loader.js') return 'loader.js';
-  if (path === '/v1/telemetry') return 'telemetry';
-  if (path === '/v1/telemetry/violations') return 'telemetry_violations';
-  if (path === BILLING_ENDPOINT_PATH) return 'billing_webhook';
-  if (path === BILLING_SESSION_ENDPOINT_PATH) return 'billing_session';
-  if (path === BILLING_SUCCESS_ENDPOINT_PATH) return 'billing_success';
-  if (path === '/healthz') return 'healthz';
-  if (path === '/metrics') return 'metrics';
-  if (path === '/.well-known/navi.json') return 'discovery';
-  if (path === SOURCE_ENDPOINT_PATH) return 'source';
-  if (AUDIT_ENDPOINT_PATTERN.test(path)) return 'security_audit';
-  if (PRUNE_ENDPOINT_PATTERN.test(path)) return 'maintenance_prune';
-  return 'other';
-}
-
-/**
- * Read a request body up to `limit` bytes. `done` runs exactly once, as soon as
- * the size limit is breached or the stream ends, so the caller never awaits a
- * body it has already decided to reject.
- * @param {import('node:http').IncomingMessage} req
- * @param {number} limit
- * @param {(result: {tooLarge: boolean, raw: string | null}) => void} done
- */
-function readBody(req, limit, done) {
-  /** @type {Buffer[]} */
-  const chunks = [];
-  let size = 0;
-  let tooLarge = false;
-  let finished = false;
-  /** @param {{tooLarge: boolean, raw: string | null}} result */
-  const finish = result => {
-    if (finished) return;
-    finished = true;
-    done(result);
-  };
-  req.on('data', chunk => {
-    if (tooLarge) return;
-    const buffer = /** @type {Buffer} */ (chunk);
-    size += buffer.length;
-    if (size > limit) {
-      tooLarge = true;
-      chunks.length = 0;
-      finish({ tooLarge: true, raw: null });
-      return;
-    }
-    chunks.push(buffer);
-  });
-  req.on('end', () => finish(tooLarge ? { tooLarge: true, raw: null } : { tooLarge: false, raw: Buffer.concat(chunks).toString('utf8') }));
-  req.on('error', () => finish({ tooLarge: false, raw: null }));
-}
-
-/**
- * A canonical origin is its own URL, which rejects paths, query strings,
- * fragments, trailing slashes and embedded credentials in one check.
- * @param {unknown} value
- * @returns {boolean}
- */
-function isCanonicalOrigin(value) {
-  if (typeof value !== 'string') return false;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-    return url.origin === value;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Strict payload validation. Only the five documented fields are accepted, the
- * tenant must be registered and match the authenticated Bearer token, and the
- * origin must be canonical.
- * @param {unknown} payload
- * @param {Set<string>} allowedTenantIds
- * @param {string} [authenticatedTenantId]
- * @returns {{ok: true, record: {tenant_id: string, url_origin: string, actions_indexed: number, actions_executed: number, execution_failures: number}} | {ok: false, status: number, code: string, message: string}}
- */
-function validateTelemetry(payload, allowedTenantIds, authenticatedTenantId) {
-  const invalid = (/** @type {string} */ message) => /** @type {{ok: false, status: number, code: string, message: string}} */ ({ ok: false, status: 400, code: 'INVALID_PAYLOAD', message });
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return invalid('The body must be a JSON object with tenant_id, url_origin, actions_indexed, actions_executed and execution_failures.');
-  }
-  const record = /** @type {Record<string, unknown>} */ (payload);
-  const unknown = Object.keys(record).filter(key => !TELEMETRY_FIELDS.includes(key));
-  if (unknown.length) {
-    return invalid(`Unknown field(s): ${unknown.join(', ')}. Accepted fields are exactly ${TELEMETRY_FIELDS.join(', ')}; raw DOM text and page URLs are not accepted.`);
-  }
-  const tenantId = record.tenant_id;
-  if (typeof tenantId !== 'string' || tenantId.length === 0) {
-    return invalid('tenant_id must be a non-empty string naming a registered tenant.');
-  }
-  if (!allowedTenantIds.has(tenantId)) {
-    return { ok: false, status: 401, code: 'UNKNOWN_TENANT', message: `tenant_id "${tenantId}" is not a registered tenant. Check the tenant key used to serve the script.` };
-  }
-  if (authenticatedTenantId && tenantId !== authenticatedTenantId) {
-    return { ok: false, status: 401, code: 'UNAUTHORIZED', message: `The body names tenant "${tenantId}" while the presented Bearer token resolves to "${authenticatedTenantId}".` };
-  }
-  if (!isCanonicalOrigin(record.url_origin)) {
-    return invalid('url_origin must be a canonical origin such as "https://shop.example.com": no path, query string, fragment, trailing slash or embedded credentials.');
-  }
-  /** @type {Record<string, number>} */
-  const counters = {};
-  for (const field of ['actions_indexed', 'actions_executed', 'execution_failures']) {
-    const value = record[field];
-    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > MAX_COUNTER) {
-      return invalid(`${field} must be an integer between 0 and ${MAX_COUNTER}.`);
-    }
-    counters[field] = value;
-  }
-  return {
-    ok: true,
-    record: {
-      tenant_id: tenantId,
-      url_origin: /** @type {string} */ (record.url_origin),
-      actions_indexed: counters.actions_indexed ?? 0,
-      actions_executed: counters.actions_executed ?? 0,
-      execution_failures: counters.execution_failures ?? 0
-    }
-  };
-}
-
-/**
- * Strict validation for one containment violation.
- *
- * The tenant comes from the caller's key when one is presented, and a body that
- * names a different tenant is refused rather than rewritten: an audit record has
- * to be the record the reporter meant, filed against the tenant its key resolves
- * to. `target_url` must already be sanitized — origin plus path — so this route
- * cannot become a second ingestion path for page data.
- * @param {unknown} payload
- * @param {Set<string>} allowedTenantIds
- * @param {string | null} keyTenantId tenant the presented key resolved to, if any
- * @returns {{ok: true, record: {tenant_id: string, session_id: string | null, category: string, target_url: string, resolved_ip: string | null}} | {ok: false, status: number, code: string, message: string}}
- */
-function validateViolation(payload, allowedTenantIds, keyTenantId) {
-  /** @param {string} message @returns {{ok: false, status: number, code: string, message: string}} */
-  const invalid = message => ({ ok: false, status: 400, code: 'INVALID_PAYLOAD', message });
-  /** @param {string} message @returns {{ok: false, status: number, code: string, message: string}} */
-  const unknownTenant = message => ({ ok: false, status: 401, code: 'UNKNOWN_TENANT', message });
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return invalid('The body must be a JSON object with category and target_url, and optionally tenant_id, session_id and resolved_ip.');
-  }
-  const record = /** @type {Record<string, unknown>} */ (payload);
-  const unknown = Object.keys(record).filter(field => !VIOLATION_FIELDS.includes(field));
-  if (unknown.length) {
-    return invalid(`Unknown field(s): ${unknown.join(', ')}. Accepted fields are exactly ${VIOLATION_FIELDS.join(', ')}; the destination is a sanitized origin plus path and nothing else.`);
-  }
-  const declared = record.tenant_id;
-  if (declared !== undefined) {
-    if (typeof declared !== 'string' || !allowedTenantIds.has(declared)) {
-      return unknownTenant(`tenant_id "${String(declared)}" is not a registered tenant. Present the tenant key on the request, or name the tenant it resolves to.`);
-    }
-    if (keyTenantId && declared !== keyTenantId) {
-      return unknownTenant(`The body names tenant "${declared}" while the presented key resolves to "${keyTenantId}"; a record cannot be filed against another tenant.`);
-    }
-  }
-  const tenantId = typeof declared === 'string' ? declared : keyTenantId;
-  if (!tenantId) return unknownTenant('A tenant key is required: send "Authorization: Bearer <tenant_key>" (or ?key=<tenant_key>), or name a registered tenant_id.');
-  const category = record.category;
-  if (typeof category !== 'string' || !VIOLATION_CATEGORIES.includes(category)) {
-    return invalid(`category must be one of ${VIOLATION_CATEGORIES.join(', ')}.`);
-  }
-  const session = record.session_id;
-  if (session !== undefined && session !== null) {
-    if (typeof session !== 'string' || session.length === 0 || session.length > MAX_SESSION_ID_CHARS || !/^[A-Za-z0-9._:-]+$/.test(session)) {
-      return invalid(`session_id must be 1 to ${MAX_SESSION_ID_CHARS} characters of letters, digits, dot, underscore, colon or hyphen.`);
-    }
-  }
-  const target = record.target_url;
-  if (typeof target !== 'string' || target.length === 0 || target.length > MAX_VIOLATION_URL_CHARS) {
-    return invalid(`target_url must be a sanitized absolute URL of at most ${MAX_VIOLATION_URL_CHARS} characters.`);
-  }
-  /** @type {URL} */
-  let parsed;
-  try {
-    parsed = new URL(target);
-  } catch {
-    return invalid('target_url must be an absolute http(s) URL such as "http://169.254.169.254/latest/meta-data/".');
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return invalid('target_url must use http or https.');
-  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-    return invalid('target_url must be sanitized: no credentials, query string or fragment.');
-  }
-  if (`${parsed.origin}${parsed.pathname}` !== target) {
-    return invalid('target_url must be exactly origin plus path, which is what the MCP server records.');
-  }
-  const ip = record.resolved_ip;
-  if (ip !== undefined && ip !== null && (typeof ip !== 'string' || isIP(ip) === 0)) {
-    return invalid('resolved_ip must be an IP literal or null.');
-  }
-  return {
-    ok: true,
-    record: {
-      tenant_id: tenantId,
-      session_id: typeof session === 'string' ? session : null,
-      category,
-      target_url: target,
-      resolved_ip: typeof ip === 'string' ? ip : null
-    }
-  };
-}
-
-/**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
  * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, readQuota?(tenantId: string): Promise<{tenant_id: string, window_start_ms: number, event_count: number} | null>, upsertTenantDefinition(definition: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'}): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}>, readTenantDefinition(tenantId: string): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null>, readTenantDefinitions(): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}[]>, recordWebhookEvent?(eventId: string, receivedAtMs?: number): Promise<boolean>, releaseWebhookEvent?(eventId: string): Promise<void>, applyWebhookEvent?(mutation: {event_id?: string | null, received_at_ms?: number, definition?: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'} | null, checkout_claim?: {session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number} | null}): Promise<{duplicate: boolean, record: {tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null}>, recordCheckoutClaim?(claim: {session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number}): Promise<{session_id: string, tenant_id: string, api_key: string, expires_at_ms: number}>, consumeCheckoutClaim?(sessionId: string, nowMs?: number): Promise<{tenant_id: string, api_key: string} | null>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
- * @typedef {{host?: string, port?: number, tenants?: import('./tenants.js').TenantRegistry, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: RateLimiter, maxEventsPerWindow?: number, quotaWindowSeconds?: number, metricsToken?: string, stripeWebhookSecret?: string}} HostOptions
- * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: import('./tenants.js').TenantRegistry, limiter: RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
+ * @typedef {{host?: string, port?: number, tenants?: import('./tenants.js').TenantRegistry, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: import('./rate-limit.js').RateLimiter, maxEventsPerWindow?: number, quotaWindowSeconds?: number, metricsToken?: string, stripeWebhookSecret?: string}} HostOptions
+ * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: import('./tenants.js').TenantRegistry, limiter: import('./rate-limit.js').RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
  */
 
 /**
@@ -778,6 +235,22 @@ export async function createNaviHostServer(options = {}) {
   const mcpSseUrl = options.mcpSseUrl ?? process.env.NAVI_MCP_SSE_URL ?? DEFAULT_MCP_SSE_URL;
   const log = options.log ?? (() => {});
   const allowedTenantIds = tenantIds(tenants);
+  /**
+   * Publish one persisted tenant definition into the live registry. The key is the
+   * lookup the ingest routes perform, so this is what makes a provisioned tenant
+   * usable on the very next request, and what makes a revocation take effect before
+   * the store write has even returned to the caller.
+   * @param {{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number}} definition
+   */
+  function registerTenantDefinition(definition) {
+    tenants.set(definition.api_key, {
+      id: definition.tenant_id,
+      allowed_origins: definition.allowed_origins,
+      max_events_per_window: definition.max_events_per_window,
+      window_seconds: definition.window_seconds
+    });
+    allowedTenantIds.add(definition.tenant_id);
+  }
   // Provisioned tenants are configuration that outlives the process: register every
   // persisted definition into the live registry before the first request, so a key
   // sold last month still authenticates after a restart.
@@ -797,21 +270,6 @@ export async function createNaviHostServer(options = {}) {
   // an unsigned body, because a webhook without a secret cannot tell Stripe from
   // anyone who found the URL.
   const stripeWebhookSecret = (options.stripeWebhookSecret ?? process.env.NAVI_STRIPE_WEBHOOK_SECRET ?? '').trim();
-  /**
-   * Constant-time comparison against the configured scrape credential. A length
-   * mismatch short-circuits, which leaks only the token's length, and the header
-   * must be a well-formed `Bearer <token>` like every other authenticated route.
-   * @param {import('node:http').IncomingMessage} req @returns {boolean}
-   */
-  function metricsAuthorized(req) {
-    if (!metricsToken) return true;
-    const authorization = req.headers.authorization;
-    const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
-    if (!match) return false;
-    const presented = Buffer.from(match[1]);
-    const expected = Buffer.from(metricsToken);
-    return presented.length === expected.length && timingSafeEqual(presented, expected);
-  }
   // The limiter is per process, exactly like the store it protects: two replicas
   // behind one address each allow the full rate, so enforcement belongs at the
   // shared edge once there is more than one.
@@ -819,20 +277,16 @@ export async function createNaviHostServer(options = {}) {
     perMinute: countFromEnv(process.env.NAVI_RATE_LIMIT_PER_MINUTE, RATE_LIMIT_PER_MINUTE),
     burst: countFromEnv(process.env.NAVI_RATE_LIMIT_BURST, RATE_LIMIT_BURST)
   });
-  /**
-   * Metrics state, held per host rather than per process: two hosts in one process
-   * must not report each other's traffic, and a test that starts a second host
-   * should see a fresh scrape. Request keys are `route|status`, built only from the
-   * closed route set, so no label can come from a request path.
-   * @type {Map<string, number>}
-   */
-  const requestCounts = new Map();
-  /** @type {Map<string, number>} */
-  const rateLimitedByTenant = new Map();
-  /** @type {Map<string, number>} */
-  const quotaExceededByTenant = new Map();
-  let pruneEvents = 0;
-  let prunedRecords = 0;
+  /** @type {ReturnType<typeof createHostMetrics>} */
+  let metrics;
+  const quota = createQuota({
+    store,
+    tenants,
+    maxEventsPerWindow: defaultMaxEventsPerWindow,
+    quotaWindowSeconds: defaultQuotaWindowSeconds,
+    onExceeded: tenantId => metrics.quotaExceeded(tenantId)
+  });
+  metrics = createHostMetrics({ store, limiter, lifecycle, quota });
   /**
    * Both relations in one header value, on every response this service emits: the
    * discovery document and the Corresponding Source. RFC 8288 allows several
@@ -841,206 +295,6 @@ export async function createNaviHostServer(options = {}) {
    * the second relation.
    */
   const linkHeader = `${AGENT_BRIDGE_LINK}, <${sourceUrl}>; rel="source"`;
-
-  /**
-   * The discovery document an agent reads to find this host's runtime. It is a
-   * pure function of the configured endpoints plus whether the distributables are
-   * actually on disk, so `status` is a verdict and not a decoration: a host that
-   * cannot serve the bundle reports `degraded` instead of promising `ready`.
-   * @returns {Promise<Record<string, unknown>>}
-   */
-  async function discoveryDocument() {
-    let status = 'ready';
-    try {
-      await Promise.all([stat(sdkPath), stat(loaderPath)]);
-    } catch {
-      status = 'degraded';
-    }
-    return {
-      version: NAVI_PROTOCOL_VERSION,
-      protocol: MCP_PROTOCOL_REVISION,
-      status,
-      capabilities: [...AGENT_CAPABILITIES],
-      endpoints: { mcp_sse: mcpSseUrl, script: SCRIPT_ENDPOINT_PATH },
-      // Section 13 makes the source offer part of the published metadata and not
-      // only a response header, so an agent reading the document alone can find it.
-      source: sourceUrl
-    };
-  }
-
-  /** Cached file bytes, keyed on the file's identity so a rebuild is picked up. */
-  const cachedFile = (/** @type {string} */ file) => {
-    let cached = { mtimeMs: 0, size: 0, bytes: /** @type {Buffer | null} */ (null) };
-    return async () => {
-      const info = await stat(file);
-      if (cached.bytes && cached.mtimeMs === info.mtimeMs && cached.size === info.size) return cached.bytes;
-      const bytes = await readFile(file);
-      cached = { mtimeMs: info.mtimeMs, size: info.size, bytes };
-      return bytes;
-    };
-  };
-  const readSdk = cachedFile(sdkPath);
-  const readLoader = cachedFile(loaderPath);
-
-  /** Headers every distributable script carries; callers add length/cache specifics. @returns {Record<string, string>} */
-  const scriptHeaders = () => ({
-    'Content-Type': 'application/javascript; charset=utf-8',
-    'Cache-Control': SCRIPT_CACHE_CONTROL,
-    'X-Content-Type-Options': 'nosniff',
-    'Access-Control-Allow-Origin': SCRIPT_CORS,
-    Vary: 'Accept-Encoding'
-  });
-
-  /** A Prometheus label value escapes backslash, quote and newline: a tenant id is
-   * operator-supplied text, and one unescaped quote would corrupt the exposition.
-   * @param {string} value @returns {string} */
-  function escapeLabel(value) {
-    const backslash = String.fromCharCode(92);
-    return String(value).split(backslash).join(backslash + backslash).split('"').join(backslash + '"').split('\n').join(backslash + 'n');
-  }
-
-  /**
-   * Size of the active store file. A missing file is zero rather than an error:
-   * nothing has been written yet, which is a state and not a fault.
-   * @returns {Promise<number>}
-   */
-  async function storeBytes() {
-    try {
-      return (await stat(store.file)).size;
-    } catch {
-      return 0;
-    }
-  }
-
-  /**
-   * The ceiling a tenant's ingest is metered against, or null when it is unmetered.
-   * A tenant-level ceiling wins over the process default, so one customer's plan can
-   * differ from the deployment's baseline without a second configuration surface.
-   * @param {import('./tenants.js').TenantDefinition} tenantConfig
-   * @returns {{limit: number, window_seconds: number} | null}
-   */
-  function effectiveQuota(tenantConfig) {
-    const windowSeconds = tenantConfig.window_seconds ?? (defaultQuotaWindowSeconds > 0 ? defaultQuotaWindowSeconds : 3600);
-    const declared = tenantConfig.max_events_per_window;
-    // A declared ceiling is authoritative even when it is zero: zero is how a
-    // revoked subscription is stored, and reading it as "unset" would hand the
-    // tenant the deployment default instead of a refusal.
-    if (typeof declared === 'number' && Number.isInteger(declared) && declared >= 0) {
-      return { limit: declared, window_seconds: windowSeconds };
-    }
-    if (defaultMaxEventsPerWindow > 0) return { limit: defaultMaxEventsPerWindow, window_seconds: windowSeconds };
-    return null;
-  }
-
-  /**
-   * The metered tenants, in a stable order. Only a tenant with a positive ceiling
-   * has a window to report: emitting a zero series for everyone else would be a
-   * label per tenant that says nothing.
-   * @returns {{config: import('./tenants.js').TenantDefinition, quota: {limit: number, window_seconds: number}}[]}
-   */
-  function meteredTenants() {
-    /** @type {{config: import('./tenants.js').TenantDefinition, quota: {limit: number, window_seconds: number}}[]} */
-    const metered = [];
-    for (const value of tenants.values()) {
-      const config = normalizeTenantEntry(value);
-      const quota = config ? effectiveQuota(config) : null;
-      if (config && quota) metered.push({ config, quota });
-    }
-    return metered.sort((left, right) => left.config.id.localeCompare(right.config.id));
-  }
-
-  /**
-   * The Prometheus exposition. Labeled series appear once they have been observed,
-   * while the label-free aggregates and the gauges are always present, so a scrape
-   * of a freshly started host is a valid document rather than an empty one.
-   * @returns {Promise<string>}
-   */
-  async function renderMetrics() {
-    const lines = [
-      '# HELP navi_host_requests_total HTTP requests answered, by route and status.',
-      '# TYPE navi_host_requests_total counter'
-    ];
-    for (const key of [...requestCounts.keys()].sort()) {
-      const [route, status] = key.split('|');
-      lines.push(`navi_host_requests_total{route="${route}",status="${status}"} ${requestCounts.get(key)}`);
-    }
-    lines.push(
-      '# HELP navi_host_rate_limited_total Ingest requests refused by the per-tenant token bucket.',
-      '# TYPE navi_host_rate_limited_total counter'
-    );
-    for (const tenant of [...rateLimitedByTenant.keys()].sort()) {
-      lines.push(`navi_host_rate_limited_total{tenant_id="${escapeLabel(tenant)}"} ${rateLimitedByTenant.get(tenant)}`);
-    }
-    lines.push(
-      '# HELP process_start_time_seconds Process start time in Unix seconds.',
-      '# TYPE process_start_time_seconds gauge',
-      `process_start_time_seconds ${START_TIME_SECONDS}`,
-      '# HELP navi_host_unclean_shutdowns_total Previous store owner did not complete graceful teardown (0 or 1 per boot).',
-      '# TYPE navi_host_unclean_shutdowns_total counter',
-      `navi_host_unclean_shutdowns_total ${lifecycle.uncleanShutdowns}`,
-      '# HELP navi_host_prune_events_total Retention prunes executed, scheduled and on demand.',
-      '# TYPE navi_host_prune_events_total counter',
-      `navi_host_prune_events_total ${pruneEvents}`,
-      '# HELP navi_host_pruned_records_total Expired violation records removed by those prunes.',
-      '# TYPE navi_host_pruned_records_total counter',
-      `navi_host_pruned_records_total ${prunedRecords}`,
-      '# HELP navi_host_active_tenants Tenants currently holding a rate-limit bucket.',
-      '# TYPE navi_host_active_tenants gauge',
-      `navi_host_active_tenants ${limiter.size}`,
-      '# HELP navi_host_store_bytes Size of the active store file on disk, in bytes.',
-      '# TYPE navi_host_store_bytes gauge',
-      `navi_host_store_bytes ${await storeBytes()}`,
-      '# HELP navi_host_tenant_quota_limit Ingest events allowed per quota window, by tenant.',
-      '# TYPE navi_host_tenant_quota_limit gauge',
-      '# HELP navi_host_tenant_quota_events Ingest events consumed in the tenant\'s active quota window.',
-      '# TYPE navi_host_tenant_quota_events gauge',
-      '# HELP navi_host_tenant_quota_window_start_seconds Start of the tenant\'s active quota window in Unix seconds, 0 when no window has been opened.',
-      '# TYPE navi_host_tenant_quota_window_start_seconds gauge',
-      '# HELP navi_host_quota_exceeded_total Ingest requests refused because the tenant exhausted its quota window.',
-      '# TYPE navi_host_quota_exceeded_total counter'
-    );
-    // Quota state is the tenant's own persisted window, read per scrape: a gauge
-    // fed by process memory would report a ceiling that survived a restart beside a
-    // count that did not. `readQuota` is optional on a store injected by a caller.
-    for (const { config, quota } of meteredTenants()) {
-      const state = typeof store.readQuota === 'function' ? await store.readQuota(config.id) : null;
-      const label = escapeLabel(config.id);
-      const windowStart = state && state.window_start_ms > 0 ? Math.floor(state.window_start_ms / 1000) : 0;
-      lines.push(`navi_host_tenant_quota_limit{tenant_id="${label}"} ${quota.limit}`);
-      lines.push(`navi_host_tenant_quota_events{tenant_id="${label}"} ${state?.event_count ?? 0}`);
-      lines.push(`navi_host_tenant_quota_window_start_seconds{tenant_id="${label}"} ${windowStart}`);
-      lines.push(`navi_host_quota_exceeded_total{tenant_id="${label}"} ${quotaExceededByTenant.get(config.id) ?? 0}`);
-    }
-    return `${lines.join('\n')}\n`;
-  }
-
-  /**
-   * Charge one ingest request against its tenant's bucket. Returns the verdict the
-   * request proceeds under, or null after answering `429` — in which case the
-   * caller must send nothing further. `Retry-After` is whole seconds with a floor
-   * of one, because a header asking a client to retry in zero seconds is a loop.
-   * @param {import('node:http').ServerResponse} res
-   * @param {string} tenantId
-   * @returns {RateVerdict | null}
-   */
-  function chargeIngest(res, tenantId) {
-    if (!limiter.enabled) return { allowed: true, remaining: 0, retryAfterSeconds: 0 };
-    const verdict = limiter.take(tenantId);
-    if (verdict.allowed) return verdict;
-    rateLimitedByTenant.set(tenantId, (rateLimitedByTenant.get(tenantId) ?? 0) + 1);
-    sendError(res, 429, 'RATE_LIMITED', `Tenant "${tenantId}" has used its ${limiter.perMinute} ingestion requests per minute (burst ${limiter.burst}). Retry after ${verdict.retryAfterSeconds}s; raise NAVI_RATE_LIMIT_PER_MINUTE if this tenant legitimately reports more.`, {
-      'Retry-After': String(verdict.retryAfterSeconds),
-      'X-RateLimit-Limit': String(limiter.perMinute),
-      'X-RateLimit-Remaining': '0'
-    });
-    return null;
-  }
-
-  /** The same counters on an accepted response, so a client can pace itself.
-   * @param {RateVerdict} verdict @returns {Record<string, string>} */
-  function rateLimitHeaders(verdict) {
-    return limiter.enabled ? { 'X-RateLimit-Limit': String(limiter.perMinute), 'X-RateLimit-Remaining': String(verdict.remaining) } : {};
-  }
 
   /**
    * Drop violations past the retention window, for every tenant at once, off the
@@ -1070,14 +324,48 @@ export async function createNaviHostServer(options = {}) {
    * @returns {Promise<{pruned_count: number, remaining_count: number}>}
    */
   async function runPrune(options) {
-    pruneEvents += 1;
+    metrics.pruneAttempt();
     const result = await store.pruneViolations(options);
-    prunedRecords += result.pruned_count;
+    metrics.prunedRecords(result.pruned_count);
     if (result.pruned_count > 0 && typeof store.checkpoint === 'function') {
       try { await store.checkpoint({ truncate: true }); }
       catch (error) { log(`checkpoint after prune failed: ${error instanceof Error ? error.message : String(error)}`); }
     }
     return result;
+  }
+
+  const publicRoutes = createPublicRoutes({
+    store, tenants, metrics, retentionDays, sdkPath, loaderPath, integrity, mcpSseUrl, sourceUrl, metricsToken
+  });
+  const billingRoutes = createBillingRoutes({ store, stripeWebhookSecret, log, registerTenantDefinition });
+  const ingestRoutes = createIngestRoutes({ store, tenants, allowedTenantIds, limiter, quota, metrics });
+  const maintenanceRoutes = createMaintenanceRoutes({ store, tenants, retentionDays, runPrune });
+
+  /**
+   * @param {import('node:http').IncomingMessage} req
+   * @param {import('node:http').ServerResponse} res
+   */
+  async function handle(req, res) {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const path = url.pathname;
+
+    if (path === DISCOVERY_ENDPOINT_PATH) return publicRoutes.discovery(req, res);
+    if (path === SOURCE_ENDPOINT_PATH) return publicRoutes.source(req, res);
+    if (path === HEALTH_ENDPOINT_PATH) return publicRoutes.health(req, res);
+    if (path === METRICS_ENDPOINT_PATH) return publicRoutes.scrape(req, res);
+    if (path === BILLING_ENDPOINT_PATH) return billingRoutes.webhook(req, res);
+    if (path === BILLING_SESSION_ENDPOINT_PATH) return billingRoutes.session(req, res, url);
+    if (path === BILLING_SUCCESS_ENDPOINT_PATH) return billingRoutes.success(req, res, url);
+    if (path === SITEMAP_ENDPOINT_PATH) return ingestRoutes.sitemap(req, res);
+    if (path === SCRIPT_ENDPOINT_PATH) return publicRoutes.script(req, res, url);
+    if (path === LOADER_ENDPOINT_PATH) return publicRoutes.loader(req, res);
+    if (path === VIOLATION_ENDPOINT_PATH) return ingestRoutes.violations(req, res, url);
+    const auditMatch = AUDIT_ENDPOINT_PATTERN.exec(path);
+    if (auditMatch) return maintenanceRoutes.audit(req, res, url, String(auditMatch[1] ?? ''));
+    const pruneMatch = PRUNE_ENDPOINT_PATTERN.exec(path);
+    if (pruneMatch) return maintenanceRoutes.prune(req, res, String(pruneMatch[1] ?? ''));
+    if (path === TELEMETRY_ENDPOINT_PATH) return ingestRoutes.telemetry(req, res, url);
+    return sendError(res, 404, 'NOT_FOUND', `No route for ${req.method ?? 'GET'} ${path}.`);
   }
 
   const server = createServer((req, res) => {
@@ -1090,782 +378,13 @@ export async function createNaviHostServer(options = {}) {
     // counts what the service liked is the one an operator cannot use. The label
     // comes from the closed route set, never from the path that was requested.
     const route = routeLabel(new URL(req.url ?? '/', 'http://localhost').pathname);
-    res.on('finish', () => {
-      const key = `${route}|${res.statusCode}`;
-      requestCounts.set(key, (requestCounts.get(key) ?? 0) + 1);
-    });
+    res.on('finish', () => metrics.count(route, res.statusCode));
     track(handle(req, res).catch(error => {
       log(`request failed: ${error instanceof Error ? error.message : String(error)}`);
       if (!res.headersSent) sendError(res, 500, 'INTERNAL_ERROR', 'The host service failed to handle this request.');
       else res.end();
     }));
   });
-
-  /**
-   * Resolve the tenant configuration from a strict `Authorization: Bearer <token>` header.
-   * @param {import('node:http').IncomingMessage} req
-   * @returns {import('./tenants.js').TenantDefinition | null}
-   */
-  function bearerTenantConfig(req) {
-    const authorization = req.headers.authorization;
-    const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
-    return match ? tenantConfigFor(tenants, match[1]) : null;
-  }
-
-  /**
-   * Resolve the tenant id from a strict `Authorization: Bearer <token>` header.
-   * @param {import('node:http').IncomingMessage} req
-   * @returns {string | null}
-   */
-  function bearerTenant(req) {
-    return bearerTenantConfig(req)?.id ?? null;
-  }
-
-  /**
-   * Charge one event against the tenant's persistent SQLite/log quota if configured.
-   * Answers `HTTP 429 {"error":"Quota exceeded"}` with `Retry-After` when exceeded.
-   * @param {import('node:http').ServerResponse} res
-   * @param {import('./tenants.js').TenantDefinition} tenantConfig
-   * @returns {Promise<boolean>}
-   */
-  async function checkTenantQuota(res, tenantConfig) {
-    const quota = effectiveQuota(tenantConfig);
-    if (!quota) return true;
-    // A suspended tenant keeps its record and its key, and is refused here rather
-    // than at authentication: `401` would read as "wrong key" to a client whose key
-    // is right, and would invite it to retry with another one.
-    if (quota.limit === 0) {
-      quotaExceededByTenant.set(tenantConfig.id, (quotaExceededByTenant.get(tenantConfig.id) ?? 0) + 1);
-      sendJson(res, 429, { error: 'Quota exceeded' }, {
-        'Retry-After': String(quota.window_seconds),
-        'X-Quota-Limit': '0',
-        'X-Quota-Remaining': '0'
-      });
-      return false;
-    }
-    if (typeof store.consumeQuota !== 'function') return true;
-    const verdict = await store.consumeQuota({
-      tenant_id: tenantConfig.id,
-      max_events_per_window: quota.limit,
-      window_seconds: quota.window_seconds
-    });
-    if (verdict.allowed) return true;
-    quotaExceededByTenant.set(tenantConfig.id, (quotaExceededByTenant.get(tenantConfig.id) ?? 0) + 1);
-    sendJson(res, 429, { error: 'Quota exceeded' }, {
-      'Retry-After': String(verdict.retry_after_seconds),
-      'X-Quota-Limit': String(quota.limit),
-      'X-Quota-Remaining': '0'
-    });
-    return false;
-  }
-
-  /**
-   * Publish one persisted tenant definition into the live registry. The key is the
-   * lookup the ingest routes perform, so this is what makes a provisioned tenant
-   * usable on the very next request, and what makes a revocation take effect before
-   * the store write has even returned to the caller.
-   * @param {{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number}} definition
-   */
-  function registerTenantDefinition(definition) {
-    tenants.set(definition.api_key, {
-      id: definition.tenant_id,
-      allowed_origins: definition.allowed_origins,
-      max_events_per_window: definition.max_events_per_window,
-      window_seconds: definition.window_seconds
-    });
-    allowedTenantIds.add(definition.tenant_id);
-  }
-
-  /**
-   * Resolve the tenant a Stripe object is about. Metadata is the documented place,
-   * and `client_reference_id` is the one field Stripe Checkout guarantees to echo
-   * back even when a metadata key is dropped.
-   * @param {any} object @returns {string}
-   */
-  function billingTenantId(object) {
-    const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
-    const fromMetadata = typeof metadata.tenant_id === 'string' ? metadata.tenant_id.trim() : '';
-    if (fromMetadata) return fromMetadata;
-    return typeof object?.client_reference_id === 'string' ? object.client_reference_id.trim() : '';
-  }
-
-  /**
-   * Create or refresh a tenant from a verified checkout/subscription event.
-   * @param {any} object @param {string} [eventId] @param {string} [eventType]
-   * @returns {Promise<{status: number, body: Record<string, unknown>}>}
-   */
-  async function provisionTenant(object, eventId = '', eventType = '') {
-    const tenantId = billingTenantId(object);
-    if (!tenantId) return { status: 400, body: { error: 'Missing tenant_id' } };
-    const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
-    const explicitKey = typeof metadata.api_key === 'string' ? metadata.api_key.trim() : '';
-    const existing = typeof store.readTenantDefinition === 'function' ? await store.readTenantDefinition(tenantId) : null;
-    // The key is minted once. An update that carries no api_key must not rotate the
-    // credential a tenant's page already embeds.
-    const apiKey = explicitKey || existing?.api_key || `navi_live_${randomBytes(TENANT_KEY_BYTES).toString('hex')}`;
-    const definitionInput = {
-      tenant_id: tenantId,
-      api_key: apiKey,
-      allowed_origins: parseAllowedOrigins(metadata.allowed_origins),
-      max_events_per_window: metadataInteger(metadata.max_events_per_window, 10000, 0),
-      window_seconds: metadataInteger(metadata.window_seconds, 2592000, 1)
-    };
-    const rawSessionId = typeof object?.id === 'string' ? object.id.trim() : '';
-    const checkoutClaim = eventType === 'checkout.session.completed' && rawSessionId.startsWith('cs_')
-      ? { session_id: rawSessionId, tenant_id: tenantId, api_key: apiKey, expires_at_ms: Date.now() + CHECKOUT_CLAIM_TTL_MS }
-      : null;
-    if (typeof store.applyWebhookEvent === 'function') {
-      const applied = await store.applyWebhookEvent({
-        event_id: eventId || null,
-        definition: definitionInput,
-        checkout_claim: checkoutClaim
-      });
-      if (applied.duplicate) return { status: 200, body: { ok: true, duplicate: true } };
-      const record = applied.record ?? (await store.upsertTenantDefinition(definitionInput));
-      registerTenantDefinition(record);
-      log(`billing: provisioned ${record.tenant_id}`);
-      return { status: 200, body: { ok: true, tenant_id: record.tenant_id, api_key: record.api_key } };
-    }
-    const record = await store.upsertTenantDefinition(definitionInput);
-    if (checkoutClaim && typeof store.recordCheckoutClaim === 'function') {
-      await store.recordCheckoutClaim(checkoutClaim);
-    }
-    registerTenantDefinition(record);
-    log(`billing: provisioned ${record.tenant_id}`);
-    return { status: 200, body: { ok: true, tenant_id: record.tenant_id, api_key: record.api_key } };
-  }
-
-  /**
-   * Revoke a tenant without deleting it: the row and the key stay, the ceiling
-   * becomes zero, and every ingest then answers 429 rather than 401.
-   * @param {any} object @param {string} [eventId]
-   * @returns {Promise<{status: number, body: Record<string, unknown>}>}
-   */
-  async function suspendTenant(object, eventId = '') {
-    const tenantId = billingTenantId(object);
-    if (!tenantId) return { status: 400, body: { error: 'Missing tenant_id' } };
-    const existing = typeof store.readTenantDefinition === 'function' ? await store.readTenantDefinition(tenantId) : null;
-    const definitionInput = /** @type {const} */ ({
-      tenant_id: tenantId,
-      api_key: existing?.api_key ?? `navi_live_${randomBytes(TENANT_KEY_BYTES).toString('hex')}`,
-      allowed_origins: existing?.allowed_origins ?? ['*'],
-      max_events_per_window: 0,
-      window_seconds: existing?.window_seconds ?? 2592000,
-      status: 'suspended'
-    });
-    if (typeof store.applyWebhookEvent === 'function') {
-      const applied = await store.applyWebhookEvent({
-        event_id: eventId || null,
-        definition: definitionInput
-      });
-      if (applied.duplicate) return { status: 200, body: { ok: true, duplicate: true } };
-      const record = applied.record ?? (await store.upsertTenantDefinition(definitionInput));
-      registerTenantDefinition(record);
-      log(`billing: suspended ${record.tenant_id}`);
-      return { status: 200, body: { ok: true, tenant_id: record.tenant_id, status: 'suspended' } };
-    }
-    const record = await store.upsertTenantDefinition(definitionInput);
-    registerTenantDefinition(record);
-    log(`billing: suspended ${record.tenant_id}`);
-    return { status: 200, body: { ok: true, tenant_id: record.tenant_id, status: 'suspended' } };
-  }
-
-  /**
-   * @param {import('node:http').IncomingMessage} req
-   * @param {import('node:http').ServerResponse} res
-   */
-  async function handle(req, res) {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const path = url.pathname;
-    const method = req.method ?? 'GET';
-
-    // Public by design and deliberately unauthenticated: it names the script path
-    // every tenant already fetches and the SSE endpoint an operator chose to
-    // advertise. A host that overrides NAVI_MCP_SSE_URL is publishing that URL on
-    // purpose, and the default is loopback.
-    if (path === '/.well-known/navi.json') {
-      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /.well-known/navi.json.');
-      const document = await discoveryDocument();
-      const etag = `"${createHash('sha256').update(JSON.stringify(document)).digest('base64url')}"`;
-      if (req.headers['if-none-match'] === etag) {
-        res.writeHead(304, { ETag: etag, 'Cache-Control': DISCOVERY_CACHE_CONTROL });
-        res.end();
-        return;
-      }
-      return sendJson(res, 200, document, { 'Cache-Control': DISCOVERY_CACHE_CONTROL, ETag: etag });
-    }
-
-    // AGPL-3.0 section 13: a user who interacts with this service over a network
-    // must be offered the Corresponding Source of the version answering them, at
-    // no charge, through a customary means. A redirect to the repository is that
-    // offer, and it is public metadata like the discovery document, so it is
-    // cached the same way. It is unauthenticated on purpose: an offer a reader has
-    // to identify themselves to receive is not an offer to the users of the
-    // service.
-    if (path === SOURCE_ENDPOINT_PATH) {
-      if (method !== 'GET' && method !== 'HEAD') return sendError(res, 405, 'METHOD_NOT_ALLOWED', `Use GET ${SOURCE_ENDPOINT_PATH}.`);
-      res.writeHead(302, { Location: sourceUrl, 'Cache-Control': DISCOVERY_CACHE_CONTROL });
-      res.end();
-      return;
-    }
-
-    if (path === '/healthz') {
-      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /healthz.');
-      // `retention_days` is configuration rather than health, and it is published
-      // here because 0 means "nothing is being pruned": an operator should be able
-      // to see that from the same endpoint they use to check the store is up.
-      return sendJson(res, 200, { ok: true, mode: store.mode, tenants: tenants.size, retention_days: retentionDays });
-    }
-
-    if (path === '/metrics') {
-      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /metrics.');
-      if (!metricsAuthorized(req)) return sendJson(res, 401, { error: 'Unauthorized' });
-      return sendMetrics(res, await renderMetrics());
-    }
-
-    if (path === BILLING_ENDPOINT_PATH) {
-      if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/billing/webhook.');
-      // Fail closed: with no secret there is no way to distinguish Stripe from
-      // anyone who found this URL, so the route refuses instead of trusting a body.
-      if (!stripeWebhookSecret) return sendJson(res, 503, { error: 'Billing webhook not configured' });
-      const declaredLength = Number(req.headers['content-length'] ?? '');
-      if (Number.isFinite(declaredLength) && declaredLength > MAX_BILLING_PAYLOAD_BYTES) {
-        req.resume();
-        return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Billing events are limited to ${MAX_BILLING_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
-      }
-      await new Promise(/** @param {(value?: void) => void} resolveBody */ resolveBody => {
-        readBody(req, MAX_BILLING_PAYLOAD_BYTES, result => {
-          if (result.tooLarge || result.raw === null) {
-            sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Billing events are limited to ${MAX_BILLING_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
-            resolveBody();
-            return;
-          }
-          const raw = result.raw;
-          // The signature is checked before the body is parsed: an unsigned body
-          // must not reach JSON.parse, and the digest covers these exact bytes.
-          if (!verifyStripeSignature(raw, req.headers['stripe-signature'], stripeWebhookSecret)) {
-            sendJson(res, 401, { error: 'Invalid signature' });
-            resolveBody();
-            return;
-          }
-          /** @type {any} */
-          let event;
-          try { event = JSON.parse(raw); }
-          catch {
-            sendJson(res, 400, { error: 'Invalid payload' });
-            resolveBody();
-            return;
-          }
-          const type = typeof event?.type === 'string' ? event.type : '';
-          const object = event?.data?.object && typeof event.data.object === 'object' ? event.data.object : {};
-          // Stripe resends a delivery it did not see acknowledged. The id is claimed
-          // before anything is written, so a retry that arrives while the first is
-          // still in flight cannot provision twice, and a retry after it completed
-          // is answered `duplicate` rather than acting again.
-          const eventId = typeof event?.id === 'string' ? event.id.trim() : '';
-          void (async () => {
-            let claimed = false;
-            const hasAtomic = typeof store.applyWebhookEvent === 'function';
-            try {
-              if (!hasAtomic && eventId && typeof store.recordWebhookEvent === 'function') {
-                claimed = await store.recordWebhookEvent(eventId);
-                if (!claimed) {
-                  sendJson(res, 200, { ok: true, duplicate: true });
-                  return;
-                }
-              }
-              let outcome;
-              if (PROVISIONING_EVENT_TYPES.has(type)) {
-                outcome = await provisionTenant(object, eventId, type);
-              } else if (type === REVOCATION_EVENT_TYPE) {
-                outcome = await suspendTenant(object, eventId);
-              } else {
-                if (typeof store.applyWebhookEvent === 'function' && eventId) {
-                  const applied = await store.applyWebhookEvent({ event_id: eventId });
-                  if (applied.duplicate) {
-                    sendJson(res, 200, { ok: true, duplicate: true });
-                    return;
-                  }
-                }
-                outcome = { status: 200, body: { ok: true, ignored: true } };
-              }
-              // A refused delivery is one Stripe will resend. The claim has to be
-              // withdrawn, or that resend is swallowed as a duplicate and the tenant
-              // is silently never provisioned.
-              if (claimed && outcome.status >= 300) await store.releaseWebhookEvent?.(eventId);
-              sendJson(res, outcome.status, outcome.body);
-            } catch (error) {
-              log(`billing: ${type || 'unknown'} event failed: ${error instanceof Error ? error.message : String(error)}`);
-              if (claimed) {
-                try { await store.releaseWebhookEvent?.(eventId); }
-                catch { log(`billing: could not release the claim on ${eventId}`); }
-              }
-              if (!res.headersSent) sendJson(res, 500, { error: 'Internal server error' });
-            } finally {
-              resolveBody();
-            }
-          })();
-        });
-      });
-      return;
-    }
-
-    if (path === BILLING_SESSION_ENDPOINT_PATH) {
-      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /v1/billing/session?session_id=<cs_id>.');
-      const sessionId = (url.searchParams.get('session_id') ?? '').trim();
-      if (!sessionId || !sessionId.startsWith('cs_') || typeof store.consumeCheckoutClaim !== 'function') {
-        return sendJson(res, 404, { error: 'Session not found or already claimed' });
-      }
-      try {
-        const claimed = await store.consumeCheckoutClaim(sessionId);
-        if (!claimed) return sendJson(res, 404, { error: 'Session not found or already claimed' });
-        return sendJson(res, 200, { ok: true, tenant_id: claimed.tenant_id, api_key: claimed.api_key });
-      } catch {
-        return sendJson(res, 500, { error: 'Internal server error' });
-      }
-    }
-
-    // The onboarding page a Checkout `success_url` redirects to. It consumes the
-    // same one-time claim the JSON route does, so a customer who reaches either
-    // surface first sees the key and the other answers 404 — and unlike the JSON
-    // route this one is opened by a browser, so every answer is a page.
-    if (path === BILLING_SUCCESS_ENDPOINT_PATH) {
-      if (method !== 'GET') {
-        return sendHtml(res, 405, renderBillingClaimErrorPage({
-          title: 'Use a GET request',
-          detail: 'This address renders the one-time key page, which a browser opens with GET. Nothing was claimed by this request.'
-        }), { Allow: 'GET' });
-      }
-      const sessionId = (url.searchParams.get('session_id') ?? '').trim();
-      if (!sessionId.startsWith('cs_') || typeof store.consumeCheckoutClaim !== 'function') {
-        return sendHtml(res, 404, renderBillingClaimErrorPage());
-      }
-      try {
-        const claimed = await store.consumeCheckoutClaim(sessionId);
-        if (!claimed) return sendHtml(res, 404, renderBillingClaimErrorPage());
-        return sendHtml(res, 200, renderBillingSuccessPage({
-          tenant_id: claimed.tenant_id,
-          api_key: claimed.api_key,
-          loader_url: `${requestOrigin(req)}/v1/loader.js`
-        }));
-      } catch {
-        return sendHtml(res, 500, renderBillingClaimErrorPage({
-          title: 'Something went wrong',
-          detail: 'The key could not be retrieved just now, and the link is still unused. Try it again in a moment.'
-        }));
-      }
-    }
-
-    if (path === '/v1/sitemap/update') {
-      if (method !== 'POST') return sendJson(res, 404, { error: 'Not found' });
-      const tenantConfig = bearerTenantConfig(req);
-      if (!tenantConfig) return sendJson(res, 401, { error: 'Unauthorized' });
-      const siteId = tenantConfig.id;
-      await new Promise(/** @param {(value?: void) => void} resolveBody */ resolveBody => readBody(req, 2 * 1024 * 1024, result => {
-        if (result.tooLarge || result.raw === null) {
-          sendJson(res, 400, { error: 'Invalid payload' });
-          resolveBody();
-          return;
-        }
-        let payload;
-        try { payload = JSON.parse(result.raw); }
-        catch {
-          sendJson(res, 400, { error: 'Invalid payload' });
-          resolveBody();
-          return;
-        }
-        if (!validateCrawlerPayload(payload)) {
-          sendJson(res, 400, { error: 'Invalid payload' });
-          resolveBody();
-          return;
-        }
-        let payloadOrigin = null;
-        try { payloadOrigin = new URL(payload.url).origin; } catch { payloadOrigin = null; }
-        const headerOrigin = typeof req.headers.origin === 'string' ? req.headers.origin : null;
-        if (!isOriginAllowed(tenantConfig.allowed_origins, payloadOrigin, headerOrigin)) {
-          sendJson(res, 403, { error: 'Forbidden origin' });
-          resolveBody();
-          return;
-        }
-        void (async () => {
-          try {
-            if (!(await checkTenantQuota(res, tenantConfig))) return;
-            await store.upsertNavigationMap(siteId, payload.url, payload);
-            sendJson(res, 200, { ok: true, url: payload.url, targets: payload.actions.length });
-          } catch {
-            if (!res.headersSent) sendJson(res, 500, { error: 'Internal server error' });
-          } finally {
-            resolveBody();
-          }
-        })();
-      }));
-      return;
-    }
-
-    if (path === '/v1/navi.js') {
-      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /v1/navi.js?key=<tenant_key>.');
-      const tenantId = tenantFor(tenants, url.searchParams.get('key'));
-      if (!tenantId) {
-        return sendError(res, 401, 'UNAUTHORIZED', 'A valid key query parameter is required. Append ?key=<your tenant key> to the script src; keys are configured with the NAVI_TENANTS environment variable.');
-      }
-      let bytes;
-      try {
-        bytes = await readSdk();
-      } catch {
-        return sendError(res, 503, 'SCRIPT_UNAVAILABLE', 'The browser bundle is not available on this host. Build it with "npm run build" and restart the service.');
-      }
-      const headers = scriptHeaders();
-      if (integrity) {
-        const etag = `"${integrity}"`;
-        headers.ETag = etag;
-        if (req.headers['if-none-match'] === etag) {
-          res.writeHead(304, headers);
-          res.end();
-          return;
-        }
-      }
-      headers['Content-Length'] = String(bytes.length);
-      res.writeHead(200, headers);
-      res.end(bytes);
-      return;
-    }
-
-    if (path === '/v1/loader.js') {
-      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /v1/loader.js.');
-      // The loader carries no tenant key of its own: it reads data-key from the
-      // embed tag and appends it to the bundle request, where it is checked.
-      let bytes;
-      try {
-        bytes = await readLoader();
-      } catch {
-        return sendError(res, 503, 'SCRIPT_UNAVAILABLE', 'The tenant loader is not available on this host. Build it with "npm run build" and restart the service.');
-      }
-      const headers = scriptHeaders();
-      headers['Content-Length'] = String(bytes.length);
-      res.writeHead(200, headers);
-      res.end(bytes);
-      return;
-    }
-
-    // The MCP server posts here when it refuses a destination, so a tenant can
-    // read back what its agents were stopped from reaching. The reporter's key is
-    // checked before the body is read: a caller who cannot name a tenant should
-    // not be able to make this service parse anything.
-    if (path === '/v1/telemetry/violations') {
-      if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/telemetry/violations.');
-      const violationType = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
-      if (violationType !== 'application/json') {
-        return sendError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Send a violation as application/json. This route is machine-to-machine: page code has no reason to call it.');
-      }
-      const violationLength = Number(req.headers['content-length'] ?? '');
-      if (Number.isFinite(violationLength) && violationLength > MAX_PAYLOAD_BYTES) {
-        req.resume();
-        return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Violation bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
-      }
-      const authorization = req.headers.authorization;
-      let presented = url.searchParams.get('key');
-      if (typeof authorization === 'string') {
-        if (!authorization.startsWith('Bearer ')) {
-          return sendError(res, 401, 'UNAUTHORIZED', 'Use "Authorization: Bearer <tenant_key>", or omit the header and send ?key=<tenant_key>.');
-        }
-        presented = authorization.slice('Bearer '.length).trim();
-      }
-      const keyTenantId = presented ? tenantFor(tenants, presented) : null;
-      if (presented && !keyTenantId) return sendError(res, 401, 'UNKNOWN_TENANT', 'The presented tenant key is not registered.');
-      // A presented key names the tenant before the body is read, so the quota is
-      // charged now: a caller over its ceiling cannot make this service parse or
-      // store anything at all. Without a key the tenant arrives in the payload, and
-      // the charge waits for validation so a malformed body is still a 400.
-      const keyCharge = keyTenantId ? chargeIngest(res, keyTenantId) : null;
-      if (keyTenantId && !keyCharge) return;
-
-      await new Promise(/** @param {(value?: void) => void} resolveBody */ resolveBody => {
-        readBody(req, MAX_PAYLOAD_BYTES, result => {
-          if (result.tooLarge) {
-            sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Violation bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
-            resolveBody();
-            return;
-          }
-          if (result.raw === null) {
-            sendError(res, 400, 'INVALID_PAYLOAD', 'The request body could not be read.');
-            resolveBody();
-            return;
-          }
-          /** @type {unknown} */
-          let payload;
-          try {
-            payload = JSON.parse(result.raw);
-          } catch {
-            sendError(res, 400, 'INVALID_PAYLOAD', 'The body must be valid JSON.');
-            resolveBody();
-            return;
-          }
-          const verdict = validateViolation(payload, allowedTenantIds, keyTenantId);
-          if (!verdict.ok) {
-            sendError(res, verdict.status, verdict.code, verdict.message);
-            resolveBody();
-            return;
-          }
-          const charge = keyCharge ?? chargeIngest(res, verdict.record.tenant_id);
-          if (!charge) {
-            resolveBody();
-            return;
-          }
-          void store
-            .recordViolation(verdict.record)
-            .then(record => sendJson(res, 202, { ok: true, accepted: true, tenant_id: record.tenant_id, id: record.id }, rateLimitHeaders(charge)))
-            .catch(error => sendError(res, 500, 'STORE_FAILED', `The violation could not be stored: ${error instanceof Error ? error.message : String(error)}`))
-            .finally(() => resolveBody());
-        });
-      });
-      return;
-    }
-
-    // The audit read is keyed on a Bearer token rather than a query parameter,
-    // because a query string is the one part of a request that lands in URLs,
-    // referrers and proxy logs. A key is checked before the tenant in the path is
-    // compared, so an unauthenticated caller cannot probe which tenants exist.
-    const auditMatch = AUDIT_ENDPOINT_PATTERN.exec(path);
-    if (auditMatch) {
-      if (method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /v1/tenants/<tenant_id>/security-audit.');
-      const authorization = req.headers.authorization;
-      const token = typeof authorization === 'string' && authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '';
-      const tenantId = tenantFor(tenants, token);
-      if (!tenantId) {
-        return sendError(res, 401, 'UNAUTHORIZED', 'An audit read requires "Authorization: Bearer <tenant_key>"; query-string keys are not accepted on this route.');
-      }
-      let requested = '';
-      try {
-        requested = decodeURIComponent(String(auditMatch[1] ?? ''));
-      } catch {
-        return sendError(res, 400, 'INVALID_PAYLOAD', 'The tenant id in the path is not valid percent-encoding.');
-      }
-      if (requested !== tenantId) {
-        return sendError(res, 403, 'FORBIDDEN', `The presented key resolves to "${tenantId}", not "${requested}". An audit read is confined to its own tenant.`);
-      }
-      const limitRaw = url.searchParams.get('limit');
-      const limit = limitRaw === null ? DEFAULT_VIOLATION_LIMIT : Number(limitRaw);
-      if (!Number.isInteger(limit) || limit < 1 || limit > MAX_VIOLATION_LIMIT) {
-        return sendError(res, 400, 'INVALID_PAYLOAD', `limit must be an integer between 1 and ${MAX_VIOLATION_LIMIT}.`);
-      }
-      const since = url.searchParams.get('since');
-      if (since !== null && Number.isNaN(Date.parse(since))) {
-        return sendError(res, 400, 'INVALID_PAYLOAD', 'since must be an ISO-8601 timestamp such as 2026-10-11T00:00:00.000Z.');
-      }
-      const violations = await store.queryViolations(since === null ? { tenant_id: tenantId, limit } : { tenant_id: tenantId, limit, since });
-      return sendJson(res, 200, { ok: true, tenant_id: tenantId, count: violations.length, limit, since, violations }, { 'Cache-Control': 'no-store, private' });
-    }
-
-    // Maintenance is a tenant-scoped write, so it is authenticated exactly as the
-    // audit read is: a Bearer key, never a query string, and never another tenant's
-    // records. Deleting by tenant is the one thing this route can do, and the
-    // tenant it deletes for is the key's, not the path's.
-    const pruneMatch = PRUNE_ENDPOINT_PATTERN.exec(path);
-    if (pruneMatch) {
-      if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/tenants/<tenant_id>/maintenance/prune.');
-      const authorization = req.headers.authorization;
-      const token = typeof authorization === 'string' && authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '';
-      const tenantId = tenantFor(tenants, token);
-      if (!tenantId) {
-        return sendError(res, 401, 'UNAUTHORIZED', 'A prune requires "Authorization: Bearer <tenant_key>"; query-string keys are not accepted on this route.');
-      }
-      let requested = '';
-      try {
-        requested = decodeURIComponent(String(pruneMatch[1] ?? ''));
-      } catch {
-        return sendError(res, 400, 'INVALID_PAYLOAD', 'The tenant id in the path is not valid percent-encoding.');
-      }
-      if (requested !== tenantId) {
-        return sendError(res, 403, 'FORBIDDEN', `The presented key resolves to "${tenantId}", not "${requested}". A prune is confined to its own tenant.`);
-      }
-      // A disabled sweep is not a disabled route: an explicit window still works,
-      // and its default is the configured retention — never the value that means
-      // "do not sweep", which would read as "prune nothing" and delete nothing.
-      const defaultDays = retentionDays > 0 ? retentionDays : DEFAULT_RETENTION_DAYS;
-      const pruneType = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
-      const pruneLength = Number(req.headers['content-length'] ?? '');
-      if (Number.isFinite(pruneLength) && pruneLength > MAX_PAYLOAD_BYTES) {
-        req.resume();
-        return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Prune bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
-      }
-      await new Promise(/** @param {(value?: void) => void} resolvePrune */ resolvePrune => {
-        readBody(req, MAX_PAYLOAD_BYTES, result => {
-          if (result.tooLarge) {
-            sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Prune bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
-            resolvePrune();
-            return;
-          }
-          const raw = (result.raw ?? '').trim();
-          /** @type {Record<string, unknown>} */
-          let payload = {};
-          if (raw) {
-            if (pruneType !== 'application/json') {
-              sendError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Send a prune window as application/json, or omit the body to use the configured retention.');
-              resolvePrune();
-              return;
-            }
-            /** @type {unknown} */
-            let parsed;
-            try {
-              parsed = JSON.parse(raw);
-            } catch {
-              sendError(res, 400, 'INVALID_PAYLOAD', 'The body must be valid JSON.');
-              resolvePrune();
-              return;
-            }
-            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-              sendError(res, 400, 'INVALID_PAYLOAD', 'The body must be a JSON object such as {"max_age_days": 30}, or absent.');
-              resolvePrune();
-              return;
-            }
-            payload = /** @type {Record<string, unknown>} */ (parsed);
-          }
-          const unknown = Object.keys(payload).filter(key => key !== 'max_age_days');
-          if (unknown.length) {
-            sendError(res, 400, 'INVALID_PAYLOAD', `Unknown field(s): ${unknown.join(', ')}. The only accepted field is max_age_days.`);
-            resolvePrune();
-            return;
-          }
-          const days = payload.max_age_days === undefined ? defaultDays : payload.max_age_days;
-          // Strictly a number: a numeric string is a different client contract, and
-          // accepting one here would quietly make `"0"` mean something.
-          if (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > MAX_RETENTION_DAYS) {
-            sendError(res, 400, 'INVALID_PAYLOAD', `max_age_days must be an integer between 1 and ${MAX_RETENTION_DAYS}.`);
-            resolvePrune();
-            return;
-          }
-          void runPrune({ max_age_days: days, tenant_id: tenantId })
-            .then(result => sendJson(res, 200, { ok: true, tenant_id: tenantId, max_age_days: days, pruned_count: result.pruned_count, remaining_count: result.remaining_count }))
-            .catch(error => sendError(res, 500, 'STORE_FAILED', `The prune failed: ${error instanceof Error ? error.message : String(error)}`))
-            .finally(() => resolvePrune());
-        });
-      });
-      return;
-    }
-
-    if (path === '/v1/telemetry') {
-      if (method === 'GET') {
-        // A bearer key and `?key=` name the same tenant; the header is what an
-        // operator console uses, and the query parameter stays because it is the
-        // documented read and a browser can follow it.
-        const tenantConfig = bearerTenantConfig(req) ?? tenantConfigFor(tenants, url.searchParams.get('key'));
-        if (!tenantConfig) {
-          return sendError(res, 401, 'UNAUTHORIZED', 'A valid key query parameter is required to read a tenant summary.');
-        }
-        const quota = effectiveQuota(tenantConfig);
-        const state = quota && typeof store.readQuota === 'function' ? await store.readQuota(tenantConfig.id) : null;
-        return sendJson(res, 200, {
-          ok: true,
-          tenant_id: tenantConfig.id,
-          summary: await store.summarize({ tenant_id: tenantConfig.id }),
-          // Null rather than zeroes when the tenant is unmetered: a ceiling of 0
-          // would read as "nothing allowed" to a consumer that did not know better.
-          quota: quota
-            ? {
-              max_events_per_window: quota.limit,
-              window_seconds: quota.window_seconds,
-              window_start_ms: state?.window_start_ms ?? null,
-              event_count: state?.event_count ?? 0
-            }
-            : null
-        });
-      }
-      if (method !== 'POST') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use POST /v1/telemetry.');
-
-      const tenantConfig = bearerTenantConfig(req);
-      if (!tenantConfig) {
-        return sendJson(res, 401, { error: 'Unauthorized' });
-      }
-      const keyTenantId = tenantConfig.id;
-
-      const contentType = String(req.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
-      if (contentType !== 'application/json' && contentType !== 'text/plain') {
-        return sendError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'Send the beacon as application/json, or as a text/plain JSON string the way navigator.sendBeacon does by default.');
-      }
-      const declaredLength = Number(req.headers['content-length'] ?? '');
-      if (Number.isFinite(declaredLength) && declaredLength > MAX_PAYLOAD_BYTES) {
-        req.resume();
-        return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Telemetry bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
-      }
-
-      await new Promise(/** @param {(value?: void) => void} resolveBody */ resolveBody => {
-        readBody(req, MAX_PAYLOAD_BYTES, result => {
-          if (result.tooLarge) {
-            sendError(res, 413, 'PAYLOAD_TOO_LARGE', `Telemetry bodies are limited to ${MAX_PAYLOAD_BYTES} bytes.`, { Connection: 'close' });
-            resolveBody();
-            return;
-          }
-          if (result.raw === null) {
-            sendError(res, 400, 'INVALID_PAYLOAD', 'The request body could not be read.');
-            resolveBody();
-            return;
-          }
-          /** @type {unknown} */
-          let payload;
-          try {
-            payload = JSON.parse(result.raw);
-          } catch {
-            sendError(res, 400, 'INVALID_PAYLOAD', 'The body must be valid JSON. Raw DOM or HTML text is not accepted.');
-            resolveBody();
-            return;
-          }
-          const rawRecord = payload && typeof payload === 'object' && !Array.isArray(payload) ? /** @type {Record<string, unknown>} */ (payload) : null;
-          const candidateOriginRaw = typeof rawRecord?.url_origin === 'string'
-            ? rawRecord.url_origin
-            : (typeof rawRecord?.url === 'string' ? rawRecord.url : null);
-          let candidateOrigin = null;
-          if (candidateOriginRaw) {
-            try {
-              const parsedOrigin = new URL(candidateOriginRaw);
-              if (parsedOrigin.protocol === 'http:' || parsedOrigin.protocol === 'https:') {
-                candidateOrigin = parsedOrigin.origin;
-              }
-            } catch {
-              candidateOrigin = null;
-            }
-          }
-          const verdict = validateTelemetry(payload, allowedTenantIds, keyTenantId);
-          if (!verdict.ok) {
-            if (verdict.status === 401 && verdict.code === 'UNAUTHORIZED') {
-              sendJson(res, 401, { error: 'Unauthorized' });
-            } else {
-              sendError(res, verdict.status, verdict.code, verdict.message);
-            }
-            resolveBody();
-            return;
-          }
-          const headerOrigin = typeof req.headers.origin === 'string' ? req.headers.origin : null;
-          if (!isOriginAllowed(tenantConfig.allowed_origins, verdict.record.url_origin ?? candidateOrigin, headerOrigin)) {
-            sendJson(res, 403, { error: 'Forbidden origin' });
-            resolveBody();
-            return;
-          }
-          const charge = chargeIngest(res, verdict.record.tenant_id);
-          if (!charge) {
-            resolveBody();
-            return;
-          }
-          const record = { ...verdict.record, received_at: new Date().toISOString() };
-          void (async () => {
-            try {
-              if (!(await checkTenantQuota(res, tenantConfig))) return;
-              await store.append(record);
-              sendJson(res, 202, { ok: true, accepted: true, tenant_id: record.tenant_id, url_origin: record.url_origin }, rateLimitHeaders(charge));
-            } catch (error) {
-              if (!res.headersSent) {
-                sendError(res, 500, 'STORE_FAILED', `The aggregate could not be stored: ${error instanceof Error ? error.message : String(error)}`);
-              }
-            } finally {
-              resolveBody();
-            }
-          })();
-        });
-      });
-      return;
-    }
-
-    return sendError(res, 404, 'NOT_FOUND', `No route for ${method} ${path}.`);
-  }
 
   await new Promise(/** @param {(value?: void) => void} resolveListen @param {(reason?: unknown) => void} rejectListen */ (resolveListen, rejectListen) => {
     server.once('error', rejectListen);

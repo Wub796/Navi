@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -508,7 +508,7 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(245);
+  expect(MIN_PASSING_TESTS).toBe(247);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.5.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
@@ -618,18 +618,19 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
 
   // The onboarding page is one implementation behind two routes, not two pages: the
   // Worker and the host service must serve the same document and the same headers.
-  const host = await readFile(join(root, 'server/index.js'), 'utf8');
+  const endpoints = await readFile(join(root, 'server/endpoints.js'), 'utf8');
+  const billing = await readFile(join(root, 'server/billing.js'), 'utf8');
   const page = await readFile(join(root, 'server/billing-success.js'), 'utf8');
   expect(worker).toContain("'/v1/billing/success'");
-  expect(host).toContain("BILLING_SUCCESS_ENDPOINT_PATH = '/v1/billing/success'");
+  expect(endpoints).toContain("BILLING_SUCCESS_ENDPOINT_PATH = '/v1/billing/success'");
   expect(worker).toContain("from '../server/billing-success.js'");
-  expect(host).toContain("from './billing-success.js'");
+  expect(billing).toContain("from './billing-success.js'");
   expect(page).toContain("default-src 'none'");
   expect(page).toContain("'cache-control': 'no-store'");
   // The key is shown by consuming the claim, so the page route cannot be a second
   // way to read one the JSON route already handed out.
   expect(worker).toContain("callRpc(env, 'claim_checkout_session'");
-  expect(host).toContain('store.consumeCheckoutClaim(sessionId)');
+  expect(billing).toContain('store.consumeCheckoutClaim(sessionId)');
 
   // The manifest is committed, so it may name the entrypoint and the secrets an
   // operator sets, and nothing that looks like a credential value.
@@ -1044,6 +1045,32 @@ test('the pipeline cannot publish without container verification on both archite
   const publishStepConfig = release.jobs.publish.steps[publishStep];
   expect(publishStepConfig?.env?.NODE_AUTH_TOKEN).toBeUndefined();
   expect(JSON.stringify(release)).not.toContain('NPM_TOKEN');
+});
+
+test('the host service ships every module it imports, named in the clean-room manifest', async () => {
+  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  const allowed = Array.isArray(manifest.files) ? manifest.files : [];
+  const modules = (await readdir(join(root, 'server'))).filter(name => name.endsWith('.js')).sort();
+  expect(modules.length).toBeGreaterThan(1);
+
+  for (const name of modules) {
+    // The allowlist ships the `server` directory, and the canary pins each module by
+    // name on top of that: a directory that stops shipping, or a module dropped
+    // beside the ones that do, is then a failed release check rather than a tarball
+    // whose `npm run serve` is ERR_MODULE_NOT_FOUND.
+    expect(allowed.some((/** @type {string} */ entry) => entry === 'server' || entry === 'server/' || entry === `server/${name}`), `package.json files must cover server/${name}`).toBe(true);
+    expect(REQUIRED_PACKAGE_FILES, `the clean-room canary must require server/${name}`).toContain(`server/${name}`);
+  }
+
+  // Every relative import inside the host service names a module that ships. This is
+  // what keeps the extracted route modules a package-boundary change and not only a
+  // source-layout one.
+  for (const name of modules) {
+    const source = await readFile(join(root, 'server', name), 'utf8');
+    for (const [, imported] of source.matchAll(/from '\.\/([A-Za-z0-9._-]+\.js)'/g)) {
+      expect(modules, `server/${name} imports server/${imported}`).toContain(imported);
+    }
+  }
 });
 
 test('clean-room package verifier enforces manifest layout, SRI byte parity, zero leaks, and stdio MCP handshake', async () => {

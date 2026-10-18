@@ -21,8 +21,30 @@ const TENANT_KEY_BYTES = 32;
 
 const PROVISIONING_EVENT_TYPES = new Set(['checkout.session.completed', 'customer.subscription.created', 'customer.subscription.updated']);
 
+/**
+ * What every route answers when the database is behind this Worker. The message
+ * names the file to apply rather than the HTTP status alone, because the operator
+ * reading it is the one who can fix it.
+ */
+const SCHEMA_OUT_OF_DATE_MESSAGE = 'Database schema out of date: apply deploy/supabase-schema.sql';
+/** PostgREST's code for a function that is not in its introspected schema. */
+const PGRST_FUNCTION_NOT_FOUND = 'PGRST202';
+
 /** A decoded PostgREST RPC payload. Narrowing is the caller's job, per field. */
 type RpcResult = Record<string, unknown>;
+
+/**
+ * The database predates this Worker: a function is absent, or an older signature
+ * answered without the field the newer contract requires. That is a deployment
+ * order problem and never a transient one, so it is its own error rather than a
+ * generic failure a caller might retry.
+ */
+class SchemaOutOfDateError extends Error {
+  constructor() {
+    super(SCHEMA_OUT_OF_DATE_MESSAGE);
+    this.name = 'SchemaOutOfDateError';
+  }
+}
 
 const json = (status: number, body: Record<string, unknown>, extraHeaders: Record<string, string> = {}): Response => new Response(JSON.stringify(body), {
   status,
@@ -162,6 +184,8 @@ function supabaseHeaders(env: Env): Record<string, string> {
   };
 }
 
+const schemaOutOfDate = (): Response => json(503, { error: SCHEMA_OUT_OF_DATE_MESSAGE });
+
 /**
  * Call one of the schema's atomic functions through PostgREST.
  *
@@ -180,7 +204,17 @@ async function callRpc(env: Env, name: string, body: Record<string, unknown>): P
     headers: supabaseHeaders(env),
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`the ${name} function answered ${response.status}`);
+  if (!response.ok) {
+    // A missing function is a 404 `PGRST202` from PostgREST's schema cache, which is
+    // the deployment-order signal: the Worker is newer than the database. It is not
+    // a 404 from this service, so it must not be answered as one.
+    if (response.status === 404) {
+      let body: unknown = null;
+      try { body = await response.json(); } catch { body = null; }
+      if (body && typeof body === 'object' && (body as Record<string, unknown>).code === PGRST_FUNCTION_NOT_FOUND) throw new SchemaOutOfDateError();
+    }
+    throw new Error(`the ${name} function answered ${response.status}`);
+  }
   const decoded: unknown = await response.json();
   return decoded && typeof decoded === 'object' ? decoded as RpcResult : {};
 }
@@ -230,12 +264,14 @@ async function provisionSite(env: Env, object: any, eventType: string, eventId: 
       p_claim_expires_at: sessionId ? new Date(Date.now() + CHECKOUT_CLAIM_TTL_MS).toISOString() : null,
     });
     if (result.duplicate) return json(200, { ok: true, duplicate: true });
-    // The function answers with the key the row actually holds. No key means no
-    // tenant row (a schema older than this Worker, for instance), so answering 200
-    // with a credential that authenticates nothing would be the one wrong answer.
-    if (typeof result.api_key !== 'string' || result.api_key.length === 0) return json(500, { error: 'Internal server error' });
+    // The function answers with the key the row actually holds. No key means the
+    // nine-argument signature answered without one: this Worker is newer than the
+    // schema, so a 200 carrying a credential that authenticates nothing would be
+    // the one wrong answer.
+    if (typeof result.api_key !== 'string' || result.api_key.length === 0) throw new SchemaOutOfDateError();
     return json(200, { ok: true, tenant_id: tenantId, api_key: result.api_key });
-  } catch {
+  } catch (error) {
+    if (error instanceof SchemaOutOfDateError) return schemaOutOfDate();
     return json(500, { error: 'Internal server error' });
   }
 }
@@ -267,7 +303,8 @@ async function suspendSite(env: Env, object: any, eventId: string): Promise<Resp
     });
     if (result.duplicate) return json(200, { ok: true, duplicate: true });
     return json(200, { ok: true, tenant_id: tenantId, status: 'suspended' });
-  } catch {
+  } catch (error) {
+    if (error instanceof SchemaOutOfDateError) return schemaOutOfDate();
     return json(500, { error: 'Internal server error' });
   }
 }
@@ -294,7 +331,8 @@ async function recordIgnoredEvent(env: Env, eventId: string): Promise<Response> 
       p_claim_expires_at: null,
     });
     return json(200, result.duplicate ? { ok: true, duplicate: true } : { ok: true, ignored: true });
-  } catch {
+  } catch (error) {
+    if (error instanceof SchemaOutOfDateError) return schemaOutOfDate();
     return json(500, { error: 'Internal server error' });
   }
 }
@@ -347,15 +385,24 @@ async function handleBillingSuccess(url: URL, env: Env, pageOrigin: string): Pro
   if (!sessionId.startsWith('cs_')) return html(404, renderBillingClaimErrorPage());
   try {
     const result = await callRpc(env, 'claim_checkout_session', { p_session_id: sessionId });
-    if (result.ok !== true || typeof result.tenant_id !== 'string' || typeof result.api_key !== 'string') {
-      return html(404, renderBillingClaimErrorPage());
-    }
+    // A claim that exists always carries both fields, so a successful answer without
+    // them is a database older than this Worker — not a link the customer already used.
+    if (result.ok !== true) return html(404, renderBillingClaimErrorPage());
+    if (typeof result.tenant_id !== 'string' || typeof result.api_key !== 'string') throw new SchemaOutOfDateError();
     return html(200, renderBillingSuccessPage({
       tenant_id: result.tenant_id,
       api_key: result.api_key,
       loader_url: `${pageOrigin}/v1/loader.js`,
     }));
-  } catch {
+  } catch (error) {
+    // This surface is opened by a browser, so the diagnostic keeps its shape: a page
+    // that names the missing migration rather than raw JSON a customer cannot read.
+    if (error instanceof SchemaOutOfDateError) {
+      return html(503, renderBillingClaimErrorPage({
+        title: 'Database schema out of date',
+        detail: SCHEMA_OUT_OF_DATE_MESSAGE,
+      }));
+    }
     return html(500, renderBillingClaimErrorPage({
       title: 'Something went wrong',
       detail: 'The key could not be retrieved just now, and the link is still unused. Try it again in a moment.',
@@ -371,11 +418,11 @@ async function handleBillingSession(url: URL, env: Env): Promise<Response> {
   }
   try {
     const result = await callRpc(env, 'claim_checkout_session', { p_session_id: sessionId });
-    if (result.ok !== true || typeof result.tenant_id !== 'string' || typeof result.api_key !== 'string') {
-      return json(404, { error: 'Session not found or already claimed' });
-    }
+    if (result.ok !== true) return json(404, { error: 'Session not found or already claimed' });
+    if (typeof result.tenant_id !== 'string' || typeof result.api_key !== 'string') throw new SchemaOutOfDateError();
     return json(200, { ok: true, tenant_id: result.tenant_id, api_key: result.api_key });
-  } catch {
+  } catch (error) {
+    if (error instanceof SchemaOutOfDateError) return schemaOutOfDate();
     return json(500, { error: 'Internal server error' });
   }
 }
@@ -453,7 +500,8 @@ export default {
         });
       }
       return json(200, { ok: true, url: validated.url, targets: validated.actions.length });
-    } catch {
+    } catch (error) {
+      if (error instanceof SchemaOutOfDateError) return schemaOutOfDate();
       return json(500, { error: 'Internal server error' });
     }
   },

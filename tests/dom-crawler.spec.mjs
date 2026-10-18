@@ -167,6 +167,32 @@ function fakeSupabase(options = {}) {
   };
 }
 
+/**
+ * A PostgREST surface that answers one staged way, so a deployment-order failure can
+ * be exercised without a database.
+ * @param {(name: string) => Response} answer
+ * @returns {typeof fetch}
+ */
+function rpcStub(answer) {
+  return async input => {
+    const name = /\/rest\/v1\/rpc\/([a-z_]+)$/.exec(String(input))?.[1] ?? '';
+    return answer(name);
+  };
+}
+
+/**
+ * The exact answer PostgREST gives for a function that is not in its schema cache.
+ * @param {string} name @returns {Response}
+ */
+const pgrstMissingFunction = name => Response.json({
+  code: 'PGRST202',
+  details: 'Search Path: public',
+  hint: null,
+  message: `Could not find the function public.${name} in the schema cache`
+}, { status: 404 });
+
+const SCHEMA_OUT_OF_DATE = { error: 'Database schema out of date: apply deploy/supabase-schema.sql' };
+
 test('DOM crawler maps semantic roles, stable selectors, select options and excludes control values', async ({ page }) => {
   await page.setContent(`<!doctype html><label for="q">Search</label><input id="q" type="search" value="private-current-value"><div role="textbox" aria-label="Notes"></div><div contenteditable="true" aria-label="Editor"></div><a href="/next">Next</a><div role="link" aria-label="Settings"></div><div role="tab" aria-label="Billing"></div><div role="checkbox" aria-label="Agree"></div><div role="switch" aria-label="Enabled"></div><button id="volatile" data-navi-id="navi-stable">Stable</button><select aria-label="Plan"><option value="">Choose one</option><optgroup disabled><option value="hidden">Hidden</option></optgroup><option value="pro">Premium plan</option></select>`);
   await page.addScriptTag({ content: crawlerScript });
@@ -612,6 +638,53 @@ test('Worker returns a clean 500 without leaking upstream errors', async () => {
     const text = await response.text();
     expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
     expect(text).not.toContain('server-secret');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Worker answers an unapplied or older Supabase schema with a self-diagnosing 503', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    // 1. Unapplied schema: PostgREST has no consume_site_quota to resolve, so the
+    //    sitemap call is a 404 PGRST202 and must not read as a generic server fault.
+    globalThis.fetch = rpcStub(name => pgrstMissingFunction(name));
+    let response = await workerRequest(endpoint, { method: 'POST', headers: { Authorization: 'Bearer key' }, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual(SCHEMA_OUT_OF_DATE);
+
+    // 2. The same deployment gap on the webhook, which calls apply_stripe_webhook.
+    const checkout = JSON.stringify({ id: 'evt_schema', type: 'checkout.session.completed', data: { object: { id: 'cs_schema', client_reference_id: 'acme' } } });
+    response = await billingRequest(checkout);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual(SCHEMA_OUT_OF_DATE);
+
+    // 3. Legacy nine-argument signature: the function resolves, but the insert branch
+    //    has no candidate key parameter, so it answers without api_key. That is an
+    //    outdated schema, and a 200 with a key that authenticates nothing is the one
+    //    answer that must never be returned.
+    globalThis.fetch = rpcStub(name => name === 'apply_stripe_webhook'
+      ? Response.json({ duplicate: false, tenant_id: 'acme', missing: true, api_key: null })
+      : pgrstMissingFunction(name));
+    response = await billingRequest(checkout);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual(SCHEMA_OUT_OF_DATE);
+
+    // 4. The claim routes share the contract: a claim that exists always carries both
+    //    fields, so a bare { ok: true } is the database, not a used link.
+    globalThis.fetch = rpcStub(() => Response.json({ ok: true }));
+    response = await workerRequest('https://worker.example/v1/billing/session?session_id=cs_schema');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual(SCHEMA_OUT_OF_DATE);
+
+    // The onboarding page is opened by a browser, so its diagnostic keeps the page
+    // shape while naming the same missing migration.
+    response = await workerRequest('https://worker.example/v1/billing/success?session_id=cs_schema');
+    expect(response.status).toBe(503);
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    const page = await response.text();
+    expect(page).toContain('Database schema out of date');
+    expect(page).toContain('deploy/supabase-schema.sql');
   } finally {
     globalThis.fetch = originalFetch;
   }

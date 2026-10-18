@@ -43,7 +43,23 @@ export const REQUIRED_PACKAGE_FILES = [
   'dist/index.d.ts',
   'dist/navi.d.ts',
   'bin/navi-mcp.js',
-  'bin/navi-agent.js'
+  'bin/navi-agent.js',
+  // The host service ships in the package, so the clean room verifies every module
+  // its entrypoint imports. A module missing here is a tarball whose `npm run serve`
+  // is an ERR_MODULE_NOT_FOUND, which no test in the checkout would notice.
+  'server/index.js',
+  'server/billing.js',
+  'server/billing-success.js',
+  'server/endpoints.js',
+  'server/http.js',
+  'server/ingest.js',
+  'server/maintenance.js',
+  'server/metrics.js',
+  'server/public-routes.js',
+  'server/quota.js',
+  'server/rate-limit.js',
+  'server/store.js',
+  'server/tenants.js'
 ];
 
 /**

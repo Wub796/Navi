@@ -115,6 +115,20 @@ export function tenantFor(tenants, key) {
 }
 
 /**
+ * Resolve the tenant configuration from a strict `Authorization: Bearer <token>`
+ * header. The header is the documented credential on the routes that take one, and
+ * a malformed one resolves to null rather than to a partial parse.
+ * @param {TenantRegistry} tenants
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {TenantDefinition | null}
+ */
+export function bearerTenantConfig(tenants, req) {
+  const authorization = req.headers.authorization;
+  const match = typeof authorization === 'string' ? /^Bearer ([^\s]+)$/.exec(authorization) : null;
+  return match ? tenantConfigFor(tenants, match[1]) : null;
+}
+
+/**
  * Check whether an origin is permitted by an `allowed_origins` list.
  * When `allowedOrigins` is absent, empty, or contains `"*"`, all origins are permitted.
  * @param {string[] | null | undefined} allowedOrigins
