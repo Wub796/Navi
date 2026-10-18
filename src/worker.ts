@@ -1,11 +1,14 @@
 import { validateCrawlerPayload } from './crawler-payload.js';
 import type { CrawlerPayload } from './dom-crawler.js';
 import { BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage } from '../server/billing-success.js';
+import { LANDING_PAGE_HEADERS, renderLandingPage } from '../server/landing.js';
 
 export interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  /** Stripe Payment Link for the self-serve tier; absent => the quickstart is shown. */
+  STRIPE_PAYMENT_LINK_URL?: string;
 }
 
 /** Ceiling a provisioned site gets when Stripe metadata omits one. */
@@ -430,6 +433,22 @@ async function handleBillingSession(url: URL, env: Env): Promise<Response> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // Liveness answers before any routing or storage access: the check exists to
+    // say the isolate is up, and one that touched the database would fail during
+    // exactly the incident it is meant to report.
+    if (url.pathname === '/healthz') {
+      if (request.method !== 'GET') return json(405, { error: 'Method not allowed' }, { allow: 'GET' });
+      return json(200, { ok: true, service: 'navi-edge' });
+    }
+    // The root is public and anonymous by design; everything below it authenticates.
+    if (url.pathname === '/') {
+      if (request.method !== 'GET') return json(405, { error: 'Method not allowed' }, { allow: 'GET' });
+      return new Response(renderLandingPage({
+        loaderUrl: `${url.origin}/v1/loader.js`,
+        sitemapUrl: `${url.origin}/v1/sitemap/update`,
+        paymentLinkUrl: env.STRIPE_PAYMENT_LINK_URL,
+      }), { status: 200, headers: LANDING_PAGE_HEADERS });
+    }
     if (url.pathname === '/v1/billing/webhook') {
       if (request.method !== 'POST') return json(404, { error: 'Not found' });
       return handleBilling(request, env);

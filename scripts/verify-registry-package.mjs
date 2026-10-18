@@ -53,6 +53,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'server/endpoints.js',
   'server/http.js',
   'server/ingest.js',
+  'server/landing.js',
   'server/maintenance.js',
   'server/metrics.js',
   'server/public-routes.js',

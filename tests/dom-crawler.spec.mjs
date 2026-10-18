@@ -465,6 +465,81 @@ test('Worker renders the one-time onboarding page and refuses a second visit', a
   }
 });
 
+test('the edge root serves the landing page and /healthz, and unknown paths stay 404', async () => {
+  // The deployed Worker answered its own root with `404 {"error":"Not found"}`, which
+  // told a visiting developer nothing about the service or the API. These are the
+  // three surfaces that fix it: the document, the liveness probe, and the 404 that
+  // has to survive for everything else.
+  const root = await workerRequest('https://worker.example/');
+  expect(root.status).toBe(200);
+  expect(root.headers.get('content-type')).toBe('text/html; charset=utf-8');
+  expect(root.headers.get('content-security-policy')).toBe("default-src 'none'; style-src 'unsafe-inline'");
+  expect(root.headers.get('x-content-type-options')).toBe('nosniff');
+  expect(root.headers.get('x-frame-options')).toBe('DENY');
+  expect(root.headers.get('referrer-policy')).toBe('no-referrer');
+  expect(root.headers.get('cache-control')).toBe('no-store');
+  const body = await root.text();
+  expect(body).toContain('npm i navi-interaction-bridge');
+  // The embed snippet is escaped for display, so what a developer copies is the tag
+  // the browser would have parsed.
+  expect(body).toContain('data-key=&quot;navi_live_YOUR_KEY&quot;');
+  expect(body).toContain('https://worker.example/v1/loader.js');
+  expect(body).toContain('https://worker.example/v1/sitemap/update');
+  for (const path of ['/v1/sitemap/update', '/v1/billing/webhook', '/v1/billing/session', '/v1/billing/success', '/healthz']) {
+    expect(body, `the endpoint table must list ${path}`).toContain(path);
+  }
+  // No Payment Link is configured here: the page shows the self-hosted quickstart
+  // rather than a call to action that leads nowhere.
+  expect(body).toContain('npm run serve');
+  expect(body).not.toContain('Subscribe');
+
+  // A valid https Payment Link becomes the live call to action.
+  const configuredEnv = {
+    SUPABASE_URL: 'https://supabase.example',
+    SUPABASE_SERVICE_ROLE_KEY: 'server-secret',
+    STRIPE_PAYMENT_LINK_URL: 'https://buy.stripe.com/test_abc123',
+  };
+  const configured = await workerRequest('https://worker.example/', {}, configuredEnv);
+  expect(configured.status).toBe(200);
+  const configuredBody = await configured.text();
+  expect(configuredBody).toContain('href="https://buy.stripe.com/test_abc123"');
+  expect(configuredBody).toContain('Subscribe &amp; Get API Key');
+  expect(configuredBody).not.toContain('npm run serve');
+
+  // Anything that is not an absolute https URL is configuration the page refuses to
+  // publish, so a typo or an injected scheme degrades to the quickstart.
+  for (const paymentLink of ['javascript:alert(1)', 'http://buy.stripe.com/test_abc123', 'not a url', '']) {
+    const fallback = await workerRequest('https://worker.example/', {}, { ...configuredEnv, STRIPE_PAYMENT_LINK_URL: paymentLink });
+    const fallbackBody = await fallback.text();
+    expect(fallbackBody, `STRIPE_PAYMENT_LINK_URL=${paymentLink} must not be rendered`).not.toContain('href="javascript:');
+    expect(fallbackBody).not.toContain('Subscribe');
+    expect(fallbackBody).toContain('npm run serve');
+  }
+
+  // The URL parser normalizes the characters that would close the attribute, so a
+  // configured value cannot become markup even though it is operator input.
+  const hostile = await workerRequest('https://worker.example/', {}, {
+    ...configuredEnv,
+    STRIPE_PAYMENT_LINK_URL: 'https://buy.stripe.com/x"><script>',
+  });
+  expect(await hostile.text()).not.toContain('"><script>');
+
+  const health = await workerRequest('https://worker.example/healthz');
+  expect(health.status).toBe(200);
+  expect(health.headers.get('cache-control')).toBe('no-store');
+  expect(await health.json()).toEqual({ ok: true, service: 'navi-edge' });
+
+  const notGet = await workerRequest('https://worker.example/healthz', { method: 'POST' });
+  expect(notGet.status).toBe(405);
+  expect(notGet.headers.get('allow')).toBe('GET');
+
+  for (const path of ['/unknown', '/v1/unknown']) {
+    const missing = await workerRequest(`https://worker.example${path}`);
+    expect(missing.status, `${path} must stay a 404`).toBe(404);
+    expect(await missing.json()).toEqual({ error: 'Not found' });
+  }
+});
+
 test('Worker billing webhook verifies the Stripe signature, provisions a site and suspends it on cancellation', async () => {
   const originalFetch = globalThis.fetch;
   const supabase = fakeSupabase();
