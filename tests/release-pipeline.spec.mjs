@@ -789,13 +789,13 @@ test('the generated notes and the release collateral carry the canary attestatio
     expect(committed).toMatch(/`evidence\.sourceTree` is `sha256:[0-9a-f]{64}`/);
   }
   expect(committed).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
-  const release = await readFile(join(root, 'docs/RELEASES/v0.6.6.md'), 'utf8');
+  const release = await readFile(join(root, 'docs/RELEASES/v0.6.7.md'), 'utf8');
   expect(release).toContain('## Container verification matrix');
   expect(release).toContain('| Check | Description | Status |');
   if (!inFlight) {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.6.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.7.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
   } else {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.6.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.7.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
   }
 });
 
