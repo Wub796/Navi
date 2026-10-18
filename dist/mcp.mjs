@@ -1072,8 +1072,8 @@ async function installNavi(page, options = {}) {
 import { createServer as createServer2 } from "node:http";
 import { randomUUID as randomUUID2, timingSafeEqual } from "node:crypto";
 
-// server/store.js
-import { appendFile, mkdir, open, readFile as readFile2, rename, rm, stat } from "node:fs/promises";
+// server/store-lifecycle.js
+import { mkdir, open, readFile as readFile2, rename, rm, stat } from "node:fs/promises";
 import { dirname as dirname2, resolve as resolve2 } from "node:path";
 var CLEAN_SUFFIX = ".clean";
 var DIRTY_SUFFIX = ".dirty";

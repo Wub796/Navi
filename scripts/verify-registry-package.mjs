@@ -59,6 +59,11 @@ export const REQUIRED_PACKAGE_FILES = [
   'server/quota.js',
   'server/rate-limit.js',
   'server/store.js',
+  'server/store-format.js',
+  'server/store-lifecycle.js',
+  'server/store-log.js',
+  'server/store-schema.js',
+  'server/store-sqlite.js',
   'server/tenants.js'
 ];
 

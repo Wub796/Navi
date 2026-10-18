@@ -211,8 +211,11 @@ test('the deployment files agree on the store path, and every path they referenc
   const image = await readFile(join(root, 'Dockerfile'), 'utf8');
   expect(image).toMatch(/^USER pwuser:pwuser$/m);
   const buildStage = image.split('FROM base AS build')[1].split('FROM base AS runtime')[0];
-  expect(buildStage).toMatch(/COPY server\/store\.js \.\/server\/store\.js/);
-  expect(buildStage.indexOf('COPY server/store.js')).toBeLessThan(buildStage.indexOf('RUN npm run build'));
+  // The MCP bundle imports the host store's lifecycle helper, which now resolves
+  // through the split modules, so the build stage copies the server directory as a
+  // set instead of naming one file that would quietly stop being enough.
+  expect(buildStage).toMatch(/^COPY server \.\/server$/m);
+  expect(buildStage.indexOf('COPY server ./server')).toBeLessThan(buildStage.indexOf('RUN npm run build'));
   expect(image).toMatch(/mkdir -p \/data \/var\/lib\/navi\/mcp/);
   expect(image).toMatch(/chown pwuser:pwuser \/data \/var\/lib\/navi\/mcp/);
   expect(image).toMatch(/chmod 0700 \/var\/lib\/navi\/mcp/);

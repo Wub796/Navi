@@ -508,9 +508,9 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(247);
+  expect(MIN_PASSING_TESTS).toBe(248);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
-  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.5.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
+  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.6.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
     expect(text, `${document} must state the published floor`).toContain(String(MIN_PASSING_TESTS));
     // Naming the right number somewhere is not the promise: a second sentence still
@@ -789,13 +789,13 @@ test('the generated notes and the release collateral carry the canary attestatio
     expect(committed).toMatch(/`evidence\.sourceTree` is `sha256:[0-9a-f]{64}`/);
   }
   expect(committed).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
-  const release = await readFile(join(root, 'docs/RELEASES/v0.6.5.md'), 'utf8');
+  const release = await readFile(join(root, 'docs/RELEASES/v0.6.6.md'), 'utf8');
   expect(release).toContain('## Container verification matrix');
   expect(release).toContain('| Check | Description | Status |');
   if (!inFlight) {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.5.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.6.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
   } else {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.5.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.6.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
   }
 });
 
@@ -1070,6 +1070,26 @@ test('the host service ships every module it imports, named in the clean-room ma
     for (const [, imported] of source.matchAll(/from '\.\/([A-Za-z0-9._-]+\.js)'/g)) {
       expect(modules, `server/${name} imports server/${imported}`).toContain(imported);
     }
+  }
+});
+
+test('every host module stays under the structural ceiling and inside the Docker build context', async () => {
+  // Two invariants that are cheap to state and expensive to notice late: a module
+  // that grows past the ceiling stops being reviewable, and a module that is named
+  // in the manifest but excluded from the build context is a Docker image whose
+  // entrypoint cannot resolve it - the second is invisible to every test that imports
+  // the file from the checkout, because the checkout has it.
+  const modules = (await readdir(join(root, 'server'))).filter(name => name.endsWith('.js')).sort();
+  for (const name of modules) {
+    const source = await readFile(join(root, 'server', name), 'utf8');
+    const lines = source.split('\n').length - 1;
+    expect(lines, `server/${name} is ${lines} lines, above the 1,000-line structural ceiling`).toBeLessThan(1000);
+  }
+  const ignore = (await readFile(join(root, '.dockerignore'), 'utf8')).split('\n');
+  for (const name of modules) {
+    // The `**` exclusion at the top of the file wins over `!server/`, so each module
+    // has to be reinstated by name after it.
+    expect(ignore, `.dockerignore must reinstate server/${name} for the image build`).toContain(`!server/${name}`);
   }
 });
 

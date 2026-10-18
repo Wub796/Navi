@@ -11,8 +11,9 @@ RUN npm ci --no-audit --no-fund
 # and produces different SDK/SRI bytes from the same sources.
 COPY jsconfig.json ./
 COPY src ./src
-# MCP lifecycle helpers are bundled from the host store module.
-COPY server/store.js ./server/store.js
+# MCP lifecycle helpers are bundled from the host store modules, so the whole
+# entrypoint set is present before the bundle runs rather than one file at a time.
+COPY server ./server
 COPY types ./types
 COPY scripts/build.mjs ./scripts/build.mjs
 RUN npm run build
