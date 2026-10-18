@@ -1054,11 +1054,11 @@ test('the host service ships every module it imports, named in the clean-room ma
   expect(modules.length).toBeGreaterThan(1);
 
   for (const name of modules) {
-    // The allowlist ships the `server` directory, and the canary pins each module by
-    // name on top of that: a directory that stops shipping, or a module dropped
-    // beside the ones that do, is then a failed release check rather than a tarball
-    // whose `npm run serve` is ERR_MODULE_NOT_FOUND.
-    expect(allowed.some((/** @type {string} */ entry) => entry === 'server' || entry === 'server/' || entry === `server/${name}`), `package.json files must cover server/${name}`).toBe(true);
+    // The manifest names every module rather than the directory, so shipping a new
+    // one is a deliberate allowlist edit, and the canary pins the same names: a
+    // module dropped from either list is a failed release check rather than a
+    // tarball whose `npm run serve` is ERR_MODULE_NOT_FOUND.
+    expect(allowed, `package.json files must list server/${name}`).toContain(`server/${name}`);
     expect(REQUIRED_PACKAGE_FILES, `the clean-room canary must require server/${name}`).toContain(`server/${name}`);
   }
 
