@@ -20,6 +20,9 @@ import { sendJson } from './http.js';
 function effectiveQuota(tenantConfig, defaults) {
   const windowSeconds = tenantConfig.window_seconds ?? (defaults.quotaWindowSeconds > 0 ? defaults.quotaWindowSeconds : 3600);
   const declared = tenantConfig.max_events_per_window;
+  // An explicit null is the unmetered plan a purchase can grant; it is not the
+  // same as an unset ceiling, which falls through to the deployment default.
+  if (declared === null) return null;
   // A declared ceiling is authoritative even when it is zero: zero is how a
   // revoked subscription is stored, and reading it as "unset" would hand the
   // tenant the deployment default instead of a refusal.

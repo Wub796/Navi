@@ -698,3 +698,103 @@ test('reports health and refuses unknown routes', async () => {
   expect(wrongMethod.status).toBe(405);
   expect((await wrongMethod.json()).error.code).toBe('METHOD_NOT_ALLOWED');
 });
+
+test('the host infers the commercial plan from the amount billed and an update upgrades that tenant', async () => {
+  // The same zero-metadata path the Worker handles, against the real SQLite store:
+  // a standard Payment Link carries no plan metadata, so the amount is the plan.
+  const storeFile = join(tmpdir(), `navi-billing-tiers-${process.pid}-${Date.now()}.db`);
+  const secret = 'whsec_tiers';
+  const host = await createNaviHostServer({ port: 0, storeFile, stripeWebhookSecret: secret });
+  const base = () => `http://127.0.0.1:${host.port}`;
+  /** @param {string} raw */
+  const webhook = raw => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = createHmac('sha256', secret).update(`${timestamp}.${raw}`).digest('hex');
+    return fetch(`${base()}/v1/billing/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${timestamp},v1=${signature}` },
+      body: raw
+    });
+  };
+  /** @param {string} type @param {string} eventId @param {any} object */
+  const send = async (type, eventId, object) => {
+    const response = await webhook(JSON.stringify({ id: eventId, type, data: { object } }));
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  try {
+    for (const [id, customer, amount, ceiling] of /** @type {[string, string, number, number][]} */ ([
+      ['evt_host_starter', 'cus_host_starter', 2900, 10000],
+      ['evt_host_pro', 'cus_host_pro', 4900, 50000],
+      ['evt_host_enterprise', 'cus_host_enterprise', 19900, 250000],
+    ])) {
+      const provisioned = await send('checkout.session.completed', id, { id: `cs_${id}`, customer, amount_total: amount });
+      expect(provisioned.tenant_id).toBe(`tenant_${customer}`);
+      expect(await host.store.readTenantDefinition(`tenant_${customer}`), `$${amount / 100} buys ${ceiling} events`)
+        .toMatchObject({ max_events_per_window: ceiling, window_seconds: 2592000 });
+    }
+
+    // A subscription upgrade reports its price on the first line item and lands on
+    // the tenant the checkout created.
+    await send('customer.subscription.updated', 'evt_host_upgrade', {
+      id: 'sub_host', customer: 'cus_host_starter', items: { data: [{ price: { unit_amount: 19900 } }] }
+    });
+    expect(await host.store.readTenantDefinition('tenant_cus_host_starter')).toMatchObject({ max_events_per_window: 250000 });
+
+    // Explicit metadata still wins over the amount.
+    await send('checkout.session.completed', 'evt_host_override', {
+      id: 'cs_host_override', customer: 'cus_host_override', amount_total: 19900, metadata: { plan: 'starter' }
+    });
+    expect(await host.store.readTenantDefinition('tenant_cus_host_override')).toMatchObject({ max_events_per_window: 10000 });
+
+    // No amount at all is the documented Pro default.
+    await send('checkout.session.completed', 'evt_host_unknown', { id: 'cs_host_unknown', customer: 'cus_host_unknown' });
+    expect(await host.store.readTenantDefinition('tenant_cus_host_unknown')).toMatchObject({ max_events_per_window: 50000 });
+
+    // An unmetered plan is stored as no ceiling, not as a zero that would refuse.
+    const unmetered = await send('checkout.session.completed', 'evt_host_unmetered', {
+      id: 'cs_host_unmetered', customer: 'cus_host_unmetered', metadata: { unmetered: 'true' }
+    });
+    expect(await host.store.readTenantDefinition('tenant_cus_host_unmetered')).toMatchObject({ max_events_per_window: null });
+    const crawl = await fetch(`${base()}/v1/sitemap/update`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${unmetered.api_key}` },
+      body: JSON.stringify({ url: 'https://app.example.com/checkout', actions: [{ target_id: '#submit', role: 'button', name: 'Submit', action: 'click', selector: '#submit', disabled: false }] })
+    });
+    expect(crawl.status, 'an unmetered tenant is not a suspended one').toBe(200);
+  } finally {
+    await host.close();
+  }
+});
+
+test('an older host database is rebuilt once so an unmetered ceiling can be stored', async () => {
+  // `tenant_definitions.max_events_per_window` shipped NOT NULL, so NULL (the
+  // unmetered plan) could not be stored. SQLite cannot drop a constraint in place,
+  // and the rebuild that fixes it must keep every row it copies.
+  const storeFile = join(tmpdir(), `navi-billing-migrate-${process.pid}-${Date.now()}.db`);
+  const { DatabaseSync } = await import('node:sqlite');
+  const legacy = new DatabaseSync(storeFile);
+  legacy.exec(`CREATE TABLE tenant_definitions (
+    tenant_id TEXT PRIMARY KEY,
+    api_key TEXT NOT NULL,
+    allowed_origins TEXT NOT NULL,
+    max_events_per_window INTEGER NOT NULL,
+    window_seconds INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+  legacy.prepare('INSERT INTO tenant_definitions (tenant_id, api_key, allowed_origins, max_events_per_window, window_seconds, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run('tenant-legacy', 'navi_live_legacy', '["*"]', 1234, 600, 'active', new Date().toISOString());
+  legacy.close();
+
+  const store = await createStore(storeFile, { mode: 'sqlite' });
+  try {
+    expect(await store.readTenantDefinition('tenant-legacy'), 'the rebuild must keep the row and its ceiling')
+      .toMatchObject({ max_events_per_window: 1234, window_seconds: 600, allowed_origins: ['*'] });
+    const unmetered = await store.upsertTenantDefinition({ tenant_id: 'tenant-legacy', api_key: 'navi_live_legacy', max_events_per_window: null });
+    expect(unmetered.max_events_per_window).toBeNull();
+    expect(await store.readTenantDefinition('tenant-legacy')).toMatchObject({ max_events_per_window: null });
+  } finally {
+    await store.close();
+  }
+});

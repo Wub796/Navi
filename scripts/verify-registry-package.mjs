@@ -56,6 +56,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'server/landing.js',
   'server/maintenance.js',
   'server/metrics.js',
+  'server/pricing.js',
   'server/public-routes.js',
   'server/quota.js',
   'server/rate-limit.js',

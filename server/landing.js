@@ -12,6 +12,7 @@
 // serve the same document, and the escaping is written once.
 
 import { escapeHtml } from './billing-success.js';
+import { TIERS } from './pricing.js';
 
 /**
  * Headers the landing page is served with.
@@ -91,6 +92,15 @@ const STYLE = `
     }
     .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); margin: 0 0 1.25rem; }
     .grid section { margin: 0; }
+    .tiers { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+    .tiers section { margin: 0; display: flex; flex-direction: column; }
+    .tier h3 { margin: 0 0 .3rem; font-size: 1rem; }
+    .tier .price { font-size: 1.75rem; font-weight: 700; letter-spacing: -.02em; margin: 0; }
+    .tier .price span { font-size: .82rem; font-weight: 500; color: #6b7280; }
+    .tier .quota { font: .78rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #3f4653; margin: .3rem 0 .6rem; }
+    .tier .summary { font-size: .88rem; color: #4b515c; margin: 0 0 1rem; }
+    .tier .cta { margin-top: auto; text-align: center; }
+    .tier .unavailable { margin: auto 0 0; font-size: .8rem; color: #6b7280; }
     code, pre { font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     td code { white-space: nowrap; }
     pre {
@@ -129,6 +139,8 @@ const STYLE = `
       pre { background: #0b0d11; }
       h2, th { color: #9aa2af; }
       th, td { border-bottom-color: #262b34; }
+      .tier .summary, .tier .unavailable { color: #9aa2af; }
+      .tier .quota { color: #b6becb; }
       a { color: #7aa2ff; }
       .cta { background: #3b78f0; color: #fff; }
     }
@@ -137,33 +149,76 @@ const STYLE = `
 /** @param {string} method @param {string} path @param {string} detail */
 const row = (method, path, detail) => `        <tr><td><span class="method">${method}</span></td><td><code>${escapeHtml(path)}</code></td><td>${detail}</td></tr>`;
 
+/** `$29` from 2900. Every tier is sold in whole dollars.
+ * @param {number} cents @returns {string} */
+const priceLabel = cents => `$${cents / 100}`;
+
+/**
+ * One card of the pricing grid.
+ *
+ * A paid tier renders its CTA only when that tier's Payment Link is configured;
+ * `httpsLink` has already vetted the href, and `escapeHtml` runs over the parsed
+ * value so an operator's link cannot become markup.
+ * @param {import('./pricing.js').Tier} tier @param {string | null} link
+ * @returns {string}
+ */
+function renderTier(tier, link) {
+  const quota = tier.maxEventsPerWindow === null
+    ? 'Unmetered'
+    : `${tier.maxEventsPerWindow.toLocaleString('en-US')} events / 30 days`;
+  const action = link
+    ? `<a class="cta" href="${escapeHtml(link)}">Subscribe &rarr;</a>`
+    : tier.priceCents === 0
+      ? '<p class="unavailable">Free forever · AGPL-3.0</p>'
+      : '<p class="unavailable">Not configured on this deployment</p>';
+  return `    <section class="tier">
+      <h3>${escapeHtml(tier.name)}</h3>
+      <p class="price">${priceLabel(tier.priceCents)}<span>/mo</span></p>
+      <p class="quota">${quota}</p>
+      <p class="summary">${escapeHtml(tier.summary)}</p>
+      ${action}
+    </section>`;
+}
+
 /**
  * The landing document.
  *
  * Every interpolated value is escaped: the loader URL and the sitemap URL are
  * derived from the request origin, and the Payment Link comes from configuration,
  * so none of them is allowed to close an attribute or open an element.
- * @param {{loaderUrl?: string, sitemapUrl?: string, paymentLinkUrl?: unknown}} [input]
+ * @param {{loaderUrl?: string, sitemapUrl?: string, paymentLinkUrl?: unknown,
+ *   paymentLinks?: {starter?: unknown, pro?: unknown, enterprise?: unknown}}} [input]
  * @returns {string}
  */
 export function renderLandingPage(input = {}) {
   const loader = escapeHtml(input.loaderUrl ?? '/v1/loader.js');
   const sitemap = escapeHtml(input.sitemapUrl ?? '/v1/sitemap/update');
-  const paymentLink = httpsLink(input.paymentLinkUrl);
+  // `paymentLinkUrl` is the pre-tier name for the Pro link, and still works: a
+  // deployment that only ever set it keeps exactly the call to action it had.
+  const links = /** @type {Record<string, string | null>} */ ({
+    starter: httpsLink(input.paymentLinks?.starter),
+    pro: httpsLink(input.paymentLinks?.pro ?? input.paymentLinkUrl),
+    enterprise: httpsLink(input.paymentLinks?.enterprise),
+  });
+  const purchasing = Boolean(links.starter || links.pro || links.enterprise);
   const embed = `<script src="${loader}"\n        data-key="navi_live_YOUR_KEY"><\/script>`;
   const publish = `curl -X POST ${sitemap} \\
   -H "Authorization: Bearer $NAVI_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"url":"https://app.example.com","actions":[{"role":"button","name":"Checkout"}]}'`;
 
-  const tier = paymentLink
-    ? `  <section class="card">
-    <h2>Pro tier</h2>
-    <p>Post-sitemap ingestion, per-tenant origin allow-listing and the hosted loader, billed through Stripe. Cancel any time.</p>
-    <a class="cta" href="${escapeHtml(paymentLink)}">Subscribe &amp; Get API Key &rarr;</a>
-    <p class="muted">Checkout is hosted by Stripe; the API key is shown once on the success page and never again.</p>
-  </section>`
-    : `  <section class="card">
+  // Every tier is always shown, so a visitor can compare plans even on a
+  // deployment that configured only one link. The CTA is the only thing that
+  // depends on configuration.
+  const pricing = `  <section>
+    <h2>Pricing</h2>
+    <div class="tiers">
+${TIERS.map(tier => renderTier(tier, links[tier.id] ?? null)).join('\n')}
+    </div>
+    <p class="muted">Checkout is hosted by Stripe; the tenant key is shown once on the success page and never again. Every paid plan is metered over a 30-day window.</p>
+  </section>`;
+
+  const quickstart = purchasing ? '' : `  <section class="card">
     <h2>Self-hosted quickstart</h2>
     <p>This deployment has no Payment Link configured, so there is no self-serve checkout here. Run the same service yourself, or ask the operator for a tenant key.</p>
     <pre><code>npm i navi-interaction-bridge
@@ -210,7 +265,9 @@ navi-mcp --transport sse</code></pre>
     <pre><code>${escapeHtml(publish)}</code></pre>
   </section>
 
-${tier}
+${pricing}
+
+${quickstart}
 
   <section>
     <h2>Endpoints</h2>

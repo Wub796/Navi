@@ -29,8 +29,8 @@
  * @typedef {{tenant_id: string, max_events_per_window: number, window_seconds?: number}} QuotaOptions
  * @typedef {{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}} QuotaVerdict
  * @typedef {{tenant_id: string, window_start_ms: number, event_count: number}} QuotaState
- * @typedef {{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number, window_seconds: number, status: 'active' | 'suspended', updated_at: string}} TenantDefinitionRecord
- * @typedef {{tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number, status?: 'active' | 'suspended'}} TenantDefinitionInput
+ * @typedef {{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number | null, window_seconds: number, status: 'active' | 'suspended', updated_at: string}} TenantDefinitionRecord
+ * @typedef {{tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number | null, window_seconds?: number, status?: 'active' | 'suspended'}} TenantDefinitionInput
  * @typedef {{session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number}} CheckoutClaimInput
  * @typedef {{session_id: string, tenant_id: string, api_key: string, expires_at_ms: number}} CheckoutClaimRecord
  * @typedef {{event_id?: string | null, received_at_ms?: number, definition?: TenantDefinitionInput | null, checkout_claim?: CheckoutClaimInput | null}} WebhookMutationInput
@@ -125,8 +125,9 @@ export function normalizeViolation(violation) {
  *
  * A ceiling of `0` is kept rather than defaulted away: it is how a revoked
  * subscription is represented, and normalizing it to the default would turn a
- * suspension back into a live plan. Only a missing or unusable value falls back
- * to the documented default.
+ * suspension back into a live plan. An explicit `null` is the unmetered plan and
+ * is kept too, because defaulting it would meter a tenant that bought no ceiling.
+ * Only a missing or unusable value falls back to the documented default.
  * @param {TenantDefinitionInput} input @returns {TenantDefinitionRecord}
  */
 export function normalizeTenantDefinition(input) {
@@ -137,7 +138,9 @@ export function normalizeTenantDefinition(input) {
   const origins = Array.isArray(input?.allowed_origins)
     ? input.allowed_origins.filter((/** @type {unknown} */ item) => typeof item === 'string' && item.trim().length > 0).map(item => item.trim())
     : [];
-  const maxEvents = Number.isInteger(input?.max_events_per_window) && Number(input.max_events_per_window) >= 0 ? Number(input.max_events_per_window) : 10000;
+  const maxEvents = input?.max_events_per_window === null
+    ? null
+    : Number.isInteger(input?.max_events_per_window) && Number(input.max_events_per_window) >= 0 ? Number(input.max_events_per_window) : 10000;
   const windowSeconds = Number.isInteger(input?.window_seconds) && Number(input.window_seconds) > 0 ? Number(input.window_seconds) : 2592000;
   return {
     tenant_id: tenantId,
@@ -263,7 +266,11 @@ export function toTenantDefinition(row) {
     tenant_id: String(row.tenant_id ?? ''),
     api_key: String(row.api_key ?? ''),
     allowed_origins: list.length > 0 ? list : ['*'],
-    max_events_per_window: asNumber(row.max_events_per_window),
+    // `null` is the unmetered plan in both backends; a missing value is read the
+    // same way rather than as `0`, which is a suspension.
+    max_events_per_window: row.max_events_per_window === null || row.max_events_per_window === undefined
+      ? null
+      : asNumber(row.max_events_per_window),
     window_seconds: asNumber(row.window_seconds) > 0 ? asNumber(row.window_seconds) : 2592000,
     status: row.status === 'suspended' ? 'suspended' : 'active',
     updated_at: String(row.updated_at ?? '')

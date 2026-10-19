@@ -488,28 +488,52 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   for (const path of ['/v1/sitemap/update', '/v1/billing/webhook', '/v1/billing/session', '/v1/billing/success', '/healthz']) {
     expect(body, `the endpoint table must list ${path}`).toContain(path);
   }
-  // No Payment Link is configured here: the page shows the self-hosted quickstart
-  // rather than a call to action that leads nowhere.
+  // No Payment Link is configured here: the page shows all four plans so a visitor
+  // can compare them, but no call to action, and the self-hosted quickstart.
   expect(body).toContain('npm run serve');
   expect(body).not.toContain('Subscribe');
+  for (const tier of ['Community', 'Starter', 'Pro', 'Enterprise']) {
+    expect(body, `the pricing grid must name ${tier}`).toContain(`<h3>${tier}</h3>`);
+  }
+  for (const price of ['$0', '$29', '$49', '$199']) expect(body).toContain(price);
+  expect(body).toContain('10,000 events / 30 days');
+  expect(body).toContain('50,000 events / 30 days');
+  expect(body).toContain('250,000 events / 30 days');
 
-  // A valid https Payment Link becomes the live call to action.
+  // Each tier's own Payment Link becomes that card's call to action. The legacy
+  // `STRIPE_PAYMENT_LINK_URL` is still the Pro link, so a deployment that only ever
+  // set it keeps the Pro call to action it had.
+  const baseEnv = { SUPABASE_URL: 'https://supabase.example', SUPABASE_SERVICE_ROLE_KEY: 'server-secret' };
   const configuredEnv = {
-    SUPABASE_URL: 'https://supabase.example',
-    SUPABASE_SERVICE_ROLE_KEY: 'server-secret',
+    ...baseEnv,
+    STRIPE_PAYMENT_LINK_STARTER: 'https://buy.stripe.com/test_starter',
     STRIPE_PAYMENT_LINK_URL: 'https://buy.stripe.com/test_abc123',
+    STRIPE_PAYMENT_LINK_ENTERPRISE: 'https://buy.stripe.com/test_enterprise',
   };
   const configured = await workerRequest('https://worker.example/', {}, configuredEnv);
   expect(configured.status).toBe(200);
   const configuredBody = await configured.text();
+  expect(configuredBody).toContain('href="https://buy.stripe.com/test_starter"');
   expect(configuredBody).toContain('href="https://buy.stripe.com/test_abc123"');
-  expect(configuredBody).toContain('Subscribe &amp; Get API Key');
+  expect(configuredBody).toContain('href="https://buy.stripe.com/test_enterprise"');
+  expect(configuredBody.match(/Subscribe &rarr;/g) ?? []).toHaveLength(3);
   expect(configuredBody).not.toContain('npm run serve');
+
+  // A partial configuration shows only the cards it can actually sell.
+  const starterOnly = await workerRequest('https://worker.example/', {}, { ...baseEnv, STRIPE_PAYMENT_LINK_STARTER: 'https://buy.stripe.com/test_starter' });
+  const starterBody = await starterOnly.text();
+  expect(starterBody.match(/Subscribe &rarr;/g) ?? []).toHaveLength(1);
+  expect(starterBody).not.toContain('href="https://buy.stripe.com/test_abc123"');
+
+  const proOnly = await workerRequest('https://worker.example/', {}, { ...baseEnv, STRIPE_PAYMENT_LINK_PRO: 'https://buy.stripe.com/test_pro' });
+  const proBody = await proOnly.text();
+  expect(proBody).toContain('href="https://buy.stripe.com/test_pro"');
+  expect(proBody.match(/Subscribe &rarr;/g) ?? []).toHaveLength(1);
 
   // Anything that is not an absolute https URL is configuration the page refuses to
   // publish, so a typo or an injected scheme degrades to the quickstart.
   for (const paymentLink of ['javascript:alert(1)', 'http://buy.stripe.com/test_abc123', 'not a url', '']) {
-    const fallback = await workerRequest('https://worker.example/', {}, { ...configuredEnv, STRIPE_PAYMENT_LINK_URL: paymentLink });
+    const fallback = await workerRequest('https://worker.example/', {}, { ...baseEnv, STRIPE_PAYMENT_LINK_URL: paymentLink });
     const fallbackBody = await fallback.text();
     expect(fallbackBody, `STRIPE_PAYMENT_LINK_URL=${paymentLink} must not be rendered`).not.toContain('href="javascript:');
     expect(fallbackBody).not.toContain('Subscribe');
@@ -519,7 +543,7 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   // The URL parser normalizes the characters that would close the attribute, so a
   // configured value cannot become markup even though it is operator input.
   const hostile = await workerRequest('https://worker.example/', {}, {
-    ...configuredEnv,
+    ...baseEnv,
     STRIPE_PAYMENT_LINK_URL: 'https://buy.stripe.com/x"><script>',
   });
   expect(await hostile.text()).not.toContain('"><script>');
@@ -782,6 +806,62 @@ test('a standard Payment Link provisions from the customer, and its cancellation
     response = await billingRequest(orphan);
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: 'Missing tenant_id' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Worker infers the commercial plan from the amount billed when a Payment Link carries no metadata', async () => {
+  // Stripe's Payment Link editor has no metadata field, so a standard link arrives
+  // with `metadata: {}`. The amount is then the only plan signal: inferring it here
+  // is what makes a $49 purchase a Pro tenant without an integration step.
+  const originalFetch = globalThis.fetch;
+  const supabase = fakeSupabase();
+  globalThis.fetch = supabase.fetch;
+  /** @param {string} id @param {string} eventId @param {any} object */
+  const send = async (id, eventId, object) => {
+    const body = JSON.stringify({ id: eventId, type: id, data: { object } });
+    const response = await billingRequest(body);
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  try {
+    // The three price points, each on its own customer and with nothing else to go on.
+    for (const [id, customer, amount, ceiling] of /** @type {[string, string, number, number][]} */ ([
+      ['evt_tier_starter', 'cus_tier_starter', 2900, 10000],
+      ['evt_tier_pro', 'cus_tier_pro', 4900, 50000],
+      ['evt_tier_enterprise', 'cus_tier_enterprise', 19900, 250000],
+    ])) {
+      const provisioned = await send('checkout.session.completed', id, { id: `cs_${id}`, customer, amount_total: amount });
+      expect(provisioned.tenant_id).toBe(`tenant_${customer}`);
+      expect(supabase.site(`tenant_${customer}`)?.max_events_per_window, `$${amount / 100} buys ${ceiling} events`).toBe(ceiling);
+      expect(supabase.site(`tenant_${customer}`)?.window_seconds).toBe(2592000);
+    }
+
+    // A subscription sends its price on the first line item, and an update upgrades
+    // the tenant the purchase created rather than minting a second one.
+    await send('customer.subscription.updated', 'evt_tier_upgrade', {
+      id: 'sub_tier_starter', customer: 'cus_tier_starter', items: { data: [{ price: { unit_amount: 19900 } }] }
+    });
+    expect(supabase.site('tenant_cus_tier_starter')?.max_events_per_window).toBe(250000);
+
+    // Explicit metadata still wins over the amount: the same $199 charge named as
+    // the Starter plan is metered as Starter.
+    await send('checkout.session.completed', 'evt_tier_override', {
+      id: 'cs_tier_override', customer: 'cus_tier_override', amount_total: 19900, metadata: { tier: 'starter' }
+    });
+    expect(supabase.site('tenant_cus_tier_override')?.max_events_per_window).toBe(10000);
+
+    // An amount this deployment cannot see is the documented Pro default, not an
+    // unmetered sale.
+    await send('checkout.session.completed', 'evt_tier_unknown', { id: 'cs_tier_unknown', customer: 'cus_tier_unknown', metadata: {} });
+    expect(supabase.site('tenant_cus_tier_unknown')?.max_events_per_window).toBe(50000);
+
+    // And an explicit unmetered purchase carries no ceiling at all.
+    await send('checkout.session.completed', 'evt_tier_unmetered', {
+      id: 'cs_tier_unmetered', customer: 'cus_tier_unmetered', metadata: { unmetered: 'true' }
+    });
+    expect(supabase.site('tenant_cus_tier_unmetered')?.max_events_per_window).toBeNull();
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -2,19 +2,21 @@ import { validateCrawlerPayload } from './crawler-payload.js';
 import type { CrawlerPayload } from './dom-crawler.js';
 import { BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage } from '../server/billing-success.js';
 import { LANDING_PAGE_HEADERS, renderLandingPage } from '../server/landing.js';
+import { resolveQuota } from '../server/pricing.js';
 
 export interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   STRIPE_WEBHOOK_SECRET?: string;
-  /** Stripe Payment Link for the self-serve tier; absent => the quickstart is shown. */
+  /** Stripe Payment Link for Starter ($29/mo). Absent => the card is not purchasable here. */
+  STRIPE_PAYMENT_LINK_STARTER?: string;
+  /** Stripe Payment Link for Pro ($49/mo). `STRIPE_PAYMENT_LINK_URL` is its legacy name. */
+  STRIPE_PAYMENT_LINK_PRO?: string;
+  /** Stripe Payment Link for Enterprise ($199/mo). */
+  STRIPE_PAYMENT_LINK_ENTERPRISE?: string;
+  /** @deprecated The pre-tier name for `STRIPE_PAYMENT_LINK_PRO`; still honoured. */
   STRIPE_PAYMENT_LINK_URL?: string;
 }
-
-/** Ceiling a provisioned site gets when Stripe metadata omits one. */
-const DEFAULT_MAX_EVENTS_PER_WINDOW = 10000;
-/** Window a provisioned site gets when Stripe metadata omits one: 30 days. */
-const DEFAULT_PROVISION_WINDOW_SECONDS = 2592000;
 /** Replay window enforced around a Stripe signature timestamp, in seconds. */
 const SIGNATURE_TOLERANCE_SECONDS = 300;
 /** Validity window for a one-time post-checkout API-key claim, in milliseconds (15 minutes). */
@@ -122,17 +124,6 @@ export async function verifyStripeSignature(rawBody: string, header: string | nu
     }
     return difference === 0;
   });
-}
-
-/**
- * Read an optional integer out of Stripe metadata, whose values are strings.
- * @param {unknown} value @param {number} fallback @param {number} minimum
- * @returns {number}
- */
-function metadataInteger(value: unknown, fallback: number, minimum: number): number {
-  if (value === undefined || value === null || value === '') return fallback;
-  const number = Number(value);
-  return Number.isInteger(number) && number >= minimum ? number : fallback;
 }
 
 /**
@@ -262,6 +253,9 @@ async function provisionSite(env: Env, object: any, eventType: string, eventId: 
   const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
   try {
     const explicitKey = typeof metadata.api_key === 'string' ? metadata.api_key.trim() : '';
+    // A standard Payment Link carries no metadata, so the plan is inferred from the
+    // amount billed; explicit metadata still wins, in `resolveQuota`'s order.
+    const quota = resolveQuota(object);
     const rawSessionId = eventType === 'checkout.session.completed' && typeof object?.id === 'string' ? object.id.trim() : '';
     const sessionId = rawSessionId.startsWith('cs_') ? rawSessionId : null;
     const result = await callRpc(env, 'apply_stripe_webhook', {
@@ -270,8 +264,8 @@ async function provisionSite(env: Env, object: any, eventType: string, eventId: 
       p_api_key: explicitKey || null,
       p_candidate_api_key: explicitKey ? null : randomTenantKey(),
       p_allowed_origins: parseAllowedOrigins(metadata.allowed_origins),
-      p_max_events_per_window: metadataInteger(metadata.max_events_per_window, DEFAULT_MAX_EVENTS_PER_WINDOW, 0),
-      p_window_seconds: metadataInteger(metadata.window_seconds, DEFAULT_PROVISION_WINDOW_SECONDS, 1),
+      p_max_events_per_window: quota.max_events_per_window,
+      p_window_seconds: quota.window_seconds,
       p_active: true,
       // The claim is written in the same transaction as the tenant: a key handed
       // out for a site that does not exist is worse than a claim that never landed.
@@ -458,7 +452,11 @@ export default {
       return new Response(renderLandingPage({
         loaderUrl: `${url.origin}/v1/loader.js`,
         sitemapUrl: `${url.origin}/v1/sitemap/update`,
-        paymentLinkUrl: env.STRIPE_PAYMENT_LINK_URL,
+        paymentLinks: {
+          starter: env.STRIPE_PAYMENT_LINK_STARTER,
+          pro: env.STRIPE_PAYMENT_LINK_PRO ?? env.STRIPE_PAYMENT_LINK_URL,
+          enterprise: env.STRIPE_PAYMENT_LINK_ENTERPRISE,
+        },
       }), { status: 200, headers: LANDING_PAGE_HEADERS });
     }
     if (url.pathname === '/v1/billing/webhook') {

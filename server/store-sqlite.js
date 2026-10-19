@@ -85,15 +85,38 @@ export function createSqliteStore(path, sqlite) {
   // a key bought through the billing webhook survive a restart. The key is unique
   // because it is the lookup the ingest routes perform; two tenants sharing one
   // would silently hand each other's quota to whichever was read first.
-  db.exec(`CREATE TABLE IF NOT EXISTS tenant_definitions (
+  // `max_events_per_window` is nullable because NULL is the unmetered plan, the
+  // same meaning it has in the edge schema. The table was first created NOT NULL,
+  // and SQLite cannot drop a constraint in place, so a file written by that version
+  // is rebuilt once — every row copied — rather than leaving an unmetered tenant
+  // silently metered at the default.
+  const tenantDefinitionsTable = `(
     tenant_id TEXT PRIMARY KEY,
     api_key TEXT NOT NULL,
     allowed_origins TEXT NOT NULL,
-    max_events_per_window INTEGER NOT NULL,
+    max_events_per_window INTEGER,
     window_seconds INTEGER NOT NULL,
     status TEXT NOT NULL,
     updated_at TEXT NOT NULL
-  )`);
+  )`;
+  db.exec(`CREATE TABLE IF NOT EXISTS tenant_definitions ${tenantDefinitionsTable}`);
+  const ceilingColumn = /** @type {any[]} */ (db.prepare('PRAGMA table_info(tenant_definitions)').all())
+    .find(column => column.name === 'max_events_per_window');
+  if (ceilingColumn && asNumber(ceilingColumn.notnull) === 1) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec('DROP TABLE IF EXISTS tenant_definitions_legacy');
+      db.exec('ALTER TABLE tenant_definitions RENAME TO tenant_definitions_legacy');
+      db.exec(`CREATE TABLE tenant_definitions ${tenantDefinitionsTable}`);
+      db.exec(`INSERT INTO tenant_definitions (tenant_id, api_key, allowed_origins, max_events_per_window, window_seconds, status, updated_at)
+        SELECT tenant_id, api_key, allowed_origins, max_events_per_window, window_seconds, status, updated_at FROM tenant_definitions_legacy`);
+      db.exec('DROP TABLE tenant_definitions_legacy');
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch { /* the original failure is the one to report */ }
+      throw error;
+    }
+  }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_definitions_key ON tenant_definitions(api_key)');
   // The billing ledger. The primary key is what makes "first delivery wins" a
   // database decision: `DO NOTHING` reports zero changed rows for a retry, so two

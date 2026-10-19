@@ -16,3 +16,14 @@ compatibility_date = "2026-10-01"
 #   wrangler secret put SUPABASE_URL
 #   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 #   wrangler secret put STRIPE_WEBHOOK_SECRET   # absent => the webhook answers 503
+#
+# Pricing (all optional): each paid tier's Payment Link is rendered as a CTA on
+# `GET /`, and the webhook infers the plan from the amount billed when a standard
+# link arrives without metadata. The four tiers are Community ($0, self-hosted),
+# Starter ($29/mo, 10,000 events / 30 days), Pro ($49/mo, 50,000 events / 30 days)
+# and Enterprise ($199/mo, 250,000 events / 30 days).
+#
+#   wrangler secret put STRIPE_PAYMENT_LINK_STARTER      # $29/mo
+#   wrangler secret put STRIPE_PAYMENT_LINK_PRO          # $49/mo
+#   wrangler secret put STRIPE_PAYMENT_LINK_ENTERPRISE   # $199/mo
+#   wrangler secret put STRIPE_PAYMENT_LINK_URL          # legacy name for the Pro link

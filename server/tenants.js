@@ -18,7 +18,7 @@ export const DEV_TENANT_ID = 'demo-tenant';
 export const TENANTS_FORMAT = 'key:tenantId,key2:tenantId2';
 
 /**
- * @typedef {{id: string, allowed_origins?: string[], max_events_per_window?: number, window_seconds?: number}} TenantDefinition
+ * @typedef {{id: string, allowed_origins?: string[], max_events_per_window?: number | null, window_seconds?: number}} TenantDefinition
  * @typedef {string | TenantDefinition} TenantEntry
  * @typedef {Map<string, TenantEntry>} TenantRegistry key -> tenantId or TenantDefinition
  * @typedef {{[key: string]: string | undefined}} EnvLike
@@ -39,10 +39,14 @@ export function normalizeTenantEntry(entry) {
       : undefined;
     // A ceiling of `0` is kept rather than dropped: it is how a revoked
     // subscription is represented, and treating it as "unset" would turn a
-    // suspended tenant back into an unmetered one.
-    const maxEvents = typeof entry.max_events_per_window === 'number' && Number.isInteger(entry.max_events_per_window) && entry.max_events_per_window >= 0
-      ? entry.max_events_per_window
-      : undefined;
+    // suspended tenant back into an unmetered one. An explicit `null` is kept for
+    // the same reason in the other direction: it is an unmetered plan, and dropping
+    // it would hand the tenant the deployment default instead.
+    const maxEvents = entry.max_events_per_window === null
+      ? null
+      : typeof entry.max_events_per_window === 'number' && Number.isInteger(entry.max_events_per_window) && entry.max_events_per_window >= 0
+        ? entry.max_events_per_window
+        : undefined;
     const windowSeconds = typeof entry.window_seconds === 'number' && Number.isInteger(entry.window_seconds) && entry.window_seconds > 0
       ? entry.window_seconds
       : undefined;

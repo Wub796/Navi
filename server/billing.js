@@ -10,6 +10,7 @@ import {
   BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage
 } from './billing-success.js';
 import { MAX_PAYLOAD_BYTES, readBody, requestOrigin, sendError, sendHtml, sendJson } from './http.js';
+import { resolveQuota } from './pricing.js';
 
 /** Validity window for a one-time Checkout Session API-key claim, in ms (15m). */
 export const CHECKOUT_CLAIM_TTL_MS = 900_000;
@@ -168,8 +169,9 @@ export function createBillingRoutes(options) {
       tenant_id: tenantId,
       api_key: apiKey,
       allowed_origins: parseAllowedOrigins(metadata.allowed_origins),
-      max_events_per_window: metadataInteger(metadata.max_events_per_window, 10000, 0),
-      window_seconds: metadataInteger(metadata.window_seconds, 2592000, 1)
+      // A standard Payment Link carries no metadata, so the plan is inferred from the
+      // amount billed; explicit metadata still wins, in `resolveQuota`'s order.
+      ...resolveQuota(object)
     };
     const rawSessionId = typeof object?.id === 'string' ? object.id.trim() : '';
     const checkoutClaim = eventType === 'checkout.session.completed' && rawSessionId.startsWith('cs_')

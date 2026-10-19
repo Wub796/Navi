@@ -259,6 +259,27 @@ NAVI_TENANTS="live_key_abc:acme" node server/index.js --port 8790 --store server
 | `GET /.well-known/navi.json` | The agent discovery document — `{ version, protocol, status, capabilities, endpoints, source }` — served `public, max-age=300` with a strong `ETag` and `304` on `If-None-Match`. Every response on this service carries both relations in one header — `Link: </.well-known/navi.json>; rel="agent-bridge", <https://github.com/Wub796/Navi>; rel="source"` — so an agent that can reach any route can find the document, and every reader is offered its source. |
 | `GET /v1/source` | Redirects (`302`) to the Corresponding Source of the version answering — `https://github.com/Wub796/Navi`, or `NAVI_SOURCE_URL` when this host runs a modified version. Unauthenticated, and cached like the discovery document. This is the offer AGPL-3.0 section 13 requires a network service to make. |
 
+### Commercial plans
+
+The hosted edge sells four tiers, and `GET /` renders them as a pricing grid whose paid cards link to the Stripe Payment Links this deployment configured.
+
+| Plan | Price | 30-day ceiling |
+|---|---|---|
+| Community | $0 | Self-hosted under AGPL-3.0, unmetered |
+| Starter | $29/mo | 10,000 events |
+| Pro | $49/mo | 50,000 events, plus a commercial licence exempting the buyer from AGPL-3.0 |
+| Enterprise | $199/mo | 250,000 events, plus a commercial self-hosted Docker licence |
+
+A Payment Link created in Stripe's hosted editor carries no metadata, so the webhook infers the plan from the amount billed — `amount_subtotal`/`amount_total` on a checkout, the first line item's `price.unit_amount` or `plan.amount` on a subscription — and defaults to Pro when no amount is present. Explicit metadata still wins: `unmetered: "true"` grants no ceiling, `max_events_per_window` (with `window_seconds`) sets one, and `tier`/`plan` of `starter`, `pro` or `enterprise` selects a named plan. Configure the links as Worker secrets:
+
+```sh
+wrangler secret put STRIPE_PAYMENT_LINK_STARTER      # $29/mo
+wrangler secret put STRIPE_PAYMENT_LINK_PRO          # $49/mo
+wrangler secret put STRIPE_PAYMENT_LINK_ENTERPRISE   # $199/mo
+```
+
+`STRIPE_PAYMENT_LINK_URL` remains honoured as the pre-tier name for the Pro link.
+
 Both scripts are served with `Access-Control-Allow-Origin: *`, because the supported embed is a `crossorigin="anonymous"` script with an `integrity` hash: the browser then fetches in CORS mode and verifies the bytes before executing them.
 
 Containment violations are the second record type and live in their own `containment_violations` table, indexed on `(tenant_id, created_at)`, so an audit question can never skew an aggregate: in JSONL mode a violation line carries `kind: "containment_violation"` and is skipped by the summarizer. A tenant reads its own back through the audit route; nothing there is a page URL, a query value or a credential, because the reporting MCP server sanitizes the destination before it leaves the browser process.
@@ -362,7 +383,7 @@ npm run verify:release                 # the release gate: git, SRI, tests, gate
 node scripts/verify-release.mjs --tag    # ...and create the annotated v<version> tag
 ```
 
-[verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 251 passing tests, a clean-room tarball canary (`cleanroom-package-canary`) that verifies the unpacked package layout, SRI byte parity, zero leaks, and a live stdio JSON-RPC handshake, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. Its receipt records structured `evidence` beside the prose details: the revision, a digest of every tracked path outside `reports/`, the SRI, the artifact sizes, the container receipts, and the clean-room canary results it verified.
+[verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 254 passing tests, a clean-room tarball canary (`cleanroom-package-canary`) that verifies the unpacked package layout, SRI byte parity, zero leaks, and a live stdio JSON-RPC handshake, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. Its receipt records structured `evidence` beside the prose details: the revision, a digest of every tracked path outside `reports/`, the SRI, the artifact sizes, the container receipts, and the clean-room canary results it verified.
 
 [release.yml](.github/workflows/release.yml) runs that gate on a tag push and then publishes the revision it just verified, with `--provenance --access public`, behind the `release` environment so required reviewers can hold any publish for a human. The publish job depends on two verification jobs by id: the release gate above, and a container verification that builds and exercises the image on both released architectures on their own hardware against `deploy/docker-compose.prod.yml` — the file an operator deploys — so a release whose runtime posture failed is never published. One further gate stands between a tag and the registry: [publish-preflight.mjs](scripts/publish-preflight.mjs) checks the decisions a pipeline must not make on an owner's behalf — a LICENSE file, a `license` field, the access and provenance settings, a tag matching `package.json`, a receipt that still describes the exact bytes being published, provenance parity (`provenance-parity`) — because the receipt is committed by a later commit than the one it names, the preflight proves that HEAD is that revision or an ancestor with nothing outside `reports/` changed, so a report commit that quietly carried a source edit cannot be published — container verification of a configuration this repository deploys recorded green in that receipt, and clean-room package canary verification (`evidence.canary` with 6/6 passing checks), so an image whose runtime posture or packaged tarball was never proven cannot be published on the strength of a receipt that is silent about it. **It passes today: the package ships a `LICENSE` file and declares `AGPL-3.0-or-later`.** Release notes are generated from those receipts by [release-notes.mjs](scripts/release-notes.mjs) rather than retyped, so a note cannot describe a different artifact than the one published.
 
