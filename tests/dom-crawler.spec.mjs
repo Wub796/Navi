@@ -704,6 +704,89 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
   }
 });
 
+test('a standard Payment Link provisions from the customer, and its cancellation suspends that same tenant', async () => {
+  // A Payment Link buyer never passes through an integration, so `metadata.tenant_id`
+  // and `client_reference_id` are both unset. Stripe still sends `customer`, and the
+  // cancellation that arrives later carries the same `cus_...` and nothing else. If
+  // the two resolve differently, the sale provisions one tenant while the cancellation
+  // answers 400 against another, and the subscription stays live forever.
+  const originalFetch = globalThis.fetch;
+  const supabase = fakeSupabase();
+  globalThis.fetch = supabase.fetch;
+  try {
+    const checkout = JSON.stringify({
+      id: 'evt_link',
+      type: 'checkout.session.completed',
+      data: { object: { id: 'cs_test_link', customer: 'cus_test_link', metadata: {} } }
+    });
+    let response = await billingRequest(checkout);
+    expect(response.status).toBe(200);
+    const provisioned = await response.json();
+    // No metadata and no reference: the customer is the only identifier, so it is
+    // what the tenant is derived from.
+    expect(provisioned.tenant_id).toBe('tenant_cus_test_link');
+    expect(provisioned.api_key).toMatch(/^navi_live_[0-9a-f]{64}$/);
+
+    // The claim is keyed by the session, so a Payment Link's success URL still
+    // renders the key once even though nothing in the session named a tenant.
+    const page = await workerRequest('https://worker.example/v1/billing/success?session_id=cs_test_link');
+    expect(page.status).toBe(200);
+    expect(page.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    const body = await page.text();
+    expect(body).toContain(provisioned.api_key);
+    expect(body).toContain('tenant_cus_test_link');
+
+    // The minted key is real: it authenticates the ingest path it was sold for.
+    const headers = { Authorization: `Bearer ${provisioned.api_key}` };
+    response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(200);
+
+    // A subscription event names the customer and no metadata. It must update the
+    // tenant the checkout created rather than mint a second one from `sub_...`.
+    const update = JSON.stringify({ id: 'evt_link_update', type: 'customer.subscription.updated', data: { object: { id: 'sub_link', customer: 'cus_test_link' } } });
+    response = await billingRequest(update);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, tenant_id: 'tenant_cus_test_link' });
+
+    const cancellation = JSON.stringify({ id: 'evt_link_cancel', type: 'customer.subscription.deleted', data: { object: { id: 'sub_link', customer: 'cus_test_link' } } });
+    response = await billingRequest(cancellation);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, tenant_id: 'tenant_cus_test_link', status: 'suspended' });
+    expect([...supabase.sites.keys()], 'the purchase and its cancellation must name one tenant').toEqual(['tenant_cus_test_link']);
+
+    // Suspension is a quota answer, not an authentication one: the key stays valid
+    // and the ingest is a deterministic 429.
+    expect(supabase.site('tenant_cus_test_link')?.max_events_per_window).toBe(0);
+    response = await workerRequest(endpoint, { method: 'POST', headers, body: JSON.stringify(validPayload) });
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: 'Quota exceeded' });
+
+    // The four fields are consulted in order: metadata, then the reference, then the
+    // customer, then the session id on the completed checkout only.
+    const priority = [
+      [{ id: 'cs_priority_1', customer: 'cus_low', client_reference_id: 'ref_wins', metadata: { tenant_id: 'meta_wins' } }, 'meta_wins'],
+      [{ id: 'cs_priority_2', customer: 'cus_low', client_reference_id: 'ref_wins', metadata: {} }, 'ref_wins'],
+      [{ id: 'cs_priority_3', customer: 'cus_low', metadata: {} }, 'tenant_cus_low'],
+      [{ id: 'cs_priority_4', metadata: {} }, 'tenant_cs_priority_4'],
+    ];
+    for (const [index, [object, tenantId]] of priority.entries()) {
+      const event = JSON.stringify({ id: `evt_priority_${index}`, type: 'checkout.session.completed', data: { object } });
+      response = await billingRequest(event);
+      expect(response.status).toBe(200);
+      expect((await response.json()).tenant_id, `priority level ${index + 1}`).toBe(tenantId);
+    }
+
+    // The session id is not a customer: a subscription event that carries only `id`
+    // has no tenant to name, so it is a caller error rather than a new tenant.
+    const orphan = JSON.stringify({ id: 'evt_orphan', type: 'customer.subscription.updated', data: { object: { id: 'sub_orphan' } } });
+    response = await billingRequest(orphan);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Missing tenant_id' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Worker returns a clean 500 without leaking upstream errors', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error('server-secret stack trace'); };

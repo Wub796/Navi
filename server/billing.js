@@ -127,16 +127,27 @@ export function createBillingRoutes(options) {
   const { store, stripeWebhookSecret, log, registerTenantDefinition } = options;
 
   /**
-   * Resolve the tenant a Stripe object is about. Metadata is the documented place,
-   * and `client_reference_id` is the one field Stripe Checkout guarantees to echo
-   * back even when a metadata key is dropped.
-   * @param {any} object @returns {string}
+   * Resolve the tenant a Stripe object is about.
+   *
+   * A standard Payment Link needs no integration, so the buyer's session arrives with
+   * `metadata.tenant_id` and `client_reference_id` unset. Metadata stays first because
+   * it is the documented place; the `customer` is next because it is the one field a
+   * checkout session and every later subscription event for that subscription both
+   * carry, which is what makes a cancellation resolve to the tenant its purchase
+   * created rather than to nothing. The session id is the last resort, and only on the
+   * completed checkout, because that is the one event where it names a purchase.
+   * @param {any} object @param {string} [eventType] @returns {string}
    */
-  function billingTenantId(object) {
+  function billingTenantId(object, eventType = '') {
     const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
     const fromMetadata = typeof metadata.tenant_id === 'string' ? metadata.tenant_id.trim() : '';
     if (fromMetadata) return fromMetadata;
-    return typeof object?.client_reference_id === 'string' ? object.client_reference_id.trim() : '';
+    const fromReference = typeof object?.client_reference_id === 'string' ? object.client_reference_id.trim() : '';
+    if (fromReference) return fromReference;
+    const customer = typeof object?.customer === 'string' ? object.customer.trim() : '';
+    if (customer) return `tenant_${customer}`;
+    const fromSession = eventType === 'checkout.session.completed' && typeof object?.id === 'string' ? object.id.trim() : '';
+    return fromSession ? `tenant_${fromSession}` : '';
   }
 
   /**
@@ -145,7 +156,7 @@ export function createBillingRoutes(options) {
    * @returns {Promise<{status: number, body: Record<string, unknown>}>}
    */
   async function provisionTenant(object, eventId = '', eventType = '') {
-    const tenantId = billingTenantId(object);
+    const tenantId = billingTenantId(object, eventType);
     if (!tenantId) return { status: 400, body: { error: 'Missing tenant_id' } };
     const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
     const explicitKey = typeof metadata.api_key === 'string' ? metadata.api_key.trim() : '';

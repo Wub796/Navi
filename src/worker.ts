@@ -223,13 +223,25 @@ async function callRpc(env: Env, name: string, body: Record<string, unknown>): P
 }
 
 /**
- * @param {any} object
+ * Resolve the tenant a Stripe object is about.
+ *
+ * A standard Payment Link needs no integration, so the buyer's session arrives with
+ * `metadata.tenant_id` and `client_reference_id` unset. Metadata stays first because
+ * it is the documented place; the `customer` is next because it is the one field a
+ * checkout session and every later subscription event for that subscription both
+ * carry, so a cancellation resolves to the tenant its purchase created. The session
+ * id is the last resort, and only on the completed checkout, because that is the one
+ * event where it names a purchase.
+ * @param {any} object @param {string} [eventType]
  * @returns {string}
  */
-function billingTenantId(object: any): string {
+function billingTenantId(object: any, eventType = ''): string {
   const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
   if (typeof metadata.tenant_id === 'string' && metadata.tenant_id.trim().length > 0) return metadata.tenant_id.trim();
-  return typeof object?.client_reference_id === 'string' ? object.client_reference_id.trim() : '';
+  if (typeof object?.client_reference_id === 'string' && object.client_reference_id.trim().length > 0) return object.client_reference_id.trim();
+  if (typeof object?.customer === 'string' && object.customer.trim().length > 0) return `tenant_${object.customer.trim()}`;
+  if (eventType === 'checkout.session.completed' && typeof object?.id === 'string' && object.id.trim().length > 0) return `tenant_${object.id.trim()}`;
+  return '';
 }
 
 /**
@@ -245,7 +257,7 @@ function billingTenantId(object: any): string {
  * @returns {Promise<Response>}
  */
 async function provisionSite(env: Env, object: any, eventType: string, eventId: string): Promise<Response> {
-  const tenantId = billingTenantId(object);
+  const tenantId = billingTenantId(object, eventType);
   if (!tenantId) return json(400, { error: 'Missing tenant_id' });
   const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
   try {

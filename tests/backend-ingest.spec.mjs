@@ -497,6 +497,77 @@ test('a signed checkout provisions a tenant that ingests, survives a restart, an
   }
 });
 
+test('a standard Payment Link provisions from the customer on the host and its cancellation suspends that tenant', async () => {
+  // The same missing-metadata path the Worker handles, exercised against the real
+  // SQLite store: a Payment Link session carries `customer` but no tenant metadata,
+  // and the later cancellation carries only that customer. Derivation has to agree,
+  // or the suspension lands on a tenant nobody bought.
+  const storeFile = join(tmpdir(), `navi-billing-payment-link-${process.pid}-${Date.now()}.db`);
+  const secret = 'whsec_payment_link';
+  const host = await createNaviHostServer({ port: 0, storeFile, stripeWebhookSecret: secret });
+  const base = () => `http://127.0.0.1:${host.port}`;
+  /** @param {string} raw */
+  const webhook = raw => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = createHmac('sha256', secret).update(`${timestamp}.${raw}`).digest('hex');
+    return fetch(`${base()}/v1/billing/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${timestamp},v1=${signature}` },
+      body: raw
+    });
+  };
+  const crawl = (/** @type {string} */ key) => fetch(`${base()}/v1/sitemap/update`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ url: 'https://app.example.com/checkout', actions: [{ target_id: '#submit', role: 'button', name: 'Submit', action: 'click', selector: '#submit', disabled: false }] })
+  });
+  try {
+    const checkout = JSON.stringify({
+      id: 'evt_link',
+      type: 'checkout.session.completed',
+      data: { object: { id: 'cs_test_link', customer: 'cus_test_link', metadata: {} } }
+    });
+    let response = await webhook(checkout);
+    expect(response.status).toBe(200);
+    const provisioned = await response.json();
+    expect(provisioned.ok).toBe(true);
+    expect(provisioned.tenant_id).toBe('tenant_cus_test_link');
+    expect(provisioned.api_key).toMatch(/^navi_live_[0-9a-f]{64}$/);
+    const key = provisioned.api_key;
+
+    // The claim was written in the same transaction as the tenant, so the success
+    // URL renders the key once.
+    response = await fetch(`${base()}/v1/billing/success?session_id=cs_test_link`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    const page = await response.text();
+    expect(page).toContain(key);
+    expect(page).toContain('tenant_cus_test_link');
+
+    response = await fetch(`${base()}/v1/billing/success?session_id=cs_test_link`);
+    expect(response.status).toBe(404);
+    expect(await response.text()).not.toContain(key);
+
+    // The key authenticates ingest until the subscription ends.
+    response = await crawl(key);
+    expect(response.status).toBe(200);
+
+    // The cancellation names the customer and no metadata. It must suspend the
+    // tenant the checkout created, not answer 400 and leave the sale live.
+    const cancellation = JSON.stringify({ id: 'evt_link_cancel', type: 'customer.subscription.deleted', data: { object: { id: 'sub_link', customer: 'cus_test_link' } } });
+    response = await webhook(cancellation);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, tenant_id: 'tenant_cus_test_link', status: 'suspended' });
+
+    response = await crawl(key);
+    expect(response.status).toBe(429);
+    expect(response.headers.get('x-quota-limit')).toBe('0');
+    expect(await response.json()).toEqual({ error: 'Quota exceeded' });
+  } finally {
+    await host.close();
+  }
+});
+
 test('webhook ledger prunes entries older than 24h and rolls back atomically on write failure', async () => {
   const storeFile = join(tmpdir(), `navi-billing-atomic-${process.pid}-${Date.now()}.db`);
   const store = await createStore(storeFile, { mode: 'sqlite' });

@@ -508,9 +508,9 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(249);
+  expect(MIN_PASSING_TESTS).toBe(251);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
-  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.7.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
+  for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.8.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
     expect(text, `${document} must state the published floor`).toContain(String(MIN_PASSING_TESTS));
     // Naming the right number somewhere is not the promise: a second sentence still
@@ -789,13 +789,13 @@ test('the generated notes and the release collateral carry the canary attestatio
     expect(committed).toMatch(/`evidence\.sourceTree` is `sha256:[0-9a-f]{64}`/);
   }
   expect(committed).toContain('| Platform | Image | Compose file | Runtime identity | Capabilities | Store | Lifecycle recovery | Checks |');
-  const release = await readFile(join(root, 'docs/RELEASES/v0.6.7.md'), 'utf8');
+  const release = await readFile(join(root, 'docs/RELEASES/v0.6.8.md'), 'utf8');
   expect(release).toContain('## Container verification matrix');
   expect(release).toContain('| Check | Description | Status |');
   if (!inFlight) {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.7.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.8.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | ${check.detail} | Passed |`);
   } else {
-    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.7.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
+    for (const check of recorded) expect(release, `docs/RELEASES/v0.6.8.md must carry the ${check.id} row`).toContain(`| \`${check.id}\` | `);
   }
 });
 
