@@ -16,7 +16,20 @@ export default defineConfig({
   webServer: {
     command: 'node scripts/dev.mjs --host 127.0.0.1 --port 4174',
     url: 'http://127.0.0.1:4174',
-    reuseExistingServer: false,
+    // True, deliberately: an interrupted pre-push hook once left this server
+    // re-parented to pid 1 (its whole process tree was killed outright, so
+    // SIGTERM cleanup never ran), and the next run stopped at Playwright's own
+    // TCP port probe — `4174 is already used` — before the command could ever
+    // run, which is why no reclaim inside scripts/dev.mjs could help. With
+    // reuse enabled the probe and the contract agree: a stale instance answers
+    // HTTP by reading its fixtures from disk on every request, so reuse serves
+    // the current checkout; a listener that is not this script gets refused by
+    // the command below instead of being adopted silently. The one weaker guarantee
+    // reuse brings is that something unrelated on 4174 -- this suite's dedicated
+    // port, not a shared one -- would answer the probe as if it were the demo
+    // server; that is the trade, and tests/dev-server-lifecycle.spec.mjs is where
+    // the rest of the contract is priced.
+    reuseExistingServer: true,
     timeout: 10000
   }
 });

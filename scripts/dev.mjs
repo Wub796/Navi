@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createTcrApp } from '../tests/fixtures/tcr-app.mjs';
@@ -36,6 +37,78 @@ const routes = new Map([
 ]);
 /** Start the disposable checkout backend only when its review URL is opened. @type {ReturnType<typeof createTcrApp> | undefined} */
 let checkout;
+
+/**
+ * Run a command, resolving errors into the result rather than rejecting, so a missing
+ * binary or a nonzero exit is data for the caller instead of an unhandled rejection.
+ * @param {string} file @param {string[]} args @param {number} timeoutMs
+ * @returns {Promise<{ok: boolean, out: string}>}
+ */
+function execText(file, args, timeoutMs) {
+  return new Promise(resolve => {
+    execFile(file, args, { timeout: timeoutMs }, (error, stdout) => {
+      resolve({ ok: error === null, out: error ? String(stdout ?? '') + String(/** @type {any} */ (error).message ?? '') : String(stdout ?? '') });
+    });
+  });
+}
+
+/**
+ * The pids listening on the port — `lsof` where installed, `ss -ltnp` where only the
+ * iproute2 pair is. Empty when neither binary answers or nothing listens; the caller
+ * treats that unknown the same as an unblocked port.
+ * @param {number} port @returns {Promise<string[]>}
+ */
+async function listenerPids(port) {
+  const lsof = await execText('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], 5_000);
+  if (lsof.ok && lsof.out.trim()) return lsof.out.trim().split(/\s+/);
+  const ss = await execText('ss', ['-ltnp'], 5_000);
+  const pids = [];
+  for (const line of ss.ok ? ss.out.split('\n') : []) {
+    if (!line.includes(`:${port} `)) continue;
+    for (const group of line.match(/pid=(\d+)/g) ?? []) pids.push(group.slice(4));
+  }
+  return pids;
+}
+
+/**
+ * Which instances of this script the listeners are. A dev server left over from a run
+ * whose whole process tree was killed outright — an interrupted pre-push hook whose
+ * webServer is re-parented to pid 1 — reappears on the next run as an EADDRINUSE the
+ * runner cannot see into. The first process to answer a probe, however, could be any
+ * application, so this matches on the command line and only ever reclaims a process
+ * running this exact file.
+ * @param {string[]} pids @returns {Promise<string[]>}
+ */
+async function ownStalePids(pids) {
+  const self = fileURLToPath(import.meta.url).split('/').slice(-2).join('/');
+  const own = [];
+  for (const pid of pids) {
+    const ps = await execText('ps', ['-p', pid, '-o', 'command='], 5_000);
+    if (ps.ok && ps.out.replace(/\.mjs$/, '').includes(self)) own.push(pid);
+  }
+  return own;
+}
+
+/**
+ * Effect of a reclaim attempt on the port: 'reclaimed' and 'unblocked' authorize a
+ * rebind, 'unclaimed' means the holder is not this script or would not die.
+ * @returns {Promise<'reclaimed' | 'unclaimed' | 'unblocked'>}
+ */
+async function reclaimStaleListener() {
+  const pids = await listenerPids(port);
+  if (pids.length === 0) return 'unblocked';
+  const own = await ownStalePids(pids);
+  if (own.length === 0) return 'unclaimed';
+  for (const pid of own) process.kill(Number(pid), 'SIGTERM');
+  // Killing is not freeing: the SIGTERM handler closes sockets first, so the port
+  // polls until it is actually free before the listener rebinds.
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if ((await listenerPids(port)).length === 0) return 'reclaimed';
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  return 'unclaimed';
+}
+
 const server = createServer(async (req, res) => {
   const pathname = new URL(req.url || '/', 'http://localhost').pathname;
   if (pathname === '/tcr-checkout.html') {
@@ -60,8 +133,44 @@ const server = createServer(async (req, res) => {
     res.writeHead(500); res.end('Build assets first with npm run build');
   }
 });
+
 server.listen(port, host, () => console.log(`Navi demo: http://${host}:${port} (PID ${process.pid})`));
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => {
+
+ /**
+  * After the EADDRINUSE probe, a rebinding attempt fired exactly once through the
+  * same listen invocation — so the success surfaces as the ordinary announce
+  * callback. There is no chain of retries. The reclaim has one shot, because
+  * looping on 'reclaimed' stops being a signal, and any new 'error' is over.
+  */
+server.on('error', async error => {
+  if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'EADDRINUSE') {
+    console.error(error);
+    process.exit(1);
+  }
+  const outcome = await reclaimStaleListener();
+  if (outcome !== 'reclaimed' && outcome !== 'unblocked') {
+    console.error(`Port ${port} on ${host} is held by a process that is not this dev server, so it was not reclaimed. Free the port or pass a different --port.`);
+    process.exit(1);
+  }
+  server.listen(port, host);
+});
+
+/**
+ * Stop the socket and the disposable checkout fixture, then exit for real. Without
+ * the explicit exit, a keep-alive connection or the checkout child keeps the event
+ * loop alive, and the process outlives the run that started it — exactly the way
+ * interrupted pre-push hooks left PPID-1 orphans on this port in v0.6.8.
+ */
+let closing = false;
+async function shutdown() {
+  if (closing) return;
+  closing = true;
   server.close();
   if (checkout) await (await checkout).close();
-});
+  // A drained socket closes the listener, but a client's keep-alive request can
+  // hold one open for up to Node's default timeout, so the cleanup above gets a
+  // one-second deadline after which the process leaves regardless.
+  setTimeout(process.exit, 1_000).unref();
+  process.exit(0);
+}
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, shutdown);
