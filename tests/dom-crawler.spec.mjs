@@ -438,6 +438,10 @@ test('Worker renders the one-time onboarding page and refuses a second visit', a
     expect(body).toContain('data-key=&quot;navi_live_page&quot;');
     expect(body).toContain('https://worker.example/v1/loader.js');
     expect(body).toContain('Authorization: Bearer navi_live_page');
+    expect(body).toContain('type="radio" name="onboard-tab"');
+    expect(body).toContain('1 · Embed Browser Loader');
+    expect(body).toContain('2 · Call Hosted Edge API');
+    expect(body).toContain('3 · CLI &amp; MCP Env');
     expect(body).toMatch(/shown once/i);
     expect(body).toContain('noindex');
 
@@ -504,12 +508,24 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(body).toContain('50,000 events / 30 days');
   expect(body).toContain('250,000 events / 30 days');
   // The promo and explanation sections give a visitor the protocol numbers, the
-  // before/after DOM comparison, the 4-step self-serve billing flow, and the FAQ.
+  // before/after DOM comparison, the animated SVG data-flow pipeline, the pure-CSS
+  // 3-tab integration guide, the 3-step self-serve billing flow, and the FAQ.
   for (const item of [
+    '5.9 kB gzip',
     '14,929 B',
     '689 B',
+    '254 tests',
+    'Sigstore OIDC',
     'Without Navi · Raw DOM scraping',
     'With Navi · Deterministic protocol',
+    '<svg class="pipeline-svg"',
+    'type="radio" name="integration-tab"',
+    '1 · Browser Script Loader',
+    '2 · Edge API (POST /v1/sitemap/update)',
+    '3 · MCP Server &amp; Docker Host',
+    'Step 1 · Stripe Checkout',
+    'Step 2 · /v1/billing/webhook',
+    'Step 3 · /v1/billing/success',
     'How self-serve provisioning works',
     'Most popular · AGPL exempt',
     'Operational FAQ',

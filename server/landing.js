@@ -7,9 +7,10 @@
 // carries no credential, no analytics and no runtime, which is what lets its CSP stay
 // at `default-src 'none'` with only the inline stylesheet allowed.
 //
-// It lives under `server/` beside the billing pages for the same reason they do: the
-// directory is published in the package, so the Worker and a self-hosted install can
-// serve the same document, and the escaping is written once.
+// All visual interactivity — the 3-tab integration guide (`<input type="radio">` +
+// `:checked` sibling selectors), the animated SVG data-flow pipeline (`@keyframes`),
+// and focus/hover states — is pure CSS and inline SVG so zero client-side JavaScript
+// executes under `default-src 'none'`.
 
 import { escapeHtml } from './billing-success.js';
 import { TIERS } from './pricing.js';
@@ -36,9 +37,7 @@ export const LANDING_PAGE_HEADERS = {
  * embedded credentials. A misconfigured environment (`http:`, `javascript:`, a
  * relative path) is treated as unset, so the page downgrades to the self-hosted
  * quickstart instead of publishing a link that cannot work or one that is a
- * redirect to somewhere else. The parsed `href` is what gets rendered: the URL
- * parser normalizes quotes and angle brackets that would otherwise need escaping
- * in the attribute.
+ * redirect to somewhere else.
  * @param {unknown} value
  * @returns {string | null}
  */
@@ -176,9 +175,7 @@ const STYLE = `
       background: var(--accent-soft);
       border-color: transparent;
     }
-    .hero {
-      padding: .75rem 0 2rem;
-    }
+    .hero { padding: .75rem 0 1.75rem; }
     h1 {
       font-size: clamp(2rem, 4vw, 2.85rem);
       line-height: 1.12;
@@ -238,7 +235,7 @@ const STYLE = `
       display: grid;
       gap: .85rem;
       grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
-      margin: 0 0 2rem;
+      margin: 0 0 1.75rem;
     }
     .stat {
       background: var(--surface);
@@ -248,12 +245,12 @@ const STYLE = `
       margin: 0;
     }
     .stat-value {
-      font: 750 1.35rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font: 750 1.25rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       color: var(--text);
-      margin: 0 0 .2rem;
+      margin: 0 0 .25rem;
     }
     .stat-label {
-      font-size: .82rem;
+      font-size: .8rem;
       color: var(--muted);
       margin: 0;
     }
@@ -264,17 +261,8 @@ const STYLE = `
       border-radius: 12px;
       padding: 1.25rem 1.35rem;
       margin: 0 0 1.35rem;
-      /* The endpoint table keeps its paths whole, so on a narrow viewport the card
-         scrolls instead of breaking the path across two lines. */
       overflow-x: auto;
     }
-    .grid {
-      display: grid;
-      gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-      margin: 0 0 1.35rem;
-    }
-    .grid section { margin: 0; }
     .compare {
       display: grid;
       gap: 1rem;
@@ -295,6 +283,51 @@ const STYLE = `
     }
     .pill.bad { color: var(--bad); background: var(--bad-soft); }
     .pill.good { color: var(--good); background: var(--good-soft); }
+    @keyframes flowDash {
+      to { stroke-dashoffset: -28; }
+    }
+    @keyframes pulseDot {
+      0%, 100% { opacity: .45; }
+      50% { opacity: 1; }
+    }
+    .pipeline-svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: .5rem 0 .85rem;
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: .5rem;
+    }
+    .flow-line {
+      stroke: var(--accent);
+      stroke-width: 2.25;
+      stroke-dasharray: 8 6;
+      animation: flowDash 1.35s linear infinite;
+    }
+    .flow-node {
+      fill: var(--surface);
+      stroke: var(--border-strong);
+      stroke-width: 1.5;
+    }
+    .flow-node-accent {
+      fill: var(--accent-soft);
+      stroke: var(--accent);
+      stroke-width: 1.75;
+    }
+    .flow-title {
+      fill: var(--text);
+      font: 700 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .flow-sub {
+      fill: var(--muted);
+      font: 500 10.5px ui-sans-serif, system-ui, sans-serif;
+    }
+    .flow-dot {
+      fill: var(--good);
+      animation: pulseDot 1.8s ease-in-out infinite;
+    }
     .pillars {
       display: grid;
       gap: 1rem;
@@ -304,28 +337,78 @@ const STYLE = `
     .pillars section { margin: 0; }
     .pillars h3 { margin: 0 0 .35rem; font-size: 1rem; }
     .pillars p { margin: 0; font-size: .9rem; color: var(--text-secondary); }
-    .steps {
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .45rem;
+    }
+    .tab-radio {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .tab-label {
+      cursor: pointer;
+      user-select: none;
+      font: 650 .82rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding: .58rem .95rem;
+      border-radius: 8px;
+      background: var(--surface-alt);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      transition: border-color .15s, color .15s, background .15s;
+    }
+    .tab-label:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .tab-panel {
+      display: none;
+      width: 100%;
+      order: 99;
+      padding-top: .75rem;
+    }
+    #tab-loader:checked ~ label[for="tab-loader"],
+    #tab-edge:checked ~ label[for="tab-edge"],
+    #tab-mcp:checked ~ label[for="tab-mcp"] {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    #tab-loader:focus-visible ~ label[for="tab-loader"],
+    #tab-edge:focus-visible ~ label[for="tab-edge"],
+    #tab-mcp:focus-visible ~ label[for="tab-mcp"] {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    #tab-loader:checked ~ #panel-loader,
+    #tab-edge:checked ~ #panel-edge,
+    #tab-mcp:checked ~ #panel-mcp {
+      display: block;
+    }
+    .steps-3 {
       display: grid;
-      gap: .9rem;
-      grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(16.5rem, 1fr));
       margin: .75rem 0 0;
     }
     .step {
       background: var(--surface-alt);
+      border: 1px solid var(--border);
       border-radius: 10px;
-      padding: .9rem 1rem;
+      padding: 1rem 1.1rem;
     }
     .step-num {
       display: inline-block;
-      font: 700 .75rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font: 700 .74rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       color: var(--accent);
       background: var(--accent-soft);
-      padding: .25rem .5rem;
+      padding: .28rem .55rem;
       border-radius: 999px;
-      margin-bottom: .45rem;
+      margin-bottom: .5rem;
     }
-    .step h3 { margin: 0 0 .3rem; font-size: .95rem; }
-    .step p { margin: 0; font-size: .85rem; color: var(--text-secondary); }
+    .step h3 { margin: 0 0 .35rem; font-size: .98rem; }
+    .step p { margin: 0; font-size: .86rem; color: var(--text-secondary); }
     .tiers {
       display: grid;
       gap: 1rem;
@@ -354,12 +437,11 @@ const STYLE = `
     .tier .summary { font-size: .88rem; color: var(--text-secondary); margin: 0 0 .8rem; }
     .tier-features {
       list-style: none;
-      padding: 0;
+      padding: .75rem 0 0;
       margin: 0 0 1.15rem;
       font-size: .83rem;
       color: var(--text-secondary);
       border-top: 1px solid var(--border);
-      padding-top: .75rem;
     }
     .tier-features li {
       margin: 0 0 .4rem;
@@ -453,10 +535,6 @@ const priceLabel = cents => `$${cents / 100}`;
 
 /**
  * One card of the pricing grid.
- *
- * A paid tier renders its CTA only when that tier's Payment Link is configured;
- * `httpsLink` has already vetted the href, and `escapeHtml` runs over the parsed
- * value so an operator's link cannot become markup.
  * @param {import('./pricing.js').Tier} tier @param {string | null} link
  * @returns {string}
  */
@@ -487,11 +565,7 @@ ${features}
 }
 
 /**
- * The landing document.
- *
- * Every interpolated value is escaped: the loader URL and the sitemap URL are
- * derived from the request origin, and the Payment Link comes from configuration,
- * so none of them is allowed to close an attribute or open an element.
+ * Render the public landing document.
  * @param {{loaderUrl?: string, sitemapUrl?: string, paymentLinkUrl?: unknown,
  *   paymentLinks?: {starter?: unknown, pro?: unknown, enterprise?: unknown}}} [input]
  * @returns {string}
@@ -499,19 +573,22 @@ ${features}
 export function renderLandingPage(input = {}) {
   const loader = escapeHtml(input.loaderUrl ?? '/v1/loader.js');
   const sitemap = escapeHtml(input.sitemapUrl ?? '/v1/sitemap/update');
-  // `paymentLinkUrl` is the pre-tier name for the Pro link, and still works: a
-  // deployment that only ever set it keeps exactly the call to action it had.
   const links = /** @type {Record<string, string | null>} */ ({
     starter: httpsLink(input.paymentLinks?.starter),
     pro: httpsLink(input.paymentLinks?.pro ?? input.paymentLinkUrl),
     enterprise: httpsLink(input.paymentLinks?.enterprise),
   });
   const purchasing = Boolean(links.starter || links.pro || links.enterprise);
-  const embed = `<script src="${loader}"\n        data-key="navi_live_YOUR_KEY"><\/script>`;
+  const embed = `<script src="${loader}"\n        data-key="navi_live_YOUR_KEY"><\/script>\n<script defer src="/app.js"><\/script>`;
   const publish = `curl -X POST ${sitemap} \\
   -H "Authorization: Bearer $NAVI_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"url":"https://app.example.com","actions":[{"role":"button","name":"Checkout"}]}'`;
+  const mcpSnippet = `# Install the zero-dependency kit & launch stdio or SSE MCP
+npm i navi-interaction-bridge
+npx navi-mcp
+# Or run the hardened self-hosted container with SQLite WAL:
+docker compose -f deploy/docker-compose.prod.yml up -d`;
 
   const rawDomExample = `<div class="sc-92x-btn" onclick="run()">
   <span class="icon-wrap"><svg>...</svg></span>
@@ -533,9 +610,6 @@ export function renderLandingPage(input = {}) {
   }]
 }`;
 
-  // Every tier is always shown, so a visitor can compare plans even on a
-  // deployment that configured only one link. The CTA is the only thing that
-  // depends on configuration.
   const pricing = `  <section id="pricing">
     <h2>Commercial plans</h2>
     <p class="section-title">Predictable 30-day quotas. Zero-integration checkout.</p>
@@ -585,7 +659,7 @@ navi-mcp --transport sse</code></pre>
     <div class="badge-row">
       <span class="badge accent">navi-edge · protocol 0.3.0</span>
       <span class="badge">MCP 2025-11-25</span>
-      <span class="badge">Zero runtime dependencies</span>
+      <span class="badge">Sigstore OIDC provenance</span>
     </div>
     <h1>Deterministic action maps for browser agents</h1>
     <p class="lede">
@@ -595,26 +669,26 @@ navi-mcp --transport sse</code></pre>
     </p>
     <div class="hero-actions">
       <a class="cta" href="#pricing">View Plans &amp; Get API Key &rarr;</a>
-      <a class="btn-secondary" href="#quickstart">Read 60-Second Quickstart</a>
+      <a class="btn-secondary" href="#quickstart">Interactive Integration Guide</a>
       <a class="btn-secondary" href="https://github.com/Wub796/Navi">Source &amp; Benchmarks</a>
     </div>
 
     <div class="stats" role="region" aria-label="Verified protocol specifications">
       <div class="stat">
-        <p class="stat-value">14,929 B</p>
-        <p class="stat-label">Shipped SDK bundle (&lt;15 KB budget, SHA-384 SRI)</p>
+        <p class="stat-value">5.9 kB gzip</p>
+        <p class="stat-label">SDK bundle (14,929 B raw, SHA-384 SRI)</p>
       </div>
       <div class="stat">
         <p class="stat-value">689 B</p>
         <p class="stat-label">Tenant embed loader (&lt;700 B budget, auto-discovery)</p>
       </div>
       <div class="stat">
-        <p class="stat-value">&le; 2 ms</p>
-        <p class="stat-label">Idle-sliced TreeWalker budget (0 long tasks &gt;50 ms)</p>
+        <p class="stat-value">254 tests</p>
+        <p class="stat-label">Automated Chromium, Postgres &amp; MCP verification suite</p>
       </div>
       <div class="stat">
-        <p class="stat-value">10 / 10</p>
-        <p class="stat-label">Verified checkout task completion with settlement receipts</p>
+        <p class="stat-value">Sigstore OIDC</p>
+        <p class="stat-label">Cryptographic provenance &amp; 10 / 10 verified TCR</p>
       </div>
     </div>
   </div>
@@ -634,67 +708,98 @@ navi-mcp --transport sse</code></pre>
     </section>
   </div>
 
-  <div id="architecture" class="pillars">
-    <section>
-      <h2>01 · In-page runtime</h2>
-      <h3>Closed Shadow DOM &amp; CSP-safe</h3>
-      <p>Hooks <code>attachShadow</code> before app scripts run, pins DOM prototypes against page tampering, and uses zero <code>eval</code> or inline styles so strict enterprise CSPs pass untouched.</p>
-    </section>
-    <section>
-      <h2>02 · Guarded MCP server</h2>
-      <h3>5 tools · SSRF &amp; DNS-rebinding guard</h3>
-      <p>Ships <code>navi-mcp</code> over stdio and authenticated SSE. Refuses loopback, RFC 1918, link-local, cloud metadata IPs, and DNS rebinding before a browser navigation ever starts.</p>
-    </section>
-    <section>
-      <h2>03 · Atomic edge ingestion</h2>
-      <h3>Single-RPC quota &amp; map transactions</h3>
-      <p>Every sitemap write and Stripe webhook executes inside one transactional database RPC — row-locked quota metering, origin allow-lists, and 24h replay deduplication never drift apart.</p>
-    </section>
-  </div>
+  <section id="architecture">
+    <h2>End-to-end data-flow pipeline</h2>
+    <p class="section-title">From live Browser DOM to MCP Agent in one atomic pipeline</p>
+    <p class="section-sub">Rendered with inline SVG and pure CSS <code>@keyframes</code> under <code>default-src 'none'</code> — zero client-side JavaScript.</p>
+    <svg class="pipeline-svg" viewBox="0 0 880 128" role="img" aria-label="Data flow from Browser DOM to Cloudflare Edge, Supabase Atomic RPC, and MCP Agent">
+      <line class="flow-line" x1="195" y1="64" x2="245" y2="64" />
+      <line class="flow-line" x1="425" y1="64" x2="475" y2="64" />
+      <line class="flow-line" x1="655" y1="64" x2="705" y2="64" />
+      <rect class="flow-node" x="15" y="22" width="180" height="84" rx="10" />
+      <circle class="flow-dot" cx="34" cy="44" r="4.5" />
+      <text class="flow-title" x="46" y="48">1. Browser DOM</text>
+      <text class="flow-sub" x="30" y="68">TreeWalker &le; 2 ms slice</text>
+      <text class="flow-sub" x="30" y="86">Closed Shadow + iframes</text>
+      <rect class="flow-node-accent" x="245" y="22" width="180" height="84" rx="10" />
+      <text class="flow-title" x="262" y="48">2. Cloudflare Edge</text>
+      <text class="flow-sub" x="262" y="68">navi-edge Worker</text>
+      <text class="flow-sub" x="262" y="86">Bearer + Origin verify</text>
+      <rect class="flow-node-accent" x="475" y="22" width="180" height="84" rx="10" />
+      <text class="flow-title" x="492" y="48">3. Supabase RPC</text>
+      <text class="flow-sub" x="492" y="68">consume_site_quota()</text>
+      <text class="flow-sub" x="492" y="86">Single-tx lock + store</text>
+      <rect class="flow-node" x="705" y="22" width="160" height="84" rx="10" />
+      <circle class="flow-dot" cx="724" cy="44" r="4.5" />
+      <text class="flow-title" x="736" y="48">4. MCP Agent</text>
+      <text class="flow-sub" x="720" y="68">navi-mcp stdio / SSE</text>
+      <text class="flow-sub" x="720" y="86">Guarded native action</text>
+    </svg>
+    <div class="pillars">
+      <section>
+        <h2>01 · In-page runtime</h2>
+        <h3>Closed Shadow DOM &amp; CSP-safe</h3>
+        <p>Hooks <code>attachShadow</code> before app scripts run, pins DOM prototypes against page tampering, and uses zero <code>eval</code> or inline styles.</p>
+      </section>
+      <section>
+        <h2>02 · Guarded MCP server</h2>
+        <h3>5 tools · SSRF &amp; DNS-rebinding guard</h3>
+        <p>Ships <code>navi-mcp</code> over stdio and authenticated SSE. Refuses loopback, RFC 1918, link-local, cloud metadata IPs, and DNS rebinding.</p>
+      </section>
+      <section>
+        <h2>03 · Atomic edge ingestion</h2>
+        <h3>Single-RPC quota &amp; map transactions</h3>
+        <p>Every sitemap write and Stripe webhook executes inside one transactional database RPC — row-locked quota metering and origin allow-lists never drift.</p>
+      </section>
+    </div>
+  </section>
 
-  <div id="quickstart" class="grid">
-    <section>
-      <h2>1 · Install the kit</h2>
-      <pre><code>npm i navi-interaction-bridge</code></pre>
-      <p class="muted">Node 22+, zero runtime dependencies. Ships the browser SDK, Playwright adapter, flow CLI (<code>navi</code>), and MCP server (<code>navi-mcp</code>).</p>
-    </section>
-    <section>
-      <h2>2 · Embed the loader</h2>
-      <pre><code>${escapeHtml(embed)}</code></pre>
-      <p class="muted">Injects <code>&lt;meta name="agent-bridge"&gt;</code> for automatic agent discovery and queues <code>window.Navi</code> calls until the SRI-verified bundle executes.</p>
-    </section>
-  </div>
+  <section id="quickstart">
+    <h2>Interactive 3-tab integration guide</h2>
+    <p class="section-title">Drop-in browser loader, edge ingestion API, or local MCP host</p>
+    <p class="section-sub">Switch tabs below (pure CSS radio state — works with scripts disabled).</p>
+    <div class="tabs">
+      <input class="tab-radio" type="radio" name="integration-tab" id="tab-loader" checked>
+      <label class="tab-label" for="tab-loader">1 · Browser Script Loader</label>
+      <input class="tab-radio" type="radio" name="integration-tab" id="tab-edge">
+      <label class="tab-label" for="tab-edge">2 · Edge API (POST /v1/sitemap/update)</label>
+      <input class="tab-radio" type="radio" name="integration-tab" id="tab-mcp">
+      <label class="tab-label" for="tab-mcp">3 · MCP Server &amp; Docker Host</label>
 
-  <section>
-    <h2>3 · Publish a sitemap to the edge</h2>
-    <p>Point the crawler at a rendered page and POST the resulting map to the hosted endpoint. Writes are one transaction: the
-      origin decision, the quota charge and the map land together, or none of them do.</p>
-    <pre><code>${escapeHtml(publish)}</code></pre>
+      <div class="tab-panel" id="panel-loader">
+        <pre><code>${escapeHtml(embed)}</code></pre>
+        <p class="muted">Load before application scripts to capture closed Shadow roots. Injects <code>&lt;meta name="agent-bridge"&gt;</code> for automatic agent discovery and queues <code>window.Navi</code> calls until the 14,929 B bundle executes.</p>
+      </div>
+      <div class="tab-panel" id="panel-edge">
+        <pre><code>${escapeHtml(publish)}</code></pre>
+        <p class="muted">Point your crawler at a rendered page and POST the semantic map to the edge. Origin validation, 30-day quota metering, and map persistence commit in one atomic PostgreSQL transaction.</p>
+      </div>
+      <div class="tab-panel" id="panel-mcp">
+        <pre><code>${escapeHtml(mcpSnippet)}</code></pre>
+        <p class="muted">Node 22+, zero runtime dependencies. Exposes <code>navi_navigate</code>, <code>navi_get_actions</code>, <code>navi_execute_action</code>, <code>navi_assert_state</code>, and <code>navi_set_session</code>.</p>
+      </div>
+    </div>
   </section>
 
   <section>
     <h2>How self-serve provisioning works</h2>
+    <p class="section-title">3-step instant Stripe Checkout to one-time API key claim</p>
     <p class="section-sub">Built for standard Stripe Payment Links with zero custom webhook code required on your end.</p>
-    <div class="steps">
+    <div class="steps-3">
       <div class="step">
-        <span class="step-num">Step 1</span>
-        <h3>Checkout via Stripe</h3>
-        <p>Pick a plan below. Stripe processes payment and signs a <code>checkout.session.completed</code> webhook to <code>/v1/billing/webhook</code>.</p>
+        <span class="step-num">Step 1 · Stripe Checkout</span>
+        <h3>Select a commercial plan</h3>
+        <p>Complete checkout on a hosted Stripe Payment Link. Stripe signs a <code>checkout.session.completed</code> event and delivers it to <code>/v1/billing/webhook</code>.</p>
       </div>
       <div class="step">
-        <span class="step-num">Step 2</span>
-        <h3>Auto-derived tier &amp; tenant</h3>
-        <p>The edge verifies the HMAC-SHA256 signature, derives <code>tenant_cus_…</code>, infers your 30-day quota from the billed amount, and mints a 256-bit key.</p>
+        <span class="step-num">Step 2 · /v1/billing/webhook</span>
+        <h3>Atomic tenant &amp; quota minting</h3>
+        <p>The edge verifies the HMAC-SHA256 signature within a 300s replay window, derives <code>tenant_cus_…</code>, infers your 30-day quota from billed cents, and mints a 256-bit key in one RPC.</p>
       </div>
       <div class="step">
-        <span class="step-num">Step 3</span>
-        <h3>One-time key claim</h3>
-        <p>Your redirect to <code>/v1/billing/success?session_id=cs_…</code> atomically deletes the 15-minute claim row and renders your <code>navi_live_…</code> key once.</p>
-      </div>
-      <div class="step">
-        <span class="step-num">Step 4</span>
-        <h3>Upgrades &amp; revocation</h3>
-        <p>Subscription upgrades raise your ceiling in place without rotating your embedded key; cancellations set the ceiling to <code>0</code> (HTTP 429).</p>
+        <span class="step-num">Step 3 · /v1/billing/success</span>
+        <h3>One-time browser key claim</h3>
+        <p>Stripe redirects your browser to <code>/v1/billing/success?session_id=cs_…</code>, which atomically deletes the 15-minute claim row and reveals your <code>navi_live_…</code> credential once.</p>
       </div>
     </div>
   </section>

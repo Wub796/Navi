@@ -14,7 +14,8 @@
 // The page carries no script. That is not an aesthetic choice: the key is the
 // secret, and a page that cannot execute code cannot be made to exfiltrate it. The
 // CSP below is the enforcement, and `style-src 'unsafe-inline'` is the only
-// exception, for the embedded stylesheet.
+// exception, for the embedded stylesheet. Interactive integration tabs use pure CSS
+// `<input type="radio">` state so zero JavaScript executes.
 
 /**
  * Headers every response from the onboarding route carries.
@@ -56,36 +57,62 @@ export function escapeHtml(value) {
 }
 
 const STYLE = `
-    :root { color-scheme: light dark; }
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --surface-alt: #f2f4f7;
+      --border: #e3e6eb;
+      --text: #16181d;
+      --text-secondary: #4b515c;
+      --muted: #6b7280;
+      --accent: #2f6fed;
+      --accent-soft: #eaf1ff;
+      --good: #0f766e;
+      --good-soft: #e6f7f4;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 3rem 1.25rem 4rem;
+      padding: 2.5rem 1.25rem 4rem;
       font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: #f6f7f9;
-      color: #16181d;
+      background: var(--bg);
+      color: var(--text);
     }
-    main { max-width: 44rem; margin: 0 auto; }
-    h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .4rem; letter-spacing: -.01em; }
+    main { max-width: 48rem; margin: 0 auto; }
+    .status-banner {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      font: 650 .76rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      color: var(--good);
+      background: var(--good-soft);
+      padding: .38rem .7rem;
+      border-radius: 999px;
+      margin-bottom: .85rem;
+    }
+    h1 { font-size: 1.75rem; line-height: 1.2; margin: 0 0 .45rem; letter-spacing: -.02em; }
     p { margin: 0 0 1rem; }
-    .lede { color: #4b515c; margin-bottom: 1.75rem; }
+    .lede { color: var(--text-secondary); margin-bottom: 1.5rem; }
     .warn {
       border: 1px solid #f0c36d;
       background: #fff8e6;
       border-radius: 10px;
-      padding: .9rem 1.1rem;
-      margin: 0 0 1.75rem;
+      padding: .95rem 1.15rem;
+      margin: 0 0 1.5rem;
       font-weight: 600;
       color: #6b4a06;
     }
     section {
-      background: #fff;
-      border: 1px solid #e3e6eb;
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 1.1rem 1.25rem;
+      padding: 1.15rem 1.3rem;
       margin: 0 0 1.25rem;
     }
-    h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: #6b7280; margin: 0 0 .6rem; }
+    h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .65rem; }
     code, pre {
       font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       overflow-wrap: anywhere;
@@ -93,25 +120,105 @@ const STYLE = `
     pre {
       margin: 0;
       padding: .9rem 1rem;
-      background: #f2f4f7;
+      background: var(--surface-alt);
       border-radius: 8px;
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .key { font-size: 1rem; padding: .55rem .7rem; background: #f2f4f7; border-radius: 6px; display: inline-block; }
-    dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: .45rem 1.1rem; }
-    dt { color: #6b7280; }
+    .key {
+      font-size: 1rem;
+      padding: .55rem .75rem;
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: inline-block;
+      user-select: all;
+    }
+    dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.15rem; align-items: center; }
+    dt { color: var(--muted); font-size: .9rem; }
     dd { margin: 0; overflow-wrap: anywhere; }
-    footer { color: #6b7280; font-size: .875rem; margin-top: 2rem; }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .45rem;
+    }
+    .tab-radio {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .tab-label {
+      cursor: pointer;
+      user-select: none;
+      font: 650 .8rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      padding: .52rem .88rem;
+      border-radius: 8px;
+      background: var(--surface-alt);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .tab-label:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .tab-panel {
+      display: none;
+      width: 100%;
+      order: 99;
+      padding-top: .75rem;
+    }
+    #onboard-loader:checked ~ label[for="onboard-loader"],
+    #onboard-edge:checked ~ label[for="onboard-edge"],
+    #onboard-mcp:checked ~ label[for="onboard-mcp"] {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    #onboard-loader:focus-visible ~ label[for="onboard-loader"],
+    #onboard-edge:focus-visible ~ label[for="onboard-edge"],
+    #onboard-mcp:focus-visible ~ label[for="onboard-mcp"] {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    #onboard-loader:checked ~ #panel-onboard-loader,
+    #onboard-edge:checked ~ #panel-onboard-edge,
+    #onboard-mcp:checked ~ #panel-onboard-mcp {
+      display: block;
+    }
+    .muted { color: var(--muted); font-size: .88rem; margin: .65rem 0 0; }
+    footer { color: var(--muted); font-size: .875rem; margin-top: 2rem; }
+    a { color: var(--accent); }
     @media (prefers-color-scheme: dark) {
-      body { background: #0f1115; color: #e6e8ec; }
-      .lede, footer { color: #9aa2af; }
+      :root {
+        --bg: #0f1115;
+        --surface: #161920;
+        --surface-alt: #0b0d11;
+        --border: #262b34;
+        --text: #e6e8ec;
+        --text-secondary: #9aa2af;
+        --muted: #9aa2af;
+        --accent: #4c86ff;
+        --accent-soft: #192847;
+        --good: #2dd4bf;
+        --good-soft: #112e2b;
+      }
       .warn { background: #2b2107; border-color: #6b4f0d; color: #f2d08a; }
-      section { background: #161920; border-color: #262b34; }
-      pre, .key { background: #0b0d11; }
-      h2, dt { color: #9aa2af; }
     }
 `;
+
+/**
+ * Derive the sitemap ingestion endpoint URL from the loader URL when possible.
+ * @param {string} loaderUrl
+ * @returns {string}
+ */
+function deriveSitemapUrl(loaderUrl) {
+  try {
+    const parsed = new URL(loaderUrl);
+    return `${parsed.origin}/v1/sitemap/update`;
+  } catch {
+    return '/v1/sitemap/update';
+  }
+}
 
 /**
  * The onboarding page for a claim that was consumed by this request.
@@ -122,10 +229,17 @@ export function renderBillingSuccessPage({ tenant_id, api_key, loader_url }) {
   const tenant = escapeHtml(tenant_id);
   const key = escapeHtml(api_key);
   const loader = escapeHtml(loader_url);
+  const sitemapUrl = escapeHtml(deriveSitemapUrl(loader_url));
   // Built as a real tag, then escaped for display, so what a customer copies is
   // exactly what the browser would have parsed.
   const embed = `<script src="${loader}"\n        data-key="${key}"><\/script>`;
   const header = `Authorization: Bearer ${api_key}`;
+  const curlCommand = `curl -X POST ${deriveSitemapUrl(loader_url)} \\
+  -H "${header}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"url":"https://app.example.com","actions":[{"role":"button","name":"Submit"}]}'`;
+  const mcpCommand = `export NAVI_API_KEY="${api_key}"
+npx navi-interaction-bridge discover --url https://app.example.com`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -138,6 +252,7 @@ export function renderBillingSuccessPage({ tenant_id, api_key, loader_url }) {
 </head>
 <body>
 <main>
+  <div class="status-banner">Claim consumed · Active tenant provisioned</div>
   <h1>Your Navi key is ready</h1>
   <p class="lede">Tenant <strong>${tenant}</strong> is provisioned. This page shows the key once.</p>
 
@@ -154,13 +269,28 @@ export function renderBillingSuccessPage({ tenant_id, api_key, loader_url }) {
   </section>
 
   <section>
-    <h2>Embed the loader</h2>
-    <pre>${escapeHtml(embed)}</pre>
-  </section>
+    <h2>Quickstart integration (pure-CSS tabs)</h2>
+    <div class="tabs">
+      <input class="tab-radio" type="radio" name="onboard-tab" id="onboard-loader" checked>
+      <label class="tab-label" for="onboard-loader">1 · Embed Browser Loader</label>
+      <input class="tab-radio" type="radio" name="onboard-tab" id="onboard-edge">
+      <label class="tab-label" for="onboard-edge">2 · Call Hosted Edge API</label>
+      <input class="tab-radio" type="radio" name="onboard-tab" id="onboard-mcp">
+      <label class="tab-label" for="onboard-mcp">3 · CLI &amp; MCP Env</label>
 
-  <section>
-    <h2>Call the hosted API</h2>
-    <pre>${escapeHtml(header)}</pre>
+      <div class="tab-panel" id="panel-onboard-loader">
+        <pre>${escapeHtml(embed)}</pre>
+        <p class="muted">Place before application scripts to capture closed Shadow roots and expose <code>window.Navi</code>.</p>
+      </div>
+      <div class="tab-panel" id="panel-onboard-edge">
+        <pre>${escapeHtml(curlCommand)}</pre>
+        <p class="muted">Posts a verified action map to <code>${sitemapUrl}</code> using your live Bearer credential.</p>
+      </div>
+      <div class="tab-panel" id="panel-onboard-mcp">
+        <pre>${escapeHtml(mcpCommand)}</pre>
+        <p class="muted">Store your key in a server-side secret manager or environment variable; never commit it to git.</p>
+      </div>
+    </div>
   </section>
 
   <footer>

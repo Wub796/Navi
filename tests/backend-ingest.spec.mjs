@@ -646,6 +646,10 @@ test('the host serves the one-time onboarding page and never repeats a claimed k
     expect(page).toContain('data-key=&quot;navi_live_page_key&quot;');
     expect(page).toContain(`src=&quot;${base}/v1/loader.js&quot;`);
     expect(page).toContain('Authorization: Bearer navi_live_page_key');
+    expect(page).toContain('type="radio" name="onboard-tab"');
+    expect(page).toContain('1 · Embed Browser Loader');
+    expect(page).toContain('2 · Call Hosted Edge API');
+    expect(page).toContain('3 · CLI &amp; MCP Env');
     expect(page).toMatch(/shown once/i);
     expect(page).toContain('noindex');
 
