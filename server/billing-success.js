@@ -28,7 +28,7 @@
 export const BILLING_PAGE_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
   'cache-control': 'no-store',
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   'referrer-policy': 'no-referrer',
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -352,6 +352,7 @@ npx navi-interaction-bridge discover --url https://app.example.com`;
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="One-time post-checkout API key claim and onboarding guide for your provisioned Navi Interaction Bridge tenant.">
 <meta name="referrer" content="no-referrer">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>Your Navi API Key — One-Time Tenant Credential</title>
 <style>${STYLE}</style>
 </head>
@@ -442,6 +443,7 @@ export function renderBillingClaimErrorPage(input = {}) {
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="This one-time Navi post-checkout credential claim link has expired or has already been redeemed.">
 <meta name="referrer" content="no-referrer">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>${escapeHtml(title)}</title>
 <style>${STYLE}</style>
 </head>

@@ -2,7 +2,7 @@ import { validateCrawlerPayload } from './crawler-payload.js';
 import type { CrawlerPayload } from './dom-crawler.js';
 import { BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage } from '../server/billing-success.js';
 import { LANDING_PAGE_HEADERS, renderLandingPage } from '../server/landing.js';
-import { ROBOTS_TXT, SITEMAP_XML } from '../server/public-routes.js';
+import { FAVICON_SVG, LOGO_SVG, ROBOTS_TXT, SITEMAP_XML } from '../server/public-routes.js';
 import { resolveQuota } from '../server/pricing.js';
 
 export interface Env {
@@ -79,6 +79,26 @@ const html = (status: number, body: string, extraHeaders: Record<string, string>
   status,
   headers: { ...BILLING_PAGE_HEADERS, ...extraHeaders },
 });
+
+/**
+ * A public brand asset: the two SVG surfaces differ only in their bytes, so the
+ * method guard, the type, the cache policy and the empty `HEAD` body live here once.
+ * @param {Request} request @param {string} body @returns {Response}
+ */
+function serveSvg(request: Request, body: string): Response {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return json(405, { error: 'Method not allowed' }, { allow: 'GET, HEAD' });
+  }
+  return new Response(request.method === 'HEAD' ? null : body, {
+    status: 200,
+    headers: {
+      'content-type': 'image/svg+xml; charset=utf-8',
+      'cache-control': 'public, max-age=86400',
+      'content-security-policy': "default-src 'none'",
+      'x-content-type-options': 'nosniff',
+    },
+  });
+}
 
 function extractOrigin(urlValue: string): string | null {
   try {
@@ -490,6 +510,8 @@ export default {
         headers: { 'content-type': 'application/xml; charset=utf-8', 'cache-control': 'public, max-age=3600' },
       });
     }
+    if (url.pathname === '/favicon.svg') return serveSvg(request, FAVICON_SVG);
+    if (url.pathname === '/logo.svg') return serveSvg(request, LOGO_SVG);
     // The root is public and anonymous by design; everything below it authenticates.
     if (url.pathname === '/') {
       if (request.method !== 'GET') return json(405, { error: 'Method not allowed' }, { allow: 'GET' });

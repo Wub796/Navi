@@ -19,8 +19,63 @@ import { tenantFor } from './tenants.js';
 /** Crawl policy for search engines: allow public root, disallow one-time billing claims. */
 export const ROBOTS_TXT = `User-agent: *\nAllow: /\nDisallow: /v1/billing/\nSitemap: https://navi-edge.sysctl.workers.dev/sitemap.xml\n`;
 
+/** Type and cache policy every inline-vector brand asset is served with. */
+const SVG_TYPE = 'image/svg+xml; charset=utf-8';
+const SVG_CACHE = 'public, max-age=86400';
+
+/**
+ * Answer a public, non-tenant asset: the method guard, the declared type, the cache
+ * policy and `nosniff`, with `HEAD` answered from the same headers and no body. Every
+ * static surface here — crawl policy, sitemap, brand assets — differs only in those
+ * four values, so one function keeps them from drifting apart.
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} body
+ * @param {{type: string, cache: string, csp?: string}} policy
+ */
+function sendStatic(req, res, body, policy) {
+  const head = req.method === 'HEAD';
+  /** @type {Record<string, string>} */
+  const headers = {
+    'Content-Type': policy.type,
+    'Cache-Control': policy.cache,
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Length': String(Buffer.byteLength(body)),
+  };
+  if (policy.csp) headers['Content-Security-Policy'] = policy.csp;
+  res.writeHead(200, headers);
+  res.end(head ? undefined : body);
+}
+
 /** XML sitemap listing the canonical edge root for search indexers. */
 export const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url>\n    <loc>https://navi-edge.sysctl.workers.dev/</loc>\n    <changefreq>weekly</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`;
+
+/** Standalone 64x64 vector favicon: three-plane isometric stack + sodium-yellow N monogram. */
+export const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="12" fill="#0b0b0b"/>
+  <rect x="6" y="6" width="52" height="52" rx="8" stroke="#f2f0ea" stroke-opacity="0.16"/>
+  <path d="M16 42L32 50L48 42L32 34L16 42Z" fill="#161614" stroke="#f2f0ea" stroke-opacity="0.34" stroke-width="1.5"/>
+  <path d="M16 32L32 40L48 32L32 24L16 32Z" fill="#ffd600" fill-opacity="0.12" stroke="#ffd600" stroke-opacity="0.55" stroke-width="1.5"/>
+  <path d="M16 22L32 30L48 22L32 14L16 22Z" fill="#ffd600" stroke="#ffd600" stroke-width="1.5"/>
+  <path d="M27 19.5V24.5L35 19.5V24.5" stroke="#101010" stroke-width="2.4" stroke-linecap="square" stroke-linejoin="miter"/>
+  <circle cx="48" cy="16" r="3" fill="#ffd600"/>
+</svg>\n`;
+
+/** Full horizontal brand logo SVG: three-plane isometric emblem + wordmark + protocol badge. */
+export const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 64" fill="none" role="img" aria-label="Navi Interaction Bridge logo">
+  <rect width="280" height="64" rx="8" fill="#0b0b0b"/>
+  <rect x="1" y="1" width="278" height="62" rx="7" stroke="#f2f0ea" stroke-opacity="0.16"/>
+  <g transform="translate(8, 0)">
+    <path d="M12 43L28 51L44 43L28 35L12 43Z" fill="#161614" stroke="#f2f0ea" stroke-opacity="0.34" stroke-width="1.5"/>
+    <path d="M12 32L28 40L44 32L28 24L12 32Z" fill="#ffd600" fill-opacity="0.12" stroke="#ffd600" stroke-opacity="0.55" stroke-width="1.5"/>
+    <path d="M12 21L28 29L44 21L28 13L12 21Z" fill="#ffd600" stroke="#ffd600" stroke-width="1.5"/>
+    <path d="M23.5 18.5V23.5L31.5 18.5V23.5" stroke="#101010" stroke-width="2.2" stroke-linecap="square"/>
+    <circle cx="44" cy="15" r="2.75" fill="#ffd600"/>
+  </g>
+  <text x="68" y="38" fill="#f2f0ea" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="28" font-weight="700" letter-spacing="-1.2">navi</text>
+  <rect x="136" y="21" width="124" height="22" rx="2" fill="#ffd600"/>
+  <text x="145" y="35.5" fill="#101010" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10.5" font-weight="700" letter-spacing="1.4">MCP BRIDGE 0.3</text>
+</svg>\n`;
 
 /**
  * @param {{store: {mode: string}, tenants: import('./tenants.js').TenantRegistry, metrics: {render(): Promise<string>}, retentionDays: number, sdkPath: string, loaderPath: string, integrity: string | null, mcpSseUrl: string, sourceUrl: string, metricsToken: string, paymentLinks?: {starter?: string, pro?: string, enterprise?: string}}} options
@@ -116,8 +171,7 @@ export function createPublicRoutes(options) {
      */
     robots(req, res) {
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /robots.txt.', { Allow: 'GET, HEAD' });
-      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Length': String(Buffer.byteLength(ROBOTS_TXT)) });
-      res.end(req.method === 'HEAD' ? undefined : ROBOTS_TXT);
+      sendStatic(req, res, ROBOTS_TXT, { type: 'text/plain; charset=utf-8', cache: 'public, max-age=3600' });
     },
 
     /**
@@ -126,8 +180,25 @@ export function createPublicRoutes(options) {
      */
     sitemapXml(req, res) {
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /sitemap.xml.', { Allow: 'GET, HEAD' });
-      res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Length': String(Buffer.byteLength(SITEMAP_XML)) });
-      res.end(req.method === 'HEAD' ? undefined : SITEMAP_XML);
+      sendStatic(req, res, SITEMAP_XML, { type: 'application/xml; charset=utf-8', cache: 'public, max-age=3600' });
+    },
+
+    /**
+     * @param {import('node:http').IncomingMessage} req
+     * @param {import('node:http').ServerResponse} res
+     */
+    favicon(req, res) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /favicon.svg.', { Allow: 'GET, HEAD' });
+      sendStatic(req, res, FAVICON_SVG, { type: SVG_TYPE, cache: SVG_CACHE, csp: "default-src 'none'" });
+    },
+
+    /**
+     * @param {import('node:http').IncomingMessage} req
+     * @param {import('node:http').ServerResponse} res
+     */
+    logo(req, res) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /logo.svg.', { Allow: 'GET, HEAD' });
+      sendStatic(req, res, LOGO_SVG, { type: SVG_TYPE, cache: SVG_CACHE, csp: "default-src 'none'" });
     },
 
     /**

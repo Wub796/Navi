@@ -37,7 +37,7 @@ import { TIERS } from './pricing.js';
 export const LANDING_PAGE_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
   'cache-control': 'no-store',
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'",
+  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'",
   'referrer-policy': 'no-referrer',
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -202,14 +202,18 @@ navi-mcp --transport sse</code></pre>
 <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
 <meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
 <link rel="canonical" href="https://navi-edge.sysctl.workers.dev/">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<meta name="theme-color" content="#0b0b0b">
 <meta property="og:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">
 <meta property="og:description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://navi-edge.sysctl.workers.dev/">
 <meta property="og:site_name" content="Navi Interaction Bridge">
+<meta property="og:image" content="https://navi-edge.sysctl.workers.dev/logo.svg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">
 <meta name="twitter:description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
+<meta name="twitter:image" content="https://navi-edge.sysctl.workers.dev/logo.svg">
 <title>Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge</title>
 <style>${LANDING_STYLE}${STAGE_STYLE}${INSPECTOR_STYLE}${CALCULATOR_STYLE}</style>
 </head>
@@ -217,7 +221,7 @@ navi-mcp --transport sse</code></pre>
 <main>
   <header class="topbar">
     <a class="brand" href="/">
-      <span class="brand-mark">N</span>
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none"><rect width="64" height="64" rx="12" fill="#0b0b0b"/><rect x="4" y="4" width="56" height="56" rx="9" stroke="#f2f0ea" stroke-opacity=".24" stroke-width="2"/><path d="M14 42L32 51L50 42L32 33L14 42Z" fill="#161614" stroke="#f2f0ea" stroke-opacity=".38" stroke-width="2"/><path d="M14 32L32 41L50 32L32 23L14 32Z" fill="#ffd600" fill-opacity=".14" stroke="#ffd600" stroke-opacity=".6" stroke-width="2"/><path d="M14 22L32 31L50 22L32 13L14 22Z" fill="#ffd600" stroke="#ffd600" stroke-width="2"/><path d="M27 19.5V24.5L35 19.5V24.5" stroke="#101010" stroke-width="2.6" stroke-linecap="square"/><circle cx="49" cy="15" r="3.5" fill="#ffd600"/></svg></span>
       <span>navi</span>
     </a>
     <nav class="topnav" aria-label="Primary">

@@ -481,7 +481,10 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   const root = await workerRequest('https://worker.example/');
   expect(root.status).toBe(200);
   expect(root.headers.get('content-type')).toBe('text/html; charset=utf-8');
-  expect(root.headers.get('content-security-policy')).toBe("default-src 'none'; style-src 'unsafe-inline'");
+  // `img-src 'self'` is the one image source the page needs: its own favicon. The
+  // icon is blocked under a bare `default-src 'none'`, so the policy names it rather
+  // than dropping the icon.
+  expect(root.headers.get('content-security-policy')).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src 'self'");
   expect(root.headers.get('x-content-type-options')).toBe('nosniff');
   expect(root.headers.get('x-frame-options')).toBe('DENY');
   expect(root.headers.get('referrer-policy')).toBe('no-referrer');
@@ -574,7 +577,10 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(body).toContain('<meta property="og:description"');
   expect(body).toContain('<meta property="og:type" content="website">');
   expect(body).toContain('<meta property="og:url" content="https://navi-edge.sysctl.workers.dev/">');
+  expect(body).toContain('<meta property="og:image" content="https://navi-edge.sysctl.workers.dev/logo.svg">');
   expect(body).toContain('<meta name="twitter:card" content="summary_large_image">');
+  expect(body).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg">');
+  expect(body).toContain('<span class="brand-mark" aria-hidden="true"><svg');
   // The only script-shaped text is the escaped embed snippet a developer copies.
   expect(body).toContain('&lt;script src=&quot;https://worker.example/v1/loader.js&quot;');
   // The stage's selectors actually drive the scene rather than merely naming it.
@@ -668,6 +674,16 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(await sitemap.text()).toContain('<loc>https://navi-edge.sysctl.workers.dev/</loc>');
   const sitemapPost = await workerRequest('https://worker.example/sitemap.xml', { method: 'POST' });
   expect(sitemapPost.status).toBe(405);
+
+  for (const iconPath of ['/favicon.svg', '/logo.svg']) {
+    const icon = await workerRequest(`https://worker.example${iconPath}`);
+    expect(icon.status).toBe(200);
+    expect(icon.headers.get('content-type')).toBe('image/svg+xml; charset=utf-8');
+    expect(icon.headers.get('content-security-policy')).toBe("default-src 'none'");
+    expect(await icon.text()).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
+    const iconPost = await workerRequest(`https://worker.example${iconPath}`, { method: 'POST' });
+    expect(iconPost.status).toBe(405);
+  }
 
   for (const path of ['/unknown', '/v1/unknown']) {
     const missing = await workerRequest(`https://worker.example${path}`);

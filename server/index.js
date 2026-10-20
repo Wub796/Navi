@@ -365,6 +365,8 @@ export async function createNaviHostServer(options = {}) {
     if (path === '/') return publicRoutes.landing(req, res);
     if (path === '/robots.txt') return publicRoutes.robots(req, res);
     if (path === '/sitemap.xml') return publicRoutes.sitemapXml(req, res);
+    if (path === '/favicon.svg') return publicRoutes.favicon(req, res);
+    if (path === '/logo.svg') return publicRoutes.logo(req, res);
     if (path === DISCOVERY_ENDPOINT_PATH) return publicRoutes.discovery(req, res);
     if (path === SOURCE_ENDPOINT_PATH) return publicRoutes.source(req, res);
     if (path === HEALTH_ENDPOINT_PATH) return publicRoutes.health(req, res);

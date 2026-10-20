@@ -105,7 +105,7 @@ export const LANDING_STYLE = `
     }
     .brand {
       display: inline-flex;
-      align-items: baseline;
+      align-items: center;
       gap: .6rem;
       color: var(--fg);
       text-decoration: none;
@@ -118,14 +118,11 @@ export const LANDING_STYLE = `
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 1.5rem;
-      height: 1.5rem;
-      border-radius: 50%;
-      background: var(--accent);
-      color: var(--accent-ink);
-      font: 800 .8rem/1 var(--display);
-      letter-spacing: -.06em;
+      width: 1.65rem;
+      height: 1.65rem;
+      flex-shrink: 0;
     }
+    .brand-mark svg { width: 100%; height: 100%; display: block; }
     .topnav {
       display: flex;
       align-items: center;

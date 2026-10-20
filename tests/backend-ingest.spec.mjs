@@ -693,7 +693,7 @@ test('reports health and refuses unknown routes', async () => {
   const landing = await fetch(`${state.base}/`);
   expect(landing.status).toBe(200);
   expect(landing.headers.get('content-type')).toBe('text/html; charset=utf-8');
-  expect(landing.headers.get('content-security-policy')).toBe("default-src 'none'; style-src 'unsafe-inline'");
+  expect(landing.headers.get('content-security-policy')).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src 'self'");
   expect(landing.headers.get('cache-control')).toBe('no-store');
   expect(landing.headers.get('referrer-policy')).toBe('no-referrer');
   expect(landing.headers.get('x-content-type-options')).toBe('nosniff');
@@ -715,7 +715,10 @@ test('reports health and refuses unknown routes', async () => {
   expect(landingBody).toContain('<meta property="og:description"');
   expect(landingBody).toContain('<meta property="og:type" content="website">');
   expect(landingBody).toContain('<meta property="og:url" content="https://navi-edge.sysctl.workers.dev/">');
+  expect(landingBody).toContain('<meta property="og:image" content="https://navi-edge.sysctl.workers.dev/logo.svg">');
   expect(landingBody).toContain('<meta name="twitter:card" content="summary_large_image">');
+  expect(landingBody).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg">');
+  expect(landingBody).toContain('<span class="brand-mark" aria-hidden="true"><svg');
   const landingPost = await fetch(`${state.base}/`, { method: 'POST' });
   expect(landingPost.status).toBe(405);
   expect((await landingPost.json()).error.code).toBe('METHOD_NOT_ALLOWED');
@@ -736,6 +739,16 @@ test('reports health and refuses unknown routes', async () => {
   expect(await sitemap.text()).toContain('<loc>https://navi-edge.sysctl.workers.dev/</loc>');
   const sitemapPost = await fetch(`${state.base}/sitemap.xml`, { method: 'POST' });
   expect(sitemapPost.status).toBe(405);
+
+  for (const iconPath of ['/favicon.svg', '/logo.svg']) {
+    const icon = await fetch(`${state.base}${iconPath}`);
+    expect(icon.status).toBe(200);
+    expect(icon.headers.get('content-type')).toBe('image/svg+xml; charset=utf-8');
+    expect(icon.headers.get('content-security-policy')).toBe("default-src 'none'");
+    expect(await icon.text()).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
+    const iconPost = await fetch(`${state.base}${iconPath}`, { method: 'POST' });
+    expect(iconPost.status).toBe(405);
+  }
 
   const health = await fetch(`${state.base}/healthz`);
   expect(health.status).toBe(200);
