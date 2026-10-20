@@ -264,6 +264,7 @@ async function provisionSite(env: Env, object: any, eventType: string, eventId: 
   const metadata = object?.metadata && typeof object.metadata === 'object' ? object.metadata : {};
   try {
     const explicitKey = typeof metadata.api_key === 'string' ? metadata.api_key.trim() : '';
+    const hasExplicitOrigins = metadata.allowed_origins !== undefined && metadata.allowed_origins !== null && String(metadata.allowed_origins).trim().length > 0;
     // A standard Payment Link carries no metadata, so the plan is inferred from the
     // amount billed; explicit metadata still wins, in `resolveQuota`'s order.
     const quota = resolveQuota(object);
@@ -274,7 +275,7 @@ async function provisionSite(env: Env, object: any, eventType: string, eventId: 
       p_site_id: tenantId,
       p_api_key: explicitKey || null,
       p_candidate_api_key: explicitKey ? null : randomTenantKey(),
-      p_allowed_origins: parseAllowedOrigins(metadata.allowed_origins),
+      p_allowed_origins: hasExplicitOrigins ? parseAllowedOrigins(metadata.allowed_origins) : null,
       p_max_events_per_window: quota.max_events_per_window,
       p_window_seconds: quota.window_seconds,
       p_active: true,

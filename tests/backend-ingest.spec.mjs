@@ -455,11 +455,14 @@ test('a signed checkout provisions a tenant that ingests, survives a restart, an
     response = await crawl(key, 'https://app.example.com/checkout');
     expect(response.status, 'a provisioned key must survive a restart').toBe(200);
 
-    // An update without an api_key keeps the credential already handed out.
+    // An update without an api_key or allowed_origins keeps both the credential
+    // and the origin allow-list already handed out.
     const update = JSON.stringify({ id: 'evt_update', type: 'customer.subscription.updated', data: { object: { id: 'sub_1', metadata: { tenant_id: 'tenant-stripe', max_events_per_window: '9' } } } });
     response = await webhook(update);
     expect(response.status).toBe(200);
     expect((await response.json()).api_key).toBe(key);
+    response = await crawl(key, 'https://rogue.example.com/checkout');
+    expect(response.status, 'subscription update without allowed_origins must not widen the tenant origin restriction').toBe(403);
 
     const cancellation = JSON.stringify({ id: 'evt_cancel', type: 'customer.subscription.deleted', data: { object: { id: 'sub_1', metadata: { tenant_id: 'tenant-stripe' } } } });
     response = await webhook(cancellation);

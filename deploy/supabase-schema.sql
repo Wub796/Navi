@@ -247,7 +247,14 @@ begin
       when p_allowed_origins is null then site.allowed_origins
       else excluded.allowed_origins
     end,
-    max_events_per_window = coalesce(p_max_events, site.max_events_per_window),
+    -- When p_window_seconds is provided, this is a provisioning or plan update, so
+    -- a NULL p_max_events explicitly clears the ceiling to unmetered; a call with
+    -- p_window_seconds NULL leaves the existing ceiling untouched.
+    max_events_per_window = case
+      when p_max_events is not null then p_max_events
+      when p_window_seconds is not null then null
+      else site.max_events_per_window
+    end,
     window_seconds = coalesce(p_window_seconds, site.window_seconds),
     active = coalesce(p_active, site.active),
     updated_at = now()

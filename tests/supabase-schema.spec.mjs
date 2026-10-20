@@ -202,6 +202,11 @@ test('an update without a key or an origin list preserves both, and a cancellati
   expect(update).toEqual({ duplicate: false, tenant_id: 'acme', api_key: 'navi_live_a' });
   expect(run("select api_key || ':' || array_to_string(allowed_origins, '|') || ':' || max_events_per_window || ':' || window_seconds from public.sites;")).toBe('navi_live_a:https://app.example.com:75:600');
 
+  // An upgrade to an unmetered plan passes NULL for p_max_events alongside a non-null
+  // p_window_seconds, clearing the ceiling to NULL rather than keeping the old one.
+  expect(json(`select public.apply_stripe_webhook('evt_2b', 'acme', null, null, null, 2592000, true)::text;`).api_key).toBe('navi_live_a');
+  expect(run("select coalesce(max_events_per_window::text, 'NULL') || ':' || window_seconds from public.sites where id = 'acme';")).toBe('NULL:2592000');
+
   // Cancellation: the ceiling becomes 0 and nothing else moves.
   expect(json(`select public.apply_stripe_webhook('evt_3', 'acme', null, null, 0, null, true)::text;`).api_key).toBe('navi_live_a');
   expect(run("select api_key || ':' || array_to_string(allowed_origins, '|') || ':' || max_events_per_window from public.sites;")).toBe('navi_live_a:https://app.example.com:0');

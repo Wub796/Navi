@@ -163,12 +163,17 @@ export function createBillingRoutes(options) {
     const explicitKey = typeof metadata.api_key === 'string' ? metadata.api_key.trim() : '';
     const existing = typeof store.readTenantDefinition === 'function' ? await store.readTenantDefinition(tenantId) : null;
     // The key is minted once. An update that carries no api_key must not rotate the
-    // credential a tenant's page already embeds.
+    // credential a tenant's page already embeds, and an update that carries no
+    // allowed_origins must keep the existing restriction rather than widening to `*`.
     const apiKey = explicitKey || existing?.api_key || `navi_live_${randomBytes(TENANT_KEY_BYTES).toString('hex')}`;
+    const hasExplicitOrigins = metadata.allowed_origins !== undefined && metadata.allowed_origins !== null && String(metadata.allowed_origins).trim().length > 0;
+    const allowedOrigins = hasExplicitOrigins
+      ? parseAllowedOrigins(metadata.allowed_origins)
+      : (existing?.allowed_origins ?? ['*']);
     const definitionInput = {
       tenant_id: tenantId,
       api_key: apiKey,
-      allowed_origins: parseAllowedOrigins(metadata.allowed_origins),
+      allowed_origins: allowedOrigins,
       // A standard Payment Link carries no metadata, so the plan is inferred from the
       // amount billed; explicit metadata still wins, in `resolveQuota`'s order.
       ...resolveQuota(object)

@@ -119,7 +119,11 @@ function fakeSupabase(options = {}) {
     const site = existing ?? { id: body.p_site_id, api_key: body.p_api_key ?? body.p_candidate_api_key, allowed_origins: ['*'], max_events_per_window: null, window_seconds: null, window_start_ms: null, event_count: 0, active: true };
     if (body.p_api_key) site.api_key = body.p_api_key;
     if (body.p_allowed_origins) site.allowed_origins = body.p_allowed_origins;
-    if (body.p_max_events_per_window !== null && body.p_max_events_per_window !== undefined) site.max_events_per_window = body.p_max_events_per_window;
+    if (body.p_max_events_per_window !== null && body.p_max_events_per_window !== undefined) {
+      site.max_events_per_window = body.p_max_events_per_window;
+    } else if (body.p_window_seconds !== null && body.p_window_seconds !== undefined) {
+      site.max_events_per_window = null;
+    }
     if (body.p_window_seconds !== null && body.p_window_seconds !== undefined) site.window_seconds = body.p_window_seconds;
     if (body.p_active !== null && body.p_active !== undefined) site.active = body.p_active;
     sites.set(site.id, site);
@@ -499,6 +503,19 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(body).toContain('10,000 events / 30 days');
   expect(body).toContain('50,000 events / 30 days');
   expect(body).toContain('250,000 events / 30 days');
+  // The promo and explanation sections give a visitor the protocol numbers, the
+  // before/after DOM comparison, the 4-step self-serve billing flow, and the FAQ.
+  for (const item of [
+    '14,929 B',
+    '689 B',
+    'Without Navi · Raw DOM scraping',
+    'With Navi · Deterministic protocol',
+    'How self-serve provisioning works',
+    'Most popular · AGPL exempt',
+    'Operational FAQ',
+  ]) {
+    expect(body, `landing page must include promo/explanation content "${item}"`).toContain(item);
+  }
 
   // Each tier's own Payment Link becomes that card's call to action. The legacy
   // `STRIPE_PAYMENT_LINK_URL` is still the Pro link, so a deployment that only ever
@@ -697,8 +714,12 @@ test('Worker billing webhook verifies the Stripe signature, provisions a site an
     expect((await response.json()).api_key).toBe(provisioned.api_key);
     const updateCall = calls.find(call => call.url.includes('/rpc/apply_stripe_webhook'));
     expect(calls, 'provisioning is one request, in both directions').toHaveLength(1);
-    expect(JSON.parse(String(updateCall?.init.body))).toMatchObject({ p_site_id: 'acme', p_api_key: null });
+    expect(JSON.parse(String(updateCall?.init.body))).toMatchObject({ p_site_id: 'acme', p_api_key: null, p_allowed_origins: null });
     expect(supabase.site('acme')?.api_key).toBe(provisioned.api_key);
+    expect(supabase.site('acme')?.allowed_origins, 'omitting allowed_origins on an update must keep the tenant origin allow-list').toEqual([
+      'https://app.example.com',
+      'https://admin.example.com'
+    ]);
 
     // A delivery the function refuses is a 500 with no compensating write, and the
     // credential is untouched: there is no fall-through path left to mint from.
@@ -868,11 +889,15 @@ test('Worker infers the commercial plan from the amount billed when a Payment Li
     await send('checkout.session.completed', 'evt_tier_unknown', { id: 'cs_tier_unknown', customer: 'cus_tier_unknown', metadata: {} });
     expect(supabase.site('tenant_cus_tier_unknown')?.max_events_per_window).toBe(50000);
 
-    // And an explicit unmetered purchase carries no ceiling at all.
+    // And an explicit unmetered purchase or subscription upgrade carries no ceiling at all.
     await send('checkout.session.completed', 'evt_tier_unmetered', {
       id: 'cs_tier_unmetered', customer: 'cus_tier_unmetered', metadata: { unmetered: 'true' }
     });
     expect(supabase.site('tenant_cus_tier_unmetered')?.max_events_per_window).toBeNull();
+    await send('customer.subscription.updated', 'evt_tier_upgrade_unmetered', {
+      id: 'sub_tier_pro', customer: 'cus_tier_pro', metadata: { unmetered: 'true' }
+    });
+    expect(supabase.site('tenant_cus_tier_pro')?.max_events_per_window).toBeNull();
   } finally {
     globalThis.fetch = originalFetch;
   }
