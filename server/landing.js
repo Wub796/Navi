@@ -199,8 +199,18 @@ navi-mcp --transport sse</code></pre>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta name="description" content="Navi Interaction Bridge — deterministic semantic action maps, guarded native execution, and MCP tooling for browser agents.">
-<title>Navi Interaction Bridge — Deterministic Action Maps for Browser Agents</title>
+<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+<meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
+<link rel="canonical" href="https://navi-edge.sysctl.workers.dev/">
+<meta property="og:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">
+<meta property="og:description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://navi-edge.sysctl.workers.dev/">
+<meta property="og:site_name" content="Navi Interaction Bridge">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">
+<meta name="twitter:description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
+<title>Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge</title>
 <style>${LANDING_STYLE}${STAGE_STYLE}${INSPECTOR_STYLE}${CALCULATOR_STYLE}</style>
 </head>
 <body>
@@ -225,12 +235,10 @@ navi-mcp --transport sse</code></pre>
 
   <section class="hero">
     <div class="hero-copy">
-      <p class="kicker">Deterministic interaction · protocol 0.3.0</p>
-      <h1>Deterministic<br>action maps for<br><em>browser agents.</em></h1>
+      <p class="kicker">AI browser agent SDK · protocol 0.3.0</p>
+      <h1>Navi — Deterministic<br>action maps for<br><em>browser agents.</em></h1>
       <p class="lede">
-        Stop feeding 50,000 tokens of brittle DOM markup into LLM planners. Navi indexes rendered pages — including closed
-        Shadow DOM and same-origin iframes — into compact, addressable semantic targets with guarded native execution and
-        settlement receipts.
+        Stop feeding 50,000 tokens of brittle DOM markup into LLM planners. Navi is the Model Context Protocol (MCP) browser bridge that compiles live pages — including closed Shadow DOM and same-origin iframes — into a deterministic DOM to JSON action map for LLM agents, providing a token-efficient alternative to Playwright MCP and screenshot VLMs.
       </p>
       <div class="hero-actions">
         <a class="cta" href="#pricing">Get an API key &rarr;</a>
@@ -280,21 +288,23 @@ ${renderLandingStage()}
 
   <div id="why-navi" class="compare">
     <section class="bad-card">
+      <h2>Without Navi · Raw HTML &amp; Screenshot VLMs</h2>
       <span class="pill bad">Without Navi · Raw DOM scraping</span>
-      <p class="img">Fragile selectors &amp; blind sleeps</p>
+      <h3 class="img">Fragile selectors &amp; blind sleeps</h3>
       <p>Agents burn context windows on obfuscated CSS classes, miss controls inside closed Shadow roots, and click before hydration settles.</p>
       <pre><code>${escapeHtml(rawDomExample)}</code></pre>
     </section>
     <section class="good-card">
+      <h2>With Navi · Deterministic Web Agent Automation</h2>
       <span class="pill good">With Navi · Deterministic protocol</span>
-      <p class="img">Semantic targets &amp; settlement receipts</p>
+      <h3 class="img">Semantic targets &amp; settlement receipts</h3>
       <p>Every interactive element is hashed with MurmurHash3, checked for occlusion and viewport presence, and executed with a two-frame settlement guarantee.</p>
       <pre><code>${escapeHtml(actionMapExample)}</code></pre>
     </section>
   </div>
 
   <section id="architecture">
-    <h2>02 — Architecture</h2>
+    <h2>02 — Architecture: How Navi Converts Live DOM Trees into Deterministic MCP Action Maps</h2>
     <p class="section-title">From live Browser DOM to MCP Agent in one atomic pipeline</p>
     <p class="section-sub">Inline SVG and pure CSS <code>@keyframes</code> under <code>default-src 'none'</code> — zero client-side JavaScript.</p>
     <svg class="pipeline-svg" viewBox="0 0 880 128" role="img" aria-label="Data flow from Browser DOM to Cloudflare Edge, Supabase Atomic RPC, and MCP Agent">
@@ -323,24 +333,36 @@ ${renderLandingStage()}
     <div class="pillars">
       <section>
         <h2>01 · In-page runtime</h2>
-        <h3>Closed Shadow DOM &amp; CSP-safe</h3>
-        <p>Hooks <code>attachShadow</code> before app scripts run, pins DOM prototypes against page tampering, and uses zero <code>eval</code> or inline styles.</p>
+        <h3>Closed Shadow DOM automation &amp; PII redaction</h3>
+        <p>A sub-millisecond TreeWalker DOM crawler (&le; 2 ms slice) hooks <code>attachShadow</code> before app scripts run and enforces browser PII redaction for AI agents.</p>
+        <ul class="pillar-list">
+          <li>Zero field values ever serialized into the action map</li>
+          <li>MurmurHash3 target IDs with center-point occlusion checks</li>
+        </ul>
       </section>
       <section>
         <h2>02 · Guarded MCP server</h2>
-        <h3>5 tools · SSRF &amp; DNS-rebinding guard</h3>
-        <p>Ships <code>navi-mcp</code> over stdio and authenticated SSE. Refuses loopback, RFC 1918, link-local, cloud metadata IPs, and DNS rebinding.</p>
+        <h3>Hosted MCP SSE server &amp; SSRF containment</h3>
+        <p>Ships <code>navi-mcp</code> over stdio and authenticated SSE for deterministic web agent automation with strict network egress controls.</p>
+        <ul class="pillar-list">
+          <li>5 MCP tools with mutation and navigation settlement receipts</li>
+          <li>Refuses loopback, RFC 1918, cloud metadata IPs, and DNS rebinding</li>
+        </ul>
       </section>
       <section>
         <h2>03 · Atomic edge ingestion</h2>
         <h3>Single-RPC quota &amp; map transactions</h3>
         <p>Every sitemap write and Stripe webhook executes inside one transactional database RPC — row-locked quota metering and origin allow-lists never drift.</p>
+        <ul class="pillar-list">
+          <li>Constant-time HMAC-SHA256 webhook verification (300s window)</li>
+          <li>Dual-backend parity across Cloudflare Edge and SQLite WAL</li>
+        </ul>
       </section>
     </div>
   </section>
 
   <section id="quickstart">
-    <h2>03 — Integration</h2>
+    <h2>03 — Integration: 689 B Loader, Hosted Edge API &amp; Self-Hosted Docker MCP Server</h2>
     <p class="section-title">Drop-in browser loader, edge ingestion API, or local MCP host</p>
     <p class="section-sub">Switch tabs below — pure CSS radio state that works with scripts disabled.</p>
     <div class="tabs">
@@ -352,14 +374,17 @@ ${renderLandingStage()}
       <label class="tab-label" for="tab-mcp">3 · MCP Server &amp; Docker Host</label>
 
       <div class="tab-panel" id="panel-loader">
+        <h3>1 · Embed the 689 B Subresource-Integrity Loader</h3>
         <pre><code>${escapeHtml(embed)}</code></pre>
         <p class="muted">Load before application scripts to capture closed Shadow roots. Injects <code>&lt;meta name="agent-bridge"&gt;</code> for automatic agent discovery and queues <code>window.Navi</code> calls until the 14,929 B bundle executes.</p>
       </div>
       <div class="tab-panel" id="panel-edge">
+        <h3>2 · Publish DOM to JSON Action Maps to the Hosted Edge API</h3>
         <pre><code>${escapeHtml(publish)}</code></pre>
         <p class="muted">Point your crawler at a rendered page and POST the semantic map to the edge. Origin validation, 30-day quota metering, and map persistence commit in one atomic PostgreSQL transaction.</p>
       </div>
       <div class="tab-panel" id="panel-mcp">
+        <h3>3 · Run the Self-Hosted Docker MCP Server (Stdio or SSE)</h3>
         <pre><code>${escapeHtml(mcpSnippet)}</code></pre>
         <p class="muted">Node 22+, zero runtime dependencies. Exposes <code>navi_navigate</code>, <code>navi_get_actions</code>, <code>navi_execute_action</code>, <code>navi_assert_state</code>, and <code>navi_set_session</code>.</p>
       </div>
@@ -416,6 +441,14 @@ ${[
     <h2>08 — Questions</h2>
     <p class="section-title">Operational FAQ</p>
     <div class="faq">
+      <details class="faq-item">
+        <summary>How does client-side PII redaction and closed Shadow DOM piercing work?</summary>
+        <p>The sub-millisecond TreeWalker DOM crawler hooks <code>Element.prototype.attachShadow</code> at document start for closed Shadow DOM automation while pinning native DOM prototypes against tampering. Browser PII redaction for AI agents is enforced structurally: input values, passwords, and payment tokens are never read or serialized into the JSON action map.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Why use DOM action maps instead of VLM screenshots or raw HTML scraping?</summary>
+        <p>Navi is a token-efficient alternative to Playwright MCP and screenshot VLMs: instead of sending 45,000 tokens of brittle markup or slow vision frames, agents receive a ~650-token deterministic DOM to JSON action map. Every action returns a cryptographic settlement receipt after verifying visibility, viewport intersection, and center-point hit testing.</p>
+      </details>
       <details class="faq-item">
         <summary>Why does Pro include a commercial license?</summary>
         <p>The Community edition is licensed under <code>AGPL-3.0-or-later</code>, which requires network services to offer their Corresponding Source. Active Pro and Enterprise subscriptions grant a commercial exemption for proprietary SaaS and internal deployments.</p>

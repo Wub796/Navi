@@ -10,9 +10,14 @@ what was skipped and what risk remains. "stop ponytail" or "normal mode" turns i
 hook API. The skill itself lives at
 `~/.config/freebuff-desktop/account-skills/*/*/ponytail/SKILL.md`.
 
-## Before committing or pushing to main
+## Before committing or pushing to main (and before any change on its way there)
 
-1. **`thermo-nuclear-code-quality-review` over the diff.** Report structural findings first —
+The three skills are also installed as account skills and their `SOURCE.md` files record the
+exact upstream commits they were installed from (`ponytail` refreshed 2026-10-20). This is the
+recurring contract, numbered for permanence:
+
+1. **`thermo-nuclear-code-quality-review` over the diff of every change before it is
+   committed.** Report structural findings first —
    missed simplifications, spaghetti branching bolted onto unrelated flows, a file pushed past
    1,000 lines, thin wrappers, boundary leaks, casts that hide an invariant. Fix them, or say
    plainly why the cleaner structure is the wrong call. "The tests pass" is not an approval bar.

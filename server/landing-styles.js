@@ -268,7 +268,10 @@ export const LANDING_STYLE = `
     .pillars > section:last-child { border-right: 0; padding-right: 0; }
     .pillars h2 { margin-bottom: .9rem; }
     .pillars h3 { margin: 0 0 .5rem; font-size: 1.1rem; letter-spacing: -.03em; font-weight: 600; }
-    .pillars p { margin: 0; font-size: .86rem; color: var(--muted); }
+    .pillars p { margin: 0 0 .65rem; font-size: .86rem; color: var(--muted); }
+    .pillar-list { list-style: none; padding: 0; margin: 0; font-size: .82rem; color: var(--fg-soft); }
+    .pillar-list li { margin: 0 0 .35rem; padding-left: .95rem; position: relative; }
+    .pillar-list li::before { content: "\\2014"; position: absolute; left: 0; color: var(--accent); }
     /* ---------- tabs ---------- */
     .tabs {
       display: flex;

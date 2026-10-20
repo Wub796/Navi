@@ -706,9 +706,36 @@ test('reports health and refuses unknown routes', async () => {
   expect(landingBody).toContain('type="radio" name="calc-volume"');
   expect(landingBody).toContain('transform-style: preserve-3d');
   expect(landingBody).not.toContain('<script');
+  expect(landingBody.match(/<h1\b/g) ?? []).toHaveLength(1);
+  expect((landingBody.match(/<h2\b/g) ?? []).length).toBeGreaterThanOrEqual(8);
+  expect((landingBody.match(/<h3\b/g) ?? []).length).toBeGreaterThanOrEqual(8);
+  expect(landingBody).toContain('<meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">');
+  expect(landingBody).toContain('<link rel="canonical" href="https://navi-edge.sysctl.workers.dev/">');
+  expect(landingBody).toContain('<meta property="og:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">');
+  expect(landingBody).toContain('<meta property="og:description"');
+  expect(landingBody).toContain('<meta property="og:type" content="website">');
+  expect(landingBody).toContain('<meta property="og:url" content="https://navi-edge.sysctl.workers.dev/">');
+  expect(landingBody).toContain('<meta name="twitter:card" content="summary_large_image">');
   const landingPost = await fetch(`${state.base}/`, { method: 'POST' });
   expect(landingPost.status).toBe(405);
   expect((await landingPost.json()).error.code).toBe('METHOD_NOT_ALLOWED');
+
+  const robots = await fetch(`${state.base}/robots.txt`);
+  expect(robots.status).toBe(200);
+  expect(robots.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+  const robotsText = await robots.text();
+  expect(robotsText).toContain('Allow: /');
+  expect(robotsText).toContain('Disallow: /v1/billing/');
+  expect(robotsText).toContain('Sitemap: https://navi-edge.sysctl.workers.dev/sitemap.xml');
+  const robotsPost = await fetch(`${state.base}/robots.txt`, { method: 'POST' });
+  expect(robotsPost.status).toBe(405);
+
+  const sitemap = await fetch(`${state.base}/sitemap.xml`);
+  expect(sitemap.status).toBe(200);
+  expect(sitemap.headers.get('content-type')).toBe('application/xml; charset=utf-8');
+  expect(await sitemap.text()).toContain('<loc>https://navi-edge.sysctl.workers.dev/</loc>');
+  const sitemapPost = await fetch(`${state.base}/sitemap.xml`, { method: 'POST' });
+  expect(sitemapPost.status).toBe(405);
 
   const health = await fetch(`${state.base}/healthz`);
   expect(health.status).toBe(200);

@@ -16,6 +16,12 @@ import { sendError, sendJson, sendMetrics } from './http.js';
 import { LANDING_PAGE_HEADERS, renderLandingPage } from './landing.js';
 import { tenantFor } from './tenants.js';
 
+/** Crawl policy for search engines: allow public root, disallow one-time billing claims. */
+export const ROBOTS_TXT = `User-agent: *\nAllow: /\nDisallow: /v1/billing/\nSitemap: https://navi-edge.sysctl.workers.dev/sitemap.xml\n`;
+
+/** XML sitemap listing the canonical edge root for search indexers. */
+export const SITEMAP_XML = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url>\n    <loc>https://navi-edge.sysctl.workers.dev/</loc>\n    <changefreq>weekly</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`;
+
 /**
  * @param {{store: {mode: string}, tenants: import('./tenants.js').TenantRegistry, metrics: {render(): Promise<string>}, retentionDays: number, sdkPath: string, loaderPath: string, integrity: string | null, mcpSseUrl: string, sourceUrl: string, metricsToken: string, paymentLinks?: {starter?: string, pro?: string, enterprise?: string}}} options
  */
@@ -102,6 +108,26 @@ export function createPublicRoutes(options) {
       const body = renderLandingPage({ paymentLinks });
       res.writeHead(200, { ...LANDING_PAGE_HEADERS, 'Content-Length': String(Buffer.byteLength(body)) });
       res.end(body);
+    },
+
+    /**
+     * @param {import('node:http').IncomingMessage} req
+     * @param {import('node:http').ServerResponse} res
+     */
+    robots(req, res) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /robots.txt.', { Allow: 'GET, HEAD' });
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Length': String(Buffer.byteLength(ROBOTS_TXT)) });
+      res.end(req.method === 'HEAD' ? undefined : ROBOTS_TXT);
+    },
+
+    /**
+     * @param {import('node:http').IncomingMessage} req
+     * @param {import('node:http').ServerResponse} res
+     */
+    sitemapXml(req, res) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /sitemap.xml.', { Allow: 'GET, HEAD' });
+      res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Length': String(Buffer.byteLength(SITEMAP_XML)) });
+      res.end(req.method === 'HEAD' ? undefined : SITEMAP_XML);
     },
 
     /**

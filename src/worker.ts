@@ -2,6 +2,7 @@ import { validateCrawlerPayload } from './crawler-payload.js';
 import type { CrawlerPayload } from './dom-crawler.js';
 import { BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage } from '../server/billing-success.js';
 import { LANDING_PAGE_HEADERS, renderLandingPage } from '../server/landing.js';
+import { ROBOTS_TXT, SITEMAP_XML } from '../server/public-routes.js';
 import { resolveQuota } from '../server/pricing.js';
 
 export interface Env {
@@ -470,6 +471,24 @@ export default {
     if (url.pathname === '/healthz') {
       if (request.method !== 'GET') return json(405, { error: 'Method not allowed' }, { allow: 'GET' });
       return json(200, { ok: true, service: 'navi-edge' });
+    }
+    if (url.pathname === '/robots.txt') {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return json(405, { error: 'Method not allowed' }, { allow: 'GET, HEAD' });
+      }
+      return new Response(ROBOTS_TXT, {
+        status: 200,
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600' },
+      });
+    }
+    if (url.pathname === '/sitemap.xml') {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return json(405, { error: 'Method not allowed' }, { allow: 'GET, HEAD' });
+      }
+      return new Response(SITEMAP_XML, {
+        status: 200,
+        headers: { 'content-type': 'application/xml; charset=utf-8', 'cache-control': 'public, max-age=3600' },
+      });
     }
     // The root is public and anonymous by design; everything below it authenticates.
     if (url.pathname === '/') {

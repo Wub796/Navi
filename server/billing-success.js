@@ -349,9 +349,10 @@ npx navi-interaction-bridge discover --url https://app.example.com`;
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="One-time post-checkout API key claim and onboarding guide for your provisioned Navi Interaction Bridge tenant.">
 <meta name="referrer" content="no-referrer">
-<title>Your Navi key</title>
+<title>Your Navi API Key — One-Time Tenant Credential</title>
 <style>${STYLE}</style>
 </head>
 <body>
@@ -438,7 +439,8 @@ export function renderBillingClaimErrorPage(input = {}) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="robots" content="noindex, nofollow">
+<meta name="description" content="This one-time Navi post-checkout credential claim link has expired or has already been redeemed.">
 <meta name="referrer" content="no-referrer">
 <title>${escapeHtml(title)}</title>
 <style>${STYLE}</style>

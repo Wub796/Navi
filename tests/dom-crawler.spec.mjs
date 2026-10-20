@@ -564,6 +564,17 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   // Every interaction is form state: a document that shipped a script would be
   // blocked by its own policy, so the assertion is that none exists at all.
   expect(body, 'the landing page must carry no script element').not.toContain('<script');
+  // Single <h1>, hierarchical <h2>/<h3> sections, meta description, canonical URL, and Open Graph tags.
+  expect(body.match(/<h1\b/g) ?? []).toHaveLength(1);
+  expect((body.match(/<h2\b/g) ?? []).length).toBeGreaterThanOrEqual(8);
+  expect((body.match(/<h3\b/g) ?? []).length).toBeGreaterThanOrEqual(8);
+  expect(body).toContain('<meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">');
+  expect(body).toContain('<link rel="canonical" href="https://navi-edge.sysctl.workers.dev/">');
+  expect(body).toContain('<meta property="og:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">');
+  expect(body).toContain('<meta property="og:description"');
+  expect(body).toContain('<meta property="og:type" content="website">');
+  expect(body).toContain('<meta property="og:url" content="https://navi-edge.sysctl.workers.dev/">');
+  expect(body).toContain('<meta name="twitter:card" content="summary_large_image">');
   // The only script-shaped text is the escaped embed snippet a developer copies.
   expect(body).toContain('&lt;script src=&quot;https://worker.example/v1/loader.js&quot;');
   // The stage's selectors actually drive the scene rather than merely naming it.
@@ -639,6 +650,24 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   const verificationPost = await workerRequest('https://worker.example/google4456f053766efe68.html', { method: 'POST' });
   expect(verificationPost.status).toBe(405);
   expect(verificationPost.headers.get('allow')).toBe('GET, HEAD');
+
+  // Crawlability surfaces: GET /robots.txt (200 text/plain) and GET /sitemap.xml (200 application/xml).
+  const robots = await workerRequest('https://worker.example/robots.txt');
+  expect(robots.status).toBe(200);
+  expect(robots.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+  const robotsText = await robots.text();
+  expect(robotsText).toContain('Allow: /');
+  expect(robotsText).toContain('Disallow: /v1/billing/');
+  expect(robotsText).toContain('Sitemap: https://navi-edge.sysctl.workers.dev/sitemap.xml');
+  const robotsPost = await workerRequest('https://worker.example/robots.txt', { method: 'POST' });
+  expect(robotsPost.status).toBe(405);
+
+  const sitemap = await workerRequest('https://worker.example/sitemap.xml');
+  expect(sitemap.status).toBe(200);
+  expect(sitemap.headers.get('content-type')).toBe('application/xml; charset=utf-8');
+  expect(await sitemap.text()).toContain('<loc>https://navi-edge.sysctl.workers.dev/</loc>');
+  const sitemapPost = await workerRequest('https://worker.example/sitemap.xml', { method: 'POST' });
+  expect(sitemapPost.status).toBe(405);
 
   for (const path of ['/unknown', '/v1/unknown']) {
     const missing = await workerRequest(`https://worker.example${path}`);
