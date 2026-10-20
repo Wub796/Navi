@@ -27,6 +27,17 @@ const TENANT_KEY_BYTES = 32;
 const PROVISIONING_EVENT_TYPES = new Set(['checkout.session.completed', 'customer.subscription.created', 'customer.subscription.updated']);
 
 /**
+ * Google Search Console ownership proofs, served at the exact path Google fetches.
+ *
+ * A verification token is public by design: it proves control of the host and
+ * nothing else, so it lives here rather than in a secret. Rotating it means
+ * replacing the entry with the file Search Console hands out.
+ */
+const SEARCH_CONSOLE_VERIFICATIONS: Record<string, string> = {
+  '/google4456f053766efe68.html': 'google-site-verification: google4456f053766efe68.html',
+};
+
+/**
  * What every route answers when the database is behind this Worker. The message
  * names the file to apply rather than the HTTP status alone, because the operator
  * reading it is the one who can fix it.
@@ -439,6 +450,19 @@ async function handleBillingSession(url: URL, env: Env): Promise<Response> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // A crawler's ownership proof answers before routing and without storage: it
+    // fetches this exact path and compares the body, so it must not depend on the
+    // database or on any credential.
+    const verification = SEARCH_CONSOLE_VERIFICATIONS[url.pathname];
+    if (verification !== undefined) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return json(405, { error: 'Method not allowed' }, { allow: 'GET, HEAD' });
+      }
+      return new Response(verification, {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+      });
+    }
     // Liveness answers before any routing or storage access: the check exists to
     // say the isolate is up, and one that touched the database would fail during
     // exactly the incident it is meant to report.

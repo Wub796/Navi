@@ -557,6 +557,17 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(notGet.status).toBe(405);
   expect(notGet.headers.get('allow')).toBe('GET');
 
+  // Search Console proves ownership by fetching the exact file it issued, without
+  // a credential, so the response has to be the token byte for byte.
+  const verification = await workerRequest('https://worker.example/google4456f053766efe68.html');
+  expect(verification.status).toBe(200);
+  expect(verification.headers.get('content-type')).toBe('text/html; charset=utf-8');
+  expect(verification.headers.get('cache-control')).toBe('no-store');
+  expect(await verification.text()).toBe('google-site-verification: google4456f053766efe68.html');
+  const verificationPost = await workerRequest('https://worker.example/google4456f053766efe68.html', { method: 'POST' });
+  expect(verificationPost.status).toBe(405);
+  expect(verificationPost.headers.get('allow')).toBe('GET, HEAD');
+
   for (const path of ['/unknown', '/v1/unknown']) {
     const missing = await workerRequest(`https://worker.example${path}`);
     expect(missing.status, `${path} must stay a 404`).toBe(404);
