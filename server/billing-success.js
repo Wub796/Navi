@@ -134,6 +134,113 @@ const STYLE = `
       display: inline-block;
       user-select: all;
     }
+    /* The key arrives once, so it is presented as an object rather than a line of
+       text: a tilted card in a holographic ring. The tilt collapses on hover or
+       focus, which is the page's only pure-CSS motion besides the ring itself. */
+    .vault {
+      perspective: 900px;
+      background: linear-gradient(160deg, rgba(16, 24, 37, .96), rgba(6, 9, 15, .99));
+      border: 1px solid rgba(34, 211, 238, .24);
+      /* The card is holographic in both colour schemes, so its text is scoped to
+         the dark surface rather than inheriting a light-theme ink onto it. */
+      color: #e9eef8;
+    }
+    .vault h2 { color: #8892a4; }
+    .vault dl dt { color: #8892a4; }
+    .vault dl dd { color: #e9eef8; }
+    .vault .key {
+      background: rgba(3, 7, 12, .92);
+      border-color: rgba(34, 211, 238, .35);
+      color: #e9eef8;
+    }
+    .vault .muted { color: #8892a4; }
+    .vault-stage {
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 1.15rem .35rem .55rem;
+      transform-style: preserve-3d;
+    }
+    .vault-ring {
+      position: absolute;
+      width: 21rem;
+      height: 21rem;
+      max-width: 96%;
+      border-radius: 50%;
+      border: 1px dashed rgba(34, 211, 238, .3);
+      transform: rotateX(68deg);
+      animation: vaultSpin 26s linear infinite;
+      pointer-events: none;
+    }
+    .vault-ring::after {
+      content: "";
+      position: absolute;
+      inset: 2.4rem;
+      border-radius: 50%;
+      border: 1px solid rgba(76, 134, 255, .22);
+    }
+    @keyframes vaultSpin { to { transform: rotateX(68deg) rotateZ(360deg); } }
+    .vault-card {
+      position: relative;
+      width: 100%;
+      max-width: 33rem;
+      padding: 1rem 1.1rem 1.05rem;
+      border-radius: 14px;
+      border: 1px solid rgba(34, 211, 238, .42);
+      background: linear-gradient(150deg, rgba(18, 29, 45, .97), rgba(5, 9, 15, .98));
+      box-shadow: 0 34px 70px -34px #000, 0 0 46px -18px rgba(34, 211, 238, .55), inset 0 1px 0 rgba(255, 255, 255, .07);
+      transform: rotateX(8deg) rotateZ(-1.2deg);
+      transform-style: preserve-3d;
+      transition: transform .6s cubic-bezier(0.16, 1, 0.3, 1), box-shadow .6s;
+    }
+    .vault-card:hover, .vault-card:focus-within {
+      transform: rotateX(0deg) rotateZ(0deg) translateZ(18px);
+      box-shadow: 0 40px 80px -34px #000, 0 0 60px -14px rgba(34, 211, 238, .7), inset 0 1px 0 rgba(255, 255, 255, .09);
+    }
+    .vault-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: .7rem;
+    }
+    .vault-chip {
+      font: 700 .62rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: #04121a;
+      background: linear-gradient(135deg, #22d3ee, #7dd3fc);
+      padding: .3rem .5rem;
+      border-radius: 999px;
+    }
+    .vault-plan {
+      font: 600 .6rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--muted);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .vault-telemetry {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+      gap: .5rem;
+      margin-top: .85rem;
+      padding-top: .7rem;
+      border-top: 1px solid var(--border);
+    }
+    .vault-cell span {
+      display: block;
+      font: 600 .54rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .vault-cell strong {
+      display: block;
+      font: 700 .72rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #22d3ee;
+    }
     dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.15rem; align-items: center; }
     dt { color: var(--muted); font-size: .9rem; }
     dd { margin: 0; overflow-wrap: anywhere; }
@@ -203,6 +310,11 @@ const STYLE = `
         --good-soft: #112e2b;
       }
       .warn { background: #2b2107; border-color: #6b4f0d; color: #f2d08a; }
+      .vault { background: linear-gradient(160deg, rgba(16, 24, 37, .96), rgba(6, 9, 15, .99)); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .vault-ring { animation: none; }
+      .vault-card, .vault-card:hover, .vault-card:focus-within { transform: none; transition: none; }
     }
 `;
 
@@ -258,14 +370,29 @@ npx navi-interaction-bridge discover --url https://app.example.com`;
 
   <p class="warn">Shown once. This link cannot be opened again — copy the key somewhere safe before you leave.</p>
 
-  <section>
-    <h2>Credentials</h2>
-    <dl>
-      <dt>Tenant</dt>
-      <dd><code>${tenant}</code></dd>
-      <dt>API key</dt>
-      <dd><span class="key"><code>${key}</code></span></dd>
-    </dl>
+  <section class="vault">
+    <h2>Credentials · holographic key vault</h2>
+    <div class="vault-stage">
+      <span class="vault-ring" aria-hidden="true"></span>
+      <div class="vault-card">
+        <div class="vault-top">
+          <span class="vault-chip">navi_live · active</span>
+          <span class="vault-plan">tenant provisioned</span>
+        </div>
+        <dl>
+          <dt>Tenant</dt>
+          <dd><code>${tenant}</code></dd>
+          <dt>API key</dt>
+          <dd><span class="key"><code>${key}</code></span></dd>
+        </dl>
+        <div class="vault-telemetry">
+          <div class="vault-cell"><span>Quota window</span><strong>30 days</strong></div>
+          <div class="vault-cell"><span>Embed loader</span><strong>689 B</strong></div>
+          <div class="vault-cell"><span>Protocol</span><strong>0.3.0</strong></div>
+        </div>
+      </div>
+    </div>
+    <p class="muted">Hover or focus the card to level it. The key is selected with a single click and is never rendered again.</p>
   </section>
 
   <section>

@@ -687,6 +687,28 @@ test('the host serves the one-time onboarding page and never repeats a claimed k
 });
 
 test('reports health and refuses unknown routes', async () => {
+  // The host serves the same landing document the edge does, so a self-hosted
+  // deployment is not a bare API. It is the one public HTML surface here, and it
+  // carries the same no-script policy as the edge root.
+  const landing = await fetch(`${state.base}/`);
+  expect(landing.status).toBe(200);
+  expect(landing.headers.get('content-type')).toBe('text/html; charset=utf-8');
+  expect(landing.headers.get('content-security-policy')).toBe("default-src 'none'; style-src 'unsafe-inline'");
+  expect(landing.headers.get('cache-control')).toBe('no-store');
+  expect(landing.headers.get('referrer-policy')).toBe('no-referrer');
+  expect(landing.headers.get('x-content-type-options')).toBe('nosniff');
+  expect(landing.headers.get('x-frame-options')).toBe('DENY');
+  const landingBody = await landing.text();
+  expect(landingBody).toContain('Deterministic action maps for browser agents');
+  expect(landingBody).toContain('type="radio" name="camera-view"');
+  expect(landingBody).toContain('type="radio" name="inspect-node"');
+  expect(landingBody).toContain('type="radio" name="calc-volume"');
+  expect(landingBody).toContain('transform-style: preserve-3d');
+  expect(landingBody).not.toContain('<script');
+  const landingPost = await fetch(`${state.base}/`, { method: 'POST' });
+  expect(landingPost.status).toBe(405);
+  expect((await landingPost.json()).error.code).toBe('METHOD_NOT_ALLOWED');
+
   const health = await fetch(`${state.base}/healthz`);
   expect(health.status).toBe(200);
   expect(health.headers.get('cache-control'), 'health and tenant data are uncacheable').toBe('no-store');

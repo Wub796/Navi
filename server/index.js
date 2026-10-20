@@ -6,6 +6,7 @@
 // configuration, owns the store/lifecycle and the server, and dispatches to the
 // route modules beside it.
 //
+//   GET  /                              the product landing page (same document as the edge)
 //   GET  /v1/navi.js?key=<tenant_key>   serve the shipped browser bundle
 //   GET  /v1/loader.js                  serve the tenant embed loader
 //   POST /v1/telemetry                  ingest one navigator.sendBeacon payload
@@ -119,6 +120,7 @@ Usage
   node server/index.js [--host 127.0.0.1] [--port 8790] [--store server/telemetry.db]
 
 Endpoints
+  GET  /                              product landing page
   GET  /v1/navi.js?key=<tenant_key>
   GET  /v1/loader.js
   POST /v1/telemetry
@@ -174,6 +176,12 @@ Environment
                            Stripe signing secret for POST /v1/billing/webhook.
                            Unset disables the route with 503, because a webhook
                            without a secret cannot tell Stripe from anyone else.
+  STRIPE_PAYMENT_LINK_STARTER
+  STRIPE_PAYMENT_LINK_PRO  (or the legacy STRIPE_PAYMENT_LINK_URL)
+  STRIPE_PAYMENT_LINK_ENTERPRISE
+                           Payment Links rendered as each paid card's call to
+                           action on GET /. Unset cards are listed but not sold,
+                           exactly as on the edge deployment.
   NAVI_METRICS_TOKEN       When set, GET /metrics requires
                            "Authorization: Bearer <token>" and answers 401
                            without it. Unset keeps the scrape unauthenticated,
@@ -334,8 +342,13 @@ export async function createNaviHostServer(options = {}) {
     return result;
   }
 
+  const paymentLinks = {
+    starter: process.env.STRIPE_PAYMENT_LINK_STARTER,
+    pro: process.env.STRIPE_PAYMENT_LINK_PRO ?? process.env.STRIPE_PAYMENT_LINK_URL,
+    enterprise: process.env.STRIPE_PAYMENT_LINK_ENTERPRISE
+  };
   const publicRoutes = createPublicRoutes({
-    store, tenants, metrics, retentionDays, sdkPath, loaderPath, integrity, mcpSseUrl, sourceUrl, metricsToken
+    store, tenants, metrics, retentionDays, sdkPath, loaderPath, integrity, mcpSseUrl, sourceUrl, metricsToken, paymentLinks
   });
   const billingRoutes = createBillingRoutes({ store, stripeWebhookSecret, log, registerTenantDefinition });
   const ingestRoutes = createIngestRoutes({ store, tenants, allowedTenantIds, limiter, quota, metrics });
@@ -349,6 +362,7 @@ export async function createNaviHostServer(options = {}) {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
 
+    if (path === '/') return publicRoutes.landing(req, res);
     if (path === DISCOVERY_ENDPOINT_PATH) return publicRoutes.discovery(req, res);
     if (path === SOURCE_ENDPOINT_PATH) return publicRoutes.source(req, res);
     if (path === HEALTH_ENDPOINT_PATH) return publicRoutes.health(req, res);

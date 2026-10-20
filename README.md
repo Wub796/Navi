@@ -244,6 +244,7 @@ NAVI_TENANTS="live_key_abc:acme" node server/index.js --port 8790 --store server
 
 | Endpoint | Behaviour |
 |---|---|
+| `GET /` | The product landing page — the same document the edge serves, including the pure-CSS 3D stage, the receipt inspector, the integration tabs, the savings calculator and the four-tier pricing grid. `text/html; charset=utf-8`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, and `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'`; the page carries no script. Payment Links come from `STRIPE_PAYMENT_LINK_STARTER`, `STRIPE_PAYMENT_LINK_PRO` (or the legacy `STRIPE_PAYMENT_LINK_URL`) and `STRIPE_PAYMENT_LINK_ENTERPRISE`, exactly as on the edge. |
 | `GET /v1/navi.js?key=<tenant_key>` | Serves `dist/navi.min.js` with `Cache-Control: public, max-age=3600, stale-while-revalidate=86400`, an `ETag` equal to the SRI SHA-384, and `304` on `If-None-Match`. `401` without a valid key. |
 | `GET /v1/loader.js` | Serves `dist/loader.min.js`, the tenant embed snippet. Carries no tenant key of its own. |
 | `POST /v1/telemetry` | Ingests the beacon payload `{ tenant_id, url_origin, actions_indexed, actions_executed, execution_failures }`, as `application/json` or beacon-shaped `text/plain`. Strict schema, ≤ 2 KB, canonical origins only. |
@@ -261,7 +262,7 @@ NAVI_TENANTS="live_key_abc:acme" node server/index.js --port 8790 --store server
 
 ### Commercial plans
 
-The hosted edge sells four tiers, and `GET /` renders them as a pricing grid whose paid cards link to the Stripe Payment Links this deployment configured.
+The hosted edge sells four tiers, and `GET /` renders them as a pricing grid whose paid cards link to the Stripe Payment Links this deployment configured. The self-hosted host serves the same `GET /` document (`server/public-routes.js`), so a local deployment is documented out of the box; its links stay relative because it does not know its own public origin.
 
 | Plan | Price | 30-day ceiling |
 |---|---|---|

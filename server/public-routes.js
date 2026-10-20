@@ -13,13 +13,14 @@ import {
   SCRIPT_CACHE_CONTROL, SCRIPT_CORS, SCRIPT_ENDPOINT_PATH
 } from './endpoints.js';
 import { sendError, sendJson, sendMetrics } from './http.js';
+import { LANDING_PAGE_HEADERS, renderLandingPage } from './landing.js';
 import { tenantFor } from './tenants.js';
 
 /**
- * @param {{store: {mode: string}, tenants: import('./tenants.js').TenantRegistry, metrics: {render(): Promise<string>}, retentionDays: number, sdkPath: string, loaderPath: string, integrity: string | null, mcpSseUrl: string, sourceUrl: string, metricsToken: string}} options
+ * @param {{store: {mode: string}, tenants: import('./tenants.js').TenantRegistry, metrics: {render(): Promise<string>}, retentionDays: number, sdkPath: string, loaderPath: string, integrity: string | null, mcpSseUrl: string, sourceUrl: string, metricsToken: string, paymentLinks?: {starter?: string, pro?: string, enterprise?: string}}} options
  */
 export function createPublicRoutes(options) {
-  const { store, tenants, metrics, retentionDays, sdkPath, loaderPath, integrity, mcpSseUrl, sourceUrl, metricsToken } = options;
+  const { store, tenants, metrics, retentionDays, sdkPath, loaderPath, integrity, mcpSseUrl, sourceUrl, metricsToken, paymentLinks } = options;
 
   /**
    * The discovery document an agent reads to find this host's runtime. It is a
@@ -87,6 +88,22 @@ export function createPublicRoutes(options) {
   }
 
   return {
+    /**
+     * The same landing document the edge Worker serves at its root, so a
+     * self-hosted deployment is not a bare API with an unlisted route table. The
+     * page is rendered by the one shared module, and the only difference is the
+     * links: a host knows its own origin per request, so it leaves the page's
+     * relative defaults in place rather than trusting a `Host` header.
+     * @param {import('node:http').IncomingMessage} req
+     * @param {import('node:http').ServerResponse} res
+     */
+    landing(req, res) {
+      if (req.method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /.');
+      const body = renderLandingPage({ paymentLinks });
+      res.writeHead(200, { ...LANDING_PAGE_HEADERS, 'Content-Length': String(Buffer.byteLength(body)) });
+      res.end(body);
+    },
+
     /**
      * @param {import('node:http').IncomingMessage} req
      * @param {import('node:http').ServerResponse} res

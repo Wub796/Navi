@@ -529,9 +529,48 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     'How self-serve provisioning works',
     'Most popular · AGPL exempt',
     'Operational FAQ',
+    // The 3D stage: camera presets, depth toggles, the tilt sensor, and the four
+    // targets the receipt inspector can pin.
+    'transform-style: preserve-3d',
+    'perspective: 1200px',
+    'type="radio" name="camera-view"',
+    'type="checkbox" id="toggle-explode"',
+    'type="checkbox" id="toggle-xray"',
+    'Isometric Exploded',
+    'Front UI Surface',
+    'Agent Matrix Overhead',
+    'type="radio" name="inspect-node"',
+    'act_pay_01',
+    'act_shadow_02',
+    'act_pii_03',
+    'act_pager_04',
+    'navi_act({ target: "act_pay_01" })',
+    '#shadow-root (closed)',
+    'translateZ(70px)',
+    'translateZ(140px)',
+    // The token-and-latency calculator is a radio per volume.
+    'type="radio" name="calc-volume"',
+    '1,000 pages/day',
+    '50,000 pages/day',
+    '250,000 pages/day',
+    '~45,000 tokens',
+    '~650 tokens',
+    'Save $3,991.50 / month',
+    'Save $199,575 / month',
+    'Save $997,875 / month',
   ]) {
     expect(body, `landing page must include promo/explanation content "${item}"`).toContain(item);
   }
+  // Every interaction is form state: a document that shipped a script would be
+  // blocked by its own policy, so the assertion is that none exists at all.
+  expect(body, 'the landing page must carry no script element').not.toContain('<script');
+  // The only script-shaped text is the escaped embed snippet a developer copies.
+  expect(body).toContain('&lt;script src=&quot;https://worker.example/v1/loader.js&quot;');
+  // The stage's selectors actually drive the scene rather than merely naming it.
+  expect(body).toContain('#cam-front:checked ~ .stage-viewport .stage-3d');
+  expect(body).toContain('#toggle-explode:checked ~ .stage-viewport .stage-3d');
+  expect(body).toContain(':has(.pad-9:hover) .stage-tilt');
+  expect(body).toContain('@media (prefers-reduced-motion: reduce)');
 
   // Each tier's own Payment Link becomes that card's call to action. The legacy
   // `STRIPE_PAYMENT_LINK_URL` is still the Pro link, so a deployment that only ever

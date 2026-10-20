@@ -7,12 +7,16 @@
 // carries no credential, no analytics and no runtime, which is what lets its CSP stay
 // at `default-src 'none'` with only the inline stylesheet allowed.
 //
-// All visual interactivity — the 3-tab integration guide (`<input type="radio">` +
-// `:checked` sibling selectors), the animated SVG data-flow pipeline (`@keyframes`),
-// and focus/hover states — is pure CSS and inline SVG so zero client-side JavaScript
-// executes under `default-src 'none'`.
+// The page's interactivity is all browser form state: the 3D camera and target
+// inspector on the stage, the integration tabs, and the savings calculator are
+// `<input type="radio">`/`<input type="checkbox">` plus `:checked` selectors. That is
+// the only kind of interaction a document under `default-src 'none'` can have, and it
+// keeps the page's whole behaviour auditable by reading one stylesheet.
 
 import { escapeHtml } from './billing-success.js';
+import { renderSavingsCalculator } from './landing-calculator.js';
+import { renderLandingStage, STAGE_STYLE } from './landing-stage.js';
+import { LANDING_STYLE } from './landing-styles.js';
 import { TIERS } from './pricing.js';
 
 /**
@@ -79,452 +83,6 @@ const TIER_FEATURES = Object.freeze({
     'Prometheus metrics & containment audit trail',
   ],
 });
-
-const STYLE = `
-    :root {
-      color-scheme: light dark;
-      --bg: #f6f7f9;
-      --surface: #ffffff;
-      --surface-alt: #f2f4f7;
-      --border: #e3e6eb;
-      --border-strong: #cfd5df;
-      --text: #16181d;
-      --text-secondary: #4b515c;
-      --muted: #6b7280;
-      --accent: #2f6fed;
-      --accent-hover: #245bd0;
-      --accent-soft: #eaf1ff;
-      --good: #0f766e;
-      --good-soft: #e6f7f4;
-      --bad: #b42318;
-      --bad-soft: #fef3f2;
-    }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body {
-      margin: 0;
-      padding: 0 1.25rem 4.5rem;
-      font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }
-    main { max-width: 64rem; margin: 0 auto; }
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-      flex-wrap: wrap;
-      padding: 1.25rem 0;
-      margin-bottom: 1.75rem;
-      border-bottom: 1px solid var(--border);
-    }
-    .brand {
-      display: inline-flex;
-      align-items: center;
-      gap: .65rem;
-      font-weight: 750;
-      font-size: 1.05rem;
-      letter-spacing: -.01em;
-      color: var(--text);
-      text-decoration: none;
-    }
-    .brand-mark {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 1.85rem;
-      height: 1.85rem;
-      border-radius: 8px;
-      background: var(--accent);
-      color: #fff;
-      font: 700 .88rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    }
-    .topnav {
-      display: flex;
-      align-items: center;
-      gap: 1.15rem;
-      flex-wrap: wrap;
-      font-size: .9rem;
-    }
-    .topnav a {
-      color: var(--text-secondary);
-      text-decoration: none;
-      font-weight: 550;
-    }
-    .topnav a:hover, .topnav a:focus-visible { color: var(--accent); }
-    .badge-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: .5rem;
-      margin-bottom: 1rem;
-    }
-    .badge {
-      display: inline-block;
-      font: 600 .72rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-      color: var(--text-secondary);
-      background: var(--surface-alt);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: .38rem .68rem;
-    }
-    .badge.accent {
-      color: var(--accent);
-      background: var(--accent-soft);
-      border-color: transparent;
-    }
-    .hero { padding: .75rem 0 1.75rem; }
-    h1 {
-      font-size: clamp(2rem, 4vw, 2.85rem);
-      line-height: 1.12;
-      margin: 0 0 .85rem;
-      letter-spacing: -.03em;
-      max-width: 48rem;
-    }
-    h2 {
-      font-size: .78rem;
-      text-transform: uppercase;
-      letter-spacing: .09em;
-      color: var(--muted);
-      margin: 0 0 .75rem;
-    }
-    .section-title {
-      font-size: 1.45rem;
-      line-height: 1.25;
-      letter-spacing: -.02em;
-      color: var(--text);
-      margin: 0 0 .45rem;
-      text-transform: none;
-    }
-    .section-sub {
-      color: var(--text-secondary);
-      margin: 0 0 1.25rem;
-      max-width: 48rem;
-    }
-    p { margin: 0 0 1rem; }
-    .lede {
-      font-size: 1.12rem;
-      color: var(--text-secondary);
-      margin-bottom: 1.5rem;
-      max-width: 48rem;
-    }
-    .hero-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: .75rem;
-      align-items: center;
-      margin-bottom: 2rem;
-    }
-    .btn-secondary {
-      display: inline-block;
-      font-weight: 600;
-      text-decoration: none;
-      color: var(--text);
-      background: var(--surface);
-      border: 1px solid var(--border-strong);
-      border-radius: 10px;
-      padding: .72rem 1.1rem;
-    }
-    .btn-secondary:hover, .btn-secondary:focus-visible {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-    .stats {
-      display: grid;
-      gap: .85rem;
-      grid-template-columns: repeat(auto-fit, minmax(11.5rem, 1fr));
-      margin: 0 0 1.75rem;
-    }
-    .stat {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: .95rem 1.1rem;
-      margin: 0;
-    }
-    .stat-value {
-      font: 750 1.25rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      color: var(--text);
-      margin: 0 0 .25rem;
-    }
-    .stat-label {
-      font-size: .8rem;
-      color: var(--muted);
-      margin: 0;
-    }
-    .muted { color: var(--muted); font-size: .9rem; margin: .7rem 0 0; }
-    section, .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.25rem 1.35rem;
-      margin: 0 0 1.35rem;
-      overflow-x: auto;
-    }
-    .compare {
-      display: grid;
-      gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-      margin: 0 0 1.35rem;
-    }
-    .compare section { margin: 0; }
-    .compare .bad-card { border-left: 4px solid var(--bad); }
-    .compare .good-card { border-left: 4px solid var(--good); }
-    .pill {
-      display: inline-block;
-      font: 650 .72rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      text-transform: uppercase;
-      letter-spacing: .06em;
-      padding: .3rem .55rem;
-      border-radius: 6px;
-      margin-bottom: .6rem;
-    }
-    .pill.bad { color: var(--bad); background: var(--bad-soft); }
-    .pill.good { color: var(--good); background: var(--good-soft); }
-    @keyframes flowDash {
-      to { stroke-dashoffset: -28; }
-    }
-    @keyframes pulseDot {
-      0%, 100% { opacity: .45; }
-      50% { opacity: 1; }
-    }
-    .pipeline-svg {
-      display: block;
-      width: 100%;
-      height: auto;
-      margin: .5rem 0 .85rem;
-      background: var(--surface-alt);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: .5rem;
-    }
-    .flow-line {
-      stroke: var(--accent);
-      stroke-width: 2.25;
-      stroke-dasharray: 8 6;
-      animation: flowDash 1.35s linear infinite;
-    }
-    .flow-node {
-      fill: var(--surface);
-      stroke: var(--border-strong);
-      stroke-width: 1.5;
-    }
-    .flow-node-accent {
-      fill: var(--accent-soft);
-      stroke: var(--accent);
-      stroke-width: 1.75;
-    }
-    .flow-title {
-      fill: var(--text);
-      font: 700 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    }
-    .flow-sub {
-      fill: var(--muted);
-      font: 500 10.5px ui-sans-serif, system-ui, sans-serif;
-    }
-    .flow-dot {
-      fill: var(--good);
-      animation: pulseDot 1.8s ease-in-out infinite;
-    }
-    .pillars {
-      display: grid;
-      gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
-      margin: 0 0 1.35rem;
-    }
-    .pillars section { margin: 0; }
-    .pillars h3 { margin: 0 0 .35rem; font-size: 1rem; }
-    .pillars p { margin: 0; font-size: .9rem; color: var(--text-secondary); }
-    .tabs {
-      display: flex;
-      flex-wrap: wrap;
-      gap: .45rem;
-    }
-    .tab-radio {
-      position: absolute;
-      opacity: 0;
-      pointer-events: none;
-    }
-    .tab-label {
-      cursor: pointer;
-      user-select: none;
-      font: 650 .82rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      padding: .58rem .95rem;
-      border-radius: 8px;
-      background: var(--surface-alt);
-      color: var(--text-secondary);
-      border: 1px solid var(--border);
-      transition: border-color .15s, color .15s, background .15s;
-    }
-    .tab-label:hover {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-    .tab-panel {
-      display: none;
-      width: 100%;
-      order: 99;
-      padding-top: .75rem;
-    }
-    #tab-loader:checked ~ label[for="tab-loader"],
-    #tab-edge:checked ~ label[for="tab-edge"],
-    #tab-mcp:checked ~ label[for="tab-mcp"] {
-      background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
-    }
-    #tab-loader:focus-visible ~ label[for="tab-loader"],
-    #tab-edge:focus-visible ~ label[for="tab-edge"],
-    #tab-mcp:focus-visible ~ label[for="tab-mcp"] {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-    }
-    #tab-loader:checked ~ #panel-loader,
-    #tab-edge:checked ~ #panel-edge,
-    #tab-mcp:checked ~ #panel-mcp {
-      display: block;
-    }
-    .steps-3 {
-      display: grid;
-      gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(16.5rem, 1fr));
-      margin: .75rem 0 0;
-    }
-    .step {
-      background: var(--surface-alt);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1rem 1.1rem;
-    }
-    .step-num {
-      display: inline-block;
-      font: 700 .74rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      color: var(--accent);
-      background: var(--accent-soft);
-      padding: .28rem .55rem;
-      border-radius: 999px;
-      margin-bottom: .5rem;
-    }
-    .step h3 { margin: 0 0 .35rem; font-size: .98rem; }
-    .step p { margin: 0; font-size: .86rem; color: var(--text-secondary); }
-    .tiers {
-      display: grid;
-      gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-    }
-    .tiers section { margin: 0; display: flex; flex-direction: column; position: relative; }
-    .tier.featured {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 1px var(--accent);
-    }
-    .tier-ribbon {
-      align-self: flex-start;
-      font: 700 .68rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-      color: var(--accent);
-      background: var(--accent-soft);
-      padding: .28rem .55rem;
-      border-radius: 999px;
-      margin-bottom: .5rem;
-    }
-    .tier h3 { margin: 0 0 .3rem; font-size: 1.05rem; }
-    .tier .price { font-size: 1.85rem; font-weight: 750; letter-spacing: -.02em; margin: 0; }
-    .tier .price span { font-size: .82rem; font-weight: 500; color: var(--muted); }
-    .tier .quota { font: .78rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text-secondary); margin: .3rem 0 .65rem; }
-    .tier .summary { font-size: .88rem; color: var(--text-secondary); margin: 0 0 .8rem; }
-    .tier-features {
-      list-style: none;
-      padding: .75rem 0 0;
-      margin: 0 0 1.15rem;
-      font-size: .83rem;
-      color: var(--text-secondary);
-      border-top: 1px solid var(--border);
-    }
-    .tier-features li {
-      margin: 0 0 .4rem;
-      padding-left: 1.15rem;
-      position: relative;
-    }
-    .tier-features li::before {
-      content: "✓";
-      position: absolute;
-      left: 0;
-      color: var(--good);
-      font-weight: 700;
-    }
-    .tier .cta { margin-top: auto; text-align: center; }
-    .tier .unavailable { margin: auto 0 0; font-size: .8rem; color: var(--muted); }
-    code, pre { font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    td code { white-space: nowrap; }
-    pre {
-      margin: 0;
-      overflow-wrap: anywhere;
-      padding: .9rem 1rem;
-      background: var(--surface-alt);
-      border-radius: 8px;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .muted code { overflow-wrap: anywhere; }
-    .cta {
-      display: inline-block;
-      font-weight: 650;
-      text-decoration: none;
-      color: #fff;
-      background: var(--accent);
-      border-radius: 10px;
-      padding: .75rem 1.15rem;
-    }
-    .cta:focus-visible, .cta:hover { background: var(--accent-hover); }
-    table { width: 100%; border-collapse: collapse; font-size: .92rem; }
-    th, td { text-align: left; padding: .55rem .45rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-    th { font-weight: 600; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; }
-    tr:last-child td { border-bottom: 0; }
-    td code { font-size: .86rem; }
-    .method { font-weight: 650; font-size: .78rem; letter-spacing: .04em; color: var(--accent); }
-    .faq-grid {
-      display: grid;
-      gap: 1rem;
-      grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
-    }
-    .faq-item h3 { margin: 0 0 .35rem; font-size: .95rem; }
-    .faq-item p { margin: 0; font-size: .88rem; color: var(--text-secondary); }
-    footer {
-      color: var(--muted);
-      font-size: .875rem;
-      margin-top: 2.5rem;
-      padding-top: 1.25rem;
-      border-top: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: .75rem;
-    }
-    a { color: var(--accent); }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0b0d12;
-        --surface: #131720;
-        --surface-alt: #0d1017;
-        --border: #232936;
-        --border-strong: #323b4d;
-        --text: #e8ecf2;
-        --text-secondary: #9ba3b2;
-        --muted: #8892a4;
-        --accent: #4c86ff;
-        --accent-hover: #3b78f0;
-        --accent-soft: #192847;
-        --good: #2dd4bf;
-        --good-soft: #112e2b;
-        --bad: #f87171;
-        --bad-soft: #2c1618;
-      }
-      .cta { color: #fff; }
-    }
-`;
 
 /** @param {string} method @param {string} path @param {string} detail */
 const row = (method, path, detail) => `        <tr><td><span class="method">${method}</span></td><td><code>${escapeHtml(path)}</code></td><td>${detail}</td></tr>`;
@@ -636,7 +194,7 @@ navi-mcp --transport sse</code></pre>
 <meta name="referrer" content="no-referrer">
 <meta name="description" content="Navi Interaction Bridge — deterministic semantic action maps, guarded native execution, and MCP tooling for browser agents.">
 <title>Navi Interaction Bridge — Deterministic Action Maps for Browser Agents</title>
-<style>${STYLE}</style>
+<style>${LANDING_STYLE}${STAGE_STYLE}</style>
 </head>
 <body>
 <main>
@@ -646,9 +204,11 @@ navi-mcp --transport sse</code></pre>
       <span>Navi Interaction Bridge</span>
     </a>
     <nav class="topnav" aria-label="Primary">
+      <a href="#stage">3D Stage</a>
       <a href="#why-navi">Why Navi</a>
       <a href="#architecture">Architecture</a>
       <a href="#quickstart">Quickstart</a>
+      <a href="#savings">Savings</a>
       <a href="#pricing">Pricing</a>
       <a href="#api">API</a>
       <a href="https://github.com/Wub796/Navi">GitHub</a>
@@ -660,6 +220,7 @@ navi-mcp --transport sse</code></pre>
       <span class="badge accent">navi-edge · protocol 0.3.0</span>
       <span class="badge">MCP 2025-11-25</span>
       <span class="badge">Sigstore OIDC provenance</span>
+      <span class="badge">zero-JS CSP</span>
     </div>
     <h1>Deterministic action maps for browser agents</h1>
     <p class="lede">
@@ -669,7 +230,8 @@ navi-mcp --transport sse</code></pre>
     </p>
     <div class="hero-actions">
       <a class="cta" href="#pricing">View Plans &amp; Get API Key &rarr;</a>
-      <a class="btn-secondary" href="#quickstart">Interactive Integration Guide</a>
+      <a class="btn-secondary" href="#stage">Open the 3D Stage</a>
+      <a class="btn-secondary" href="#quickstart">Integration Guide</a>
       <a class="btn-secondary" href="https://github.com/Wub796/Navi">Source &amp; Benchmarks</a>
     </div>
 
@@ -692,6 +254,8 @@ navi-mcp --transport sse</code></pre>
       </div>
     </div>
   </div>
+
+${renderLandingStage()}
 
   <div id="why-navi" class="compare">
     <section class="bad-card">
@@ -803,6 +367,8 @@ navi-mcp --transport sse</code></pre>
       </div>
     </div>
   </section>
+
+${renderSavingsCalculator()}
 
 ${pricing}
 

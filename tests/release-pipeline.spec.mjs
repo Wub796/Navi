@@ -1083,7 +1083,7 @@ test('every host module stays under the structural ceiling and inside the Docker
   for (const name of modules) {
     const source = await readFile(join(root, 'server', name), 'utf8');
     const lines = source.split('\n').length - 1;
-    expect(lines, `server/${name} is ${lines} lines, above the 1,000-line structural ceiling`).toBeLessThan(1000);
+    expect(lines, `server/${name} is ${lines} lines, above the 750-line structural ceiling`).toBeLessThan(750);
   }
   const ignore = (await readFile(join(root, '.dockerignore'), 'utf8')).split('\n');
   for (const name of modules) {
