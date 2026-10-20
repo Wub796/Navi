@@ -89,3 +89,64 @@ ${panels}
     <p class="calc-foot">Illustrative arithmetic, not a provider invoice: 45,000 tokens and 1,800 ms per page for raw HTML or screenshot planning, 650 tokens and a two-millisecond slice budget for a Navi map, $3.00 per million input tokens, one crawl per page per day over 30 days. The plan named beside each total is this deployment's list price; the commercial quotas are metered per 30-day window, and a volume above a plan's window is quoted by Enterprise.</p>
   </section>`;
 }
+
+// The savings calculator's sheet, beside the panels it dresses. Split from
+// `landing-stage.js` for the same ceiling; selectors here dress only the markup
+// `renderSavingsCalculator` emits above.
+
+/** Styles scoped to the savings calculator. */
+export const CALCULATOR_STYLE = `
+    .calc { margin-top: .5rem; }
+    .calc-switch {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 2.2rem;
+    }
+    #vol-1k:checked ~ .calc-switch label[for="vol-1k"],
+    #vol-50k:checked ~ .calc-switch label[for="vol-50k"],
+    #vol-250k:checked ~ .calc-switch label[for="vol-250k"] {
+      color: var(--accent-ink);
+      background: var(--accent);
+    }
+    #vol-1k:focus-visible ~ .calc-switch label[for="vol-1k"],
+    #vol-50k:focus-visible ~ .calc-switch label[for="vol-50k"],
+    #vol-250k:focus-visible ~ .calc-switch label[for="vol-250k"] { outline: 1px solid var(--accent); outline-offset: -3px; }
+    .calc .seg-label {
+      padding: 1rem 1.3rem;
+      border-bottom: 0;
+      border-right: 1px solid var(--line);
+    }
+    .calc .seg-label:last-child { border-right: 0; }
+    .calc-panel { display: none; }
+    #vol-1k:checked ~ #calc-1k,
+    #vol-50k:checked ~ #calc-50k,
+    #vol-250k:checked ~ #calc-250k { display: block; animation: hudRise .3s var(--ease) both; }
+    .calc-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .calc-col { padding: 1.6rem 1.6rem 1.8rem 0; border-right: 1px solid var(--line); }
+    .calc-col:last-child { border-right: 0; padding-right: 0; padding-left: 1.6rem; }
+    .calc-line { display: flex; justify-content: space-between; gap: 1rem; font: 400 .72rem/2 var(--mono); color: var(--muted); margin: 0; }
+    .calc-line strong { color: var(--fg); font-weight: 500; }
+    .calc-total { font-size: clamp(2.2rem, 3.4vw, 3.4rem); font-weight: 600; letter-spacing: -.055em; line-height: 1; margin: 1rem 0 .4rem; color: var(--fg); }
+    .calc-total span { display: block; font: 400 .56rem/1.6 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-top: .5rem; }
+    .calc-total em { font-style: normal; }
+    .calc-col.good .calc-total { color: var(--accent); }
+    .calc-save { font: 500 .7rem/1.6 var(--mono); letter-spacing: .06em; color: var(--accent); margin: .6rem 0 0; }
+    .calc-note { font-size: .82rem; line-height: 1.55; color: var(--muted); margin: .7rem 0 0; max-width: 30rem; }
+    .calc-foot { font-size: .78rem; line-height: 1.7; color: var(--muted); margin: 1.4rem 0 0; max-width: 56rem; }
+    @media (max-width: 760px) {
+      .calc-grid { grid-template-columns: 1fr; }
+      .calc-col { border-right: 0; border-bottom: 1px solid var(--line); padding-right: 0; }
+      .calc-col:last-child { border-bottom: 0; padding-left: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .seg-label { transition: none; }
+    }
+`;

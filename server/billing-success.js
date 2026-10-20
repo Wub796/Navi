@@ -58,127 +58,135 @@ export function escapeHtml(value) {
 
 const STYLE = `
     :root {
-      color-scheme: light dark;
-      --bg: #f6f7f9;
-      --surface: #ffffff;
-      --surface-alt: #f2f4f7;
-      --border: #e3e6eb;
-      --text: #16181d;
-      --text-secondary: #4b515c;
-      --muted: #6b7280;
-      --accent: #2f6fed;
-      --accent-soft: #eaf1ff;
-      --good: #0f766e;
-      --good-soft: #e6f7f4;
+      color-scheme: dark;
+      --bg: #0b0b0b;
+      --bg-deep: #070707;
+      --paper: #f2f0ea;
+      --fg: #f2f0ea;
+      --fg-soft: #c8c6bf;
+      --muted: #8d8c85;
+      --line: rgba(242, 240, 234, .16);
+      --line-strong: rgba(242, 240, 234, .34);
+      --accent: #ffd600;
+      --accent-ink: #101010;
+      --display: "Helvetica Neue", Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --ease: cubic-bezier(0.16, 1, 0.3, 1);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 2.5rem 1.25rem 4rem;
-      font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
+      padding: 3rem 1.25rem 5rem;
+      font: 16px/1.6 var(--display);
+      background:
+        radial-gradient(900px 520px at 50% -10%, rgba(242, 240, 234, .09), transparent 60%),
+        var(--bg);
+      color: var(--fg);
+      -webkit-font-smoothing: antialiased;
     }
-    main { max-width: 48rem; margin: 0 auto; }
+    main { max-width: 46rem; margin: 0 auto; }
     .status-banner {
       display: inline-flex;
       align-items: center;
       gap: .5rem;
-      font: 650 .76rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font: 600 .58rem/1 var(--mono);
+      letter-spacing: .16em;
       text-transform: uppercase;
-      letter-spacing: .07em;
-      color: var(--good);
-      background: var(--good-soft);
-      padding: .38rem .7rem;
-      border-radius: 999px;
-      margin-bottom: .85rem;
+      color: var(--accent-ink);
+      background: var(--accent);
+      padding: .42rem .65rem;
+      margin-bottom: 1.4rem;
     }
-    h1 { font-size: 1.75rem; line-height: 1.2; margin: 0 0 .45rem; letter-spacing: -.02em; }
+    h1 {
+      font-size: clamp(2.3rem, 6vw, 3.7rem);
+      line-height: .96;
+      letter-spacing: -.055em;
+      font-weight: 700;
+      margin: 0 0 .6rem;
+      max-width: 14ch;
+    }
     p { margin: 0 0 1rem; }
-    .lede { color: var(--text-secondary); margin-bottom: 1.5rem; }
+    .lede { color: var(--fg-soft); margin-bottom: 2rem; max-width: 34rem; }
     .warn {
-      border: 1px solid #f0c36d;
-      background: #fff8e6;
-      border-radius: 10px;
-      padding: .95rem 1.15rem;
-      margin: 0 0 1.5rem;
-      font-weight: 600;
-      color: #6b4a06;
+      border: 1px solid rgba(255, 214, 0, .5);
+      background: rgba(255, 214, 0, .07);
+      padding: .95rem 1.1rem;
+      margin: 0 0 2rem;
+      font: 500 .72rem/1.6 var(--mono);
+      letter-spacing: .04em;
+      color: var(--accent);
     }
     section {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.15rem 1.3rem;
-      margin: 0 0 1.25rem;
+      border-top: 1px solid var(--line);
+      padding: 1.8rem 0;
+      margin: 0;
+      background: transparent;
     }
-    h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .65rem; }
+    h2 {
+      font: 500 .58rem/1 var(--mono);
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin: 0 0 1.1rem;
+    }
     code, pre {
-      font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font: 12.5px/1.7 var(--mono);
       overflow-wrap: anywhere;
     }
     pre {
       margin: 0;
-      padding: .9rem 1rem;
-      background: var(--surface-alt);
-      border-radius: 8px;
+      padding: 1rem 1.1rem;
+      background: var(--bg-deep);
+      border: 1px solid var(--line);
       white-space: pre-wrap;
       word-break: break-word;
     }
     .key {
-      font-size: 1rem;
-      padding: .55rem .75rem;
-      background: var(--surface-alt);
-      border: 1px solid var(--border);
-      border-radius: 6px;
+      font-size: .92rem;
+      padding: .5rem .65rem;
+      background: var(--accent-ink);
+      border: 1px solid var(--accent-ink);
+      color: var(--paper);
       display: inline-block;
       user-select: all;
+      max-width: 100%;
     }
-    /* The key arrives once, so it is presented as an object rather than a line of
-       text: a tilted card in a holographic ring. The tilt collapses on hover or
-       focus, which is the page's only pure-CSS motion besides the ring itself. */
+    dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: .7rem 1.2rem; align-items: center; }
+    dt { color: var(--muted); font: 500 .56rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    /* The key arrives once, so it is presented as the one white object in the room:
+       a paper card tilted in a dashed yellow orbit. It levels on hover or focus,
+       which is the page's only motion besides the ring. */
     .vault {
       perspective: 900px;
-      background: linear-gradient(160deg, rgba(16, 24, 37, .96), rgba(6, 9, 15, .99));
-      border: 1px solid rgba(34, 211, 238, .24);
-      /* The card is holographic in both colour schemes, so its text is scoped to
-         the dark surface rather than inheriting a light-theme ink onto it. */
-      color: #e9eef8;
+      border-top: 1px solid var(--line);
+      background: transparent;
     }
-    .vault h2 { color: #8892a4; }
-    .vault dl dt { color: #8892a4; }
-    .vault dl dd { color: #e9eef8; }
-    .vault .key {
-      background: rgba(3, 7, 12, .92);
-      border-color: rgba(34, 211, 238, .35);
-      color: #e9eef8;
-    }
-    .vault .muted { color: #8892a4; }
     .vault-stage {
       position: relative;
       display: flex;
       justify-content: center;
       align-items: center;
-      padding: 1.15rem .35rem .55rem;
-      transform-style: preserve-3d;
+      padding: 1.6rem .35rem .9rem;
     }
     .vault-ring {
       position: absolute;
-      width: 21rem;
-      height: 21rem;
+      width: 24rem;
+      height: 24rem;
       max-width: 96%;
       border-radius: 50%;
-      border: 1px dashed rgba(34, 211, 238, .3);
+      border: 1px dashed rgba(255, 214, 0, .4);
       transform: rotateX(68deg);
-      animation: vaultSpin 26s linear infinite;
+      animation: vaultSpin 30s linear infinite;
       pointer-events: none;
+      z-index: 0;
     }
     .vault-ring::after {
       content: "";
       position: absolute;
-      inset: 2.4rem;
+      inset: 2.6rem;
       border-radius: 50%;
-      border: 1px solid rgba(76, 134, 255, .22);
+      border: 1px solid rgba(242, 240, 234, .12);
     }
     @keyframes vaultSpin { to { transform: rotateX(68deg) rotateZ(360deg); } }
     .vault-card {
@@ -186,17 +194,19 @@ const STYLE = `
       width: 100%;
       max-width: 33rem;
       padding: 1rem 1.1rem 1.05rem;
-      border-radius: 14px;
-      border: 1px solid rgba(34, 211, 238, .42);
-      background: linear-gradient(150deg, rgba(18, 29, 45, .97), rgba(5, 9, 15, .98));
-      box-shadow: 0 34px 70px -34px #000, 0 0 46px -18px rgba(34, 211, 238, .55), inset 0 1px 0 rgba(255, 255, 255, .07);
+      background: var(--paper);
+      color: var(--accent-ink);
+      border: 1px solid var(--paper);
+      box-shadow: 0 40px 90px -40px #000;
+      /* Deliberately flat: preserve-3d on a tilted card composited its children
+         onto their own layers, so the key band painted over the row above it. */
       transform: rotateX(8deg) rotateZ(-1.2deg);
-      transform-style: preserve-3d;
-      transition: transform .6s cubic-bezier(0.16, 1, 0.3, 1), box-shadow .6s;
+      z-index: 1;
+      transition: transform .6s var(--ease), box-shadow .6s;
     }
     .vault-card:hover, .vault-card:focus-within {
       transform: rotateX(0deg) rotateZ(0deg) translateZ(18px);
-      box-shadow: 0 40px 80px -34px #000, 0 0 60px -14px rgba(34, 211, 238, .7), inset 0 1px 0 rgba(255, 255, 255, .09);
+      box-shadow: 0 50px 100px -40px #000;
     }
     .vault-top {
       display: flex;
@@ -204,114 +214,94 @@ const STYLE = `
       align-items: center;
       gap: .75rem;
       flex-wrap: wrap;
-      margin-bottom: .7rem;
+      margin-bottom: .85rem;
     }
     .vault-chip {
-      font: 700 .62rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      letter-spacing: .1em;
+      font: 700 .54rem/1 var(--mono);
+      letter-spacing: .16em;
       text-transform: uppercase;
-      color: #04121a;
-      background: linear-gradient(135deg, #22d3ee, #7dd3fc);
-      padding: .3rem .5rem;
-      border-radius: 999px;
+      color: var(--accent-ink);
+      background: var(--accent);
+      padding: .32rem .48rem;
     }
     .vault-plan {
-      font: 600 .6rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      color: var(--muted);
-      letter-spacing: .06em;
+      font: 500 .54rem/1 var(--mono);
+      letter-spacing: .14em;
       text-transform: uppercase;
+      color: rgba(16, 16, 16, .55);
     }
+    .vault dl dt { color: rgba(16, 16, 16, .55); }
+    .vault dl dd { color: var(--accent-ink); }
     .vault-telemetry {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
-      gap: .5rem;
-      margin-top: .85rem;
-      padding-top: .7rem;
-      border-top: 1px solid var(--border);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: .6rem;
+      margin-top: 1rem;
+      padding-top: .8rem;
+      border-top: 1px solid rgba(16, 16, 16, .16);
     }
     .vault-cell span {
       display: block;
-      font: 600 .54rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      letter-spacing: .08em;
+      font: 500 .5rem/1.4 var(--mono);
+      letter-spacing: .14em;
       text-transform: uppercase;
-      color: var(--muted);
+      color: rgba(16, 16, 16, .5);
     }
     .vault-cell strong {
       display: block;
-      font: 700 .72rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      color: #22d3ee;
+      font: 600 .68rem/1.6 var(--mono);
+      color: var(--accent-ink);
     }
-    dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: .55rem 1.15rem; align-items: center; }
-    dt { color: var(--muted); font-size: .9rem; }
-    dd { margin: 0; overflow-wrap: anywhere; }
+    .vault .muted { color: var(--muted); }
     .tabs {
       display: flex;
       flex-wrap: wrap;
-      gap: .45rem;
+      gap: 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
     }
     .tab-radio {
       position: absolute;
+      width: 1px;
+      height: 1px;
       opacity: 0;
       pointer-events: none;
     }
     .tab-label {
       cursor: pointer;
       user-select: none;
-      font: 650 .8rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      padding: .52rem .88rem;
-      border-radius: 8px;
-      background: var(--surface-alt);
-      color: var(--text-secondary);
-      border: 1px solid var(--border);
+      font: 500 .6rem/1 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      padding: 1rem 1.1rem;
+      color: var(--muted);
+      border-right: 1px solid var(--line);
+      transition: color .18s, background .18s;
     }
-    .tab-label:hover {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-    .tab-panel {
-      display: none;
-      width: 100%;
-      order: 99;
-      padding-top: .75rem;
-    }
+    .tab-label:hover { color: var(--fg); }
     #onboard-loader:checked ~ label[for="onboard-loader"],
     #onboard-edge:checked ~ label[for="onboard-edge"],
     #onboard-mcp:checked ~ label[for="onboard-mcp"] {
+      color: var(--accent-ink);
       background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
     }
     #onboard-loader:focus-visible ~ label[for="onboard-loader"],
     #onboard-edge:focus-visible ~ label[for="onboard-edge"],
-    #onboard-mcp:focus-visible ~ label[for="onboard-mcp"] {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-    }
+    #onboard-mcp:focus-visible ~ label[for="onboard-mcp"] { outline: 1px solid var(--accent); outline-offset: -3px; }
+    .tab-panel { display: none; width: 100%; order: 99; padding-top: 1.4rem; }
     #onboard-loader:checked ~ #panel-onboard-loader,
     #onboard-edge:checked ~ #panel-onboard-edge,
-    #onboard-mcp:checked ~ #panel-onboard-mcp {
-      display: block;
+    #onboard-mcp:checked ~ #panel-onboard-mcp { display: block; }
+    .muted { color: var(--muted); font-size: .82rem; margin: .8rem 0 0; }
+    footer {
+      color: var(--muted);
+      font: 400 .58rem/1.8 var(--mono);
+      letter-spacing: .04em;
+      margin-top: 2.5rem;
+      padding-top: 1.4rem;
+      border-top: 1px solid var(--line);
     }
-    .muted { color: var(--muted); font-size: .88rem; margin: .65rem 0 0; }
-    footer { color: var(--muted); font-size: .875rem; margin-top: 2rem; }
     a { color: var(--accent); }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #0f1115;
-        --surface: #161920;
-        --surface-alt: #0b0d11;
-        --border: #262b34;
-        --text: #e6e8ec;
-        --text-secondary: #9aa2af;
-        --muted: #9aa2af;
-        --accent: #4c86ff;
-        --accent-soft: #192847;
-        --good: #2dd4bf;
-        --good-soft: #112e2b;
-      }
-      .warn { background: #2b2107; border-color: #6b4f0d; color: #f2d08a; }
-      .vault { background: linear-gradient(160deg, rgba(16, 24, 37, .96), rgba(6, 9, 15, .99)); }
-    }
     @media (prefers-reduced-motion: reduce) {
       .vault-ring { animation: none; }
       .vault-card, .vault-card:hover, .vault-card:focus-within { transform: none; transition: none; }
@@ -344,7 +334,9 @@ export function renderBillingSuccessPage({ tenant_id, api_key, loader_url }) {
   const sitemapUrl = escapeHtml(deriveSitemapUrl(loader_url));
   // Built as a real tag, then escaped for display, so what a customer copies is
   // exactly what the browser would have parsed.
-  const embed = `<script src="${loader}"\n        data-key="${key}"><\/script>`;
+  // Two-space continuation so the key stays on one line at 46rem: a wrapped
+  // attribute reads as if the customer's key contained a newline.
+  const embed = `<script src="${loader}"\n  data-key="${key}"><\/script>`;
   const header = `Authorization: Bearer ${api_key}`;
   const curlCommand = `curl -X POST ${deriveSitemapUrl(loader_url)} \\
   -H "${header}" \\

@@ -16,9 +16,12 @@
 !server/endpoints.js
 !server/http.js
 !server/ingest.js
+!server/landing-hero.js
+!server/landing-inspector.js
 !server/landing-calculator.js
 !server/landing-stage.js
 !server/landing-styles.js
+!server/landing-responsive.js
 !server/landing.js
 !server/maintenance.js
 !server/metrics.js

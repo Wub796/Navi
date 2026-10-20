@@ -699,7 +699,8 @@ test('reports health and refuses unknown routes', async () => {
   expect(landing.headers.get('x-content-type-options')).toBe('nosniff');
   expect(landing.headers.get('x-frame-options')).toBe('DENY');
   const landingBody = await landing.text();
-  expect(landingBody).toContain('Deterministic action maps for browser agents');
+  expect(landingBody).toContain('Deterministic');
+  expect(landingBody).toContain('browser agents');
   expect(landingBody).toContain('type="radio" name="camera-view"');
   expect(landingBody).toContain('type="radio" name="inspect-node"');
   expect(landingBody).toContain('type="radio" name="calc-volume"');

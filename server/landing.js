@@ -7,14 +7,21 @@
 // carries no credential, no analytics and no runtime, which is what lets its CSP stay
 // at `default-src 'none'` with only the inline stylesheet allowed.
 //
+// The composition is modelled after two studio sites that show one object and very
+// little else — igloo.inc's monochrome sculpture in fog and buttermax.net's black
+// field with a single yellow mark. The translation keeps the content a buyer needs
+// (model, economics, pricing, API) but sequences it as an editorial page rather than
+// a dashboard: a full-viewport hero around a floating three-plane monogram, hairline
+// sections, and oversized Helvetica display type.
+//
 // The page's interactivity is all browser form state: the 3D camera and target
-// inspector on the stage, the integration tabs, and the savings calculator are
-// `<input type="radio">`/`<input type="checkbox">` plus `:checked` selectors. That is
-// the only kind of interaction a document under `default-src 'none'` can have, and it
-// keeps the page's whole behaviour auditable by reading one stylesheet.
+// inspector on the stage, the integration tabs, the savings calculator, and the FAQ's
+// native `<details>` are the only behaviours, and every one of them works with
+// scripts disabled and under `default-src 'none'`.
 
 import { escapeHtml } from './billing-success.js';
-import { renderSavingsCalculator } from './landing-calculator.js';
+import { CALCULATOR_STYLE, renderSavingsCalculator } from './landing-calculator.js';
+import { INSPECTOR_STYLE } from './landing-inspector.js';
 import { renderLandingStage, STAGE_STYLE } from './landing-stage.js';
 import { LANDING_STYLE } from './landing-styles.js';
 import { TIERS } from './pricing.js';
@@ -92,7 +99,7 @@ const row = (method, path, detail) => `        <tr><td><span class="method">${me
 const priceLabel = cents => `$${cents / 100}`;
 
 /**
- * One card of the pricing grid.
+ * One column of the pricing grid.
  * @param {import('./pricing.js').Tier} tier @param {string | null} link
  * @returns {string}
  */
@@ -169,7 +176,7 @@ docker compose -f deploy/docker-compose.prod.yml up -d`;
 }`;
 
   const pricing = `  <section id="pricing">
-    <h2>Commercial plans</h2>
+    <h2>06 — Pricing</h2>
     <p class="section-title">Predictable 30-day quotas. Zero-integration checkout.</p>
     <p class="section-sub">Pay via Stripe Payment Link, claim your <code>navi_live_…</code> credential on the one-time redirect page, and start indexing immediately.</p>
     <div class="tiers">
@@ -194,106 +201,120 @@ navi-mcp --transport sse</code></pre>
 <meta name="referrer" content="no-referrer">
 <meta name="description" content="Navi Interaction Bridge — deterministic semantic action maps, guarded native execution, and MCP tooling for browser agents.">
 <title>Navi Interaction Bridge — Deterministic Action Maps for Browser Agents</title>
-<style>${LANDING_STYLE}${STAGE_STYLE}</style>
+<style>${LANDING_STYLE}${STAGE_STYLE}${INSPECTOR_STYLE}${CALCULATOR_STYLE}</style>
 </head>
 <body>
 <main>
   <header class="topbar">
     <a class="brand" href="/">
       <span class="brand-mark">N</span>
-      <span>Navi Interaction Bridge</span>
+      <span>navi</span>
     </a>
     <nav class="topnav" aria-label="Primary">
-      <a href="#stage">3D Stage</a>
-      <a href="#why-navi">Why Navi</a>
+      <a href="#stage">Model</a>
       <a href="#architecture">Architecture</a>
-      <a href="#quickstart">Quickstart</a>
-      <a href="#savings">Savings</a>
+      <a href="#quickstart">Integration</a>
+      <a href="#savings">Economics</a>
       <a href="#pricing">Pricing</a>
       <a href="#api">API</a>
+      <a href="#faq">FAQ</a>
       <a href="https://github.com/Wub796/Navi">GitHub</a>
+      <a class="nav-key" href="#pricing">Get key &nearr;</a>
     </nav>
   </header>
 
-  <div class="hero">
-    <div class="badge-row">
-      <span class="badge accent">navi-edge · protocol 0.3.0</span>
-      <span class="badge">MCP 2025-11-25</span>
-      <span class="badge">Sigstore OIDC provenance</span>
-      <span class="badge">zero-JS CSP</span>
-    </div>
-    <h1>Deterministic action maps for browser agents</h1>
-    <p class="lede">
-      Stop feeding 50,000 tokens of brittle DOM markup into LLM planners. Navi indexes rendered pages — including closed
-      Shadow DOM and same-origin iframes — into compact, addressable semantic targets with guarded native execution and
-      settlement receipts.
-    </p>
-    <div class="hero-actions">
-      <a class="cta" href="#pricing">View Plans &amp; Get API Key &rarr;</a>
-      <a class="btn-secondary" href="#stage">Open the 3D Stage</a>
-      <a class="btn-secondary" href="#quickstart">Integration Guide</a>
-      <a class="btn-secondary" href="https://github.com/Wub796/Navi">Source &amp; Benchmarks</a>
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="kicker">Deterministic interaction · protocol 0.3.0</p>
+      <h1>Deterministic<br>action maps for<br><em>browser agents.</em></h1>
+      <p class="lede">
+        Stop feeding 50,000 tokens of brittle DOM markup into LLM planners. Navi indexes rendered pages — including closed
+        Shadow DOM and same-origin iframes — into compact, addressable semantic targets with guarded native execution and
+        settlement receipts.
+      </p>
+      <div class="hero-actions">
+        <a class="cta" href="#pricing">Get an API key &rarr;</a>
+        <a class="btn-secondary" href="#stage">See the model &darr;</a>
+        <a class="btn-secondary" href="https://github.com/Wub796/Navi">Source &amp; benchmarks</a>
+      </div>
+      <div class="badge-row">
+        <span class="badge accent">navi-edge · 0.3.0</span>
+        <span class="badge">MCP 2025-11-25</span>
+        <span class="badge">Sigstore OIDC</span>
+        <span class="badge">zero-JS CSP</span>
+      </div>
     </div>
 
-    <div class="stats" role="region" aria-label="Verified protocol specifications">
+    <div class="hero-object" aria-hidden="true">
+      <span class="orbit"></span>
+      <div class="object-stack">
+        <span class="slab slab-1" data-label="01 / DOM"></span>
+        <span class="slab slab-2" data-label="02 / MESH"></span>
+        <span class="slab slab-3" data-label="03 / MAP"></span>
+      </div>
+    </div>
+
+    <div class="hero-stats" role="region" aria-label="Verified protocol specifications">
       <div class="stat">
         <p class="stat-value">5.9 kB gzip</p>
-        <p class="stat-label">SDK bundle (14,929 B raw, SHA-384 SRI)</p>
+        <p class="stat-label">SDK bundle · 14,929 B raw · SHA-384 SRI</p>
       </div>
       <div class="stat">
         <p class="stat-value">689 B</p>
-        <p class="stat-label">Tenant embed loader (&lt;700 B budget, auto-discovery)</p>
+        <p class="stat-label">Tenant embed loader · auto-discovery</p>
       </div>
       <div class="stat">
         <p class="stat-value">254 tests</p>
-        <p class="stat-label">Automated Chromium, Postgres &amp; MCP verification suite</p>
+        <p class="stat-label">Chromium · Postgres · MCP verification</p>
       </div>
       <div class="stat">
         <p class="stat-value">Sigstore OIDC</p>
-        <p class="stat-label">Cryptographic provenance &amp; 10 / 10 verified TCR</p>
+        <p class="stat-label">Provenance · 10 / 10 verified TCR</p>
       </div>
     </div>
-  </div>
+  </section>
+
+  <div class="shell">
 
 ${renderLandingStage()}
 
   <div id="why-navi" class="compare">
     <section class="bad-card">
       <span class="pill bad">Without Navi · Raw DOM scraping</span>
-      <h2>Fragile selectors &amp; blind sleeps</h2>
+      <p class="img">Fragile selectors &amp; blind sleeps</p>
       <p>Agents burn context windows on obfuscated CSS classes, miss controls inside closed Shadow roots, and click before hydration settles.</p>
       <pre><code>${escapeHtml(rawDomExample)}</code></pre>
     </section>
     <section class="good-card">
       <span class="pill good">With Navi · Deterministic protocol</span>
-      <h2>Semantic targets &amp; settlement receipts</h2>
+      <p class="img">Semantic targets &amp; settlement receipts</p>
       <p>Every interactive element is hashed with MurmurHash3, checked for occlusion and viewport presence, and executed with a two-frame settlement guarantee.</p>
       <pre><code>${escapeHtml(actionMapExample)}</code></pre>
     </section>
   </div>
 
   <section id="architecture">
-    <h2>End-to-end data-flow pipeline</h2>
+    <h2>02 — Architecture</h2>
     <p class="section-title">From live Browser DOM to MCP Agent in one atomic pipeline</p>
-    <p class="section-sub">Rendered with inline SVG and pure CSS <code>@keyframes</code> under <code>default-src 'none'</code> — zero client-side JavaScript.</p>
+    <p class="section-sub">Inline SVG and pure CSS <code>@keyframes</code> under <code>default-src 'none'</code> — zero client-side JavaScript.</p>
     <svg class="pipeline-svg" viewBox="0 0 880 128" role="img" aria-label="Data flow from Browser DOM to Cloudflare Edge, Supabase Atomic RPC, and MCP Agent">
       <line class="flow-line" x1="195" y1="64" x2="245" y2="64" />
       <line class="flow-line" x1="425" y1="64" x2="475" y2="64" />
       <line class="flow-line" x1="655" y1="64" x2="705" y2="64" />
-      <rect class="flow-node" x="15" y="22" width="180" height="84" rx="10" />
+      <rect class="flow-node" x="15" y="22" width="180" height="84" rx="2" />
       <circle class="flow-dot" cx="34" cy="44" r="4.5" />
       <text class="flow-title" x="46" y="48">1. Browser DOM</text>
       <text class="flow-sub" x="30" y="68">TreeWalker &le; 2 ms slice</text>
       <text class="flow-sub" x="30" y="86">Closed Shadow + iframes</text>
-      <rect class="flow-node-accent" x="245" y="22" width="180" height="84" rx="10" />
+      <rect class="flow-node-accent" x="245" y="22" width="180" height="84" rx="2" />
       <text class="flow-title" x="262" y="48">2. Cloudflare Edge</text>
       <text class="flow-sub" x="262" y="68">navi-edge Worker</text>
       <text class="flow-sub" x="262" y="86">Bearer + Origin verify</text>
-      <rect class="flow-node-accent" x="475" y="22" width="180" height="84" rx="10" />
+      <rect class="flow-node-accent" x="475" y="22" width="180" height="84" rx="2" />
       <text class="flow-title" x="492" y="48">3. Supabase RPC</text>
       <text class="flow-sub" x="492" y="68">consume_site_quota()</text>
       <text class="flow-sub" x="492" y="86">Single-tx lock + store</text>
-      <rect class="flow-node" x="705" y="22" width="160" height="84" rx="10" />
+      <rect class="flow-node" x="705" y="22" width="160" height="84" rx="2" />
       <circle class="flow-dot" cx="724" cy="44" r="4.5" />
       <text class="flow-title" x="736" y="48">4. MCP Agent</text>
       <text class="flow-sub" x="720" y="68">navi-mcp stdio / SSE</text>
@@ -319,9 +340,9 @@ ${renderLandingStage()}
   </section>
 
   <section id="quickstart">
-    <h2>Interactive 3-tab integration guide</h2>
+    <h2>03 — Integration</h2>
     <p class="section-title">Drop-in browser loader, edge ingestion API, or local MCP host</p>
-    <p class="section-sub">Switch tabs below (pure CSS radio state — works with scripts disabled).</p>
+    <p class="section-sub">Switch tabs below — pure CSS radio state that works with scripts disabled.</p>
     <div class="tabs">
       <input class="tab-radio" type="radio" name="integration-tab" id="tab-loader" checked>
       <label class="tab-label" for="tab-loader">1 · Browser Script Loader</label>
@@ -346,9 +367,9 @@ ${renderLandingStage()}
   </section>
 
   <section>
-    <h2>How self-serve provisioning works</h2>
-    <p class="section-title">3-step instant Stripe Checkout to one-time API key claim</p>
-    <p class="section-sub">Built for standard Stripe Payment Links with zero custom webhook code required on your end.</p>
+    <h2>04 — Provisioning</h2>
+    <p class="section-title">How self-serve provisioning works</p>
+    <p class="section-sub">3-step instant Stripe Checkout to a one-time API key claim, built for standard Payment Links with zero custom webhook code on your end.</p>
     <div class="steps-3">
       <div class="step">
         <span class="step-num">Step 1 · Stripe Checkout</span>
@@ -375,7 +396,8 @@ ${pricing}
 ${quickstart}
 
   <section id="api">
-    <h2>Endpoints</h2>
+    <h2>07 — API</h2>
+    <p class="section-title">Five public surfaces</p>
     <table>
       <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
       <tbody>
@@ -390,33 +412,39 @@ ${[
     </table>
   </section>
 
-  <section>
-    <h2>Operational FAQ</h2>
-    <div class="faq-grid">
-      <div class="faq-item">
-        <h3>Why does Pro include a commercial license?</h3>
+  <section id="faq">
+    <h2>08 — Questions</h2>
+    <p class="section-title">Operational FAQ</p>
+    <div class="faq">
+      <details class="faq-item">
+        <summary>Why does Pro include a commercial license?</summary>
         <p>The Community edition is licensed under <code>AGPL-3.0-or-later</code>, which requires network services to offer their Corresponding Source. Active Pro and Enterprise subscriptions grant a commercial exemption for proprietary SaaS and internal deployments.</p>
-      </div>
-      <div class="faq-item">
-        <h3>Will upgrading my plan rotate my embedded API key?</h3>
+      </details>
+      <details class="faq-item">
+        <summary>Will upgrading my plan rotate my embedded API key?</summary>
         <p>No. Keys are minted once on initial provisioning. A subsequent <code>customer.subscription.updated</code> event updates your 30-day quota ceiling in place while preserving your live <code>navi_live_…</code> credential and origin allow-list.</p>
-      </div>
-      <div class="faq-item">
-        <h3>What happens when a quota window is exceeded or canceled?</h3>
+      </details>
+      <details class="faq-item">
+        <summary>What happens when a quota window is exceeded or canceled?</summary>
         <p>Ingestion responds with <code>HTTP 429 {"error":"Quota exceeded"}</code> plus <code>Retry-After</code> and <code>X-Quota-Limit</code> headers — never <code>401 Unauthorized</code> — so your monitoring can distinguish plan exhaustion from a bad credential.</p>
-      </div>
-      <div class="faq-item">
-        <h3>Why does this page ship with <code>default-src 'none'</code>?</h3>
+      </details>
+      <details class="faq-item">
+        <summary><span>Why does this page ship with <code>default-src 'none'</code>?</span></summary>
         <p>Every public surface on <code>navi-edge</code> runs zero JavaScript, zero trackers, and zero external fonts. Keeping the root and onboarding pages script-free eliminates XSS exfiltration vectors by construction.</p>
-      </div>
+      </details>
     </div>
   </section>
 
-  <footer>
-    <span>Navi protocol 0.3.0 · MCP 2025-11-25 · <a href="https://github.com/Wub796/Navi">github.com/Wub796/Navi</a></span>
-    <span>License: <code>AGPL-3.0-or-later</code> (Commercial exemption on Pro &amp; Enterprise)</span>
-  </footer>
+  </div>
 </main>
+
+<footer>
+  <div class="footer-meta">
+    <span>Navi protocol 0.3.0 · MCP 2025-11-25 · <a href="https://github.com/Wub796/Navi">github.com/Wub796/Navi</a></span>
+    <span>AGPL-3.0-or-later · commercial exemption on Pro &amp; Enterprise</span>
+  </div>
+  <span class="footer-mark" aria-hidden="true">navi</span>
+</footer>
 </body>
 </html>
 `;
