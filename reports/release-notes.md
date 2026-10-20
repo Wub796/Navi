@@ -1,4 +1,4 @@
-## Navi 0.6.8
+## Navi 0.6.9
 
 Distributed browser runtime for agent-driven pages: deterministic action maps, differential
 updates, guarded execution and settlement receipts. Protocol version `0.3.0` — read out of
@@ -49,37 +49,38 @@ teardown. Every row is read out of `evidence.canary` in the verification receipt
 
 | Check | Description | Status |
 | :--- | :--- | :--- |
-| `manifest-layout` | all 32 required manifest exports present (dist/navi.min.js, dist/loader.min.js, dist/mcp.mjs, bin/navi-mcp.js, …) | Passed |
+| `manifest-layout` | all 39 required manifest exports present (dist/navi.min.js, dist/loader.min.js, dist/mcp.mjs, bin/navi-mcp.js, …) | Passed |
 | `sri-and-budgets` | dist/navi.min.js (14929 B) matches sha384-TmtbTx4Um3FaZ25ht…; dist/loader.min.js is 689 B (<=700 B) | Passed |
-| `zero-leak-isolation` | 0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (35 files total) | Passed |
-| `mcp-initialize` | negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.8 (Navi protocol 0.3.0) | Passed |
+| `zero-leak-isolation` | 0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (42 files total) | Passed |
+| `mcp-initialize` | negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.9 (Navi protocol 0.3.0) | Passed |
 | `mcp-tools-list` | tools/list declared navi_navigate, navi_get_actions, navi_execute_action, navi_assert_state, navi_set_session (Navi protocol 0.3.0) | Passed |
 | `mcp-sigterm-teardown` | clean teardown on SIGTERM with exit code 0 | Passed |
 
 ### Verification
 
-Provenance: `evidence.revision` is `5fcf25ac8f659fc2d312d362218ac9e29f28c3f2` and `evidence.sourceTree` is `sha256:491124ef2e050527f4c085b9d8dc004a2fad6667886a802b38d8d1dfcde17f41` — a digest of every tracked
+Provenance: `evidence.revision` is `0ceb800981fe2b5ed5e0c9b689d5f7f12cb3d652` and `evidence.sourceTree` is `sha256:3b2ec904bbedae7bfb68fafa05bbebc60274a0636bcb536816f3227197ef4025` — a digest of every tracked
 path outside `reports/`. This receipt is published by the generated-reports commit that follows the
 gate run, so the revision it names is one step behind the tag; the digest is what shows the tagged
 commit carries exactly the source tree the gate verified, allowing a rewrite under `reports/` and
 nothing else. The publish preflight refuses on any other difference, and on a recorded digest that
 does not match the tagged tree.
 
-Recorded by `npm run verify:release` at 2026-10-19T01:08:27.207Z: **11/11 checks passed**, receipt `ok: true`.
+Recorded by `npm run verify:release` at 2026-10-20T16:32:17.543Z: **12/12 checks passed**, receipt `ok: true`.
 
 | Check | Result | Detail |
 |---|---|---:|
 | `node-runtime` | pass | v22.23.3; release verification requires Node 22.x and engines >=22.0.0 |
 | `git-repository` | pass | on main |
-| `git-clean` | pass | clean apart from 0 generated path(s) |
-| `version-tag` | pass | v0.6.8 does not exist yet (create it with --tag once this gate is green) |
+| `git-clean` | pass | clean apart from 8 generated path(s) |
+| `version-tag` | pass | v0.6.9 does not exist yet; it will be created after all checks pass |
 | `artifact-budget` | pass | navi.min.js 14929 B (<15000), loader.min.js 689 B (<700) |
 | `subresource-integrity` | pass | sha384-TmtbTx4Um3FaZ25ht… matches dist/sri.txt and reports/build.json |
-| `test-suite` | pass | 251 passed, 0 failed, 0 skipped (floor 251) |
+| `test-suite` | pass | 257 passed, 0 failed, 0 skipped (floor 257) |
 | `ci-gates` | pass | All selected gates passed. |
 | `pack-check` | pass | every published path is an intended release artifact |
 | `cleanroom-package-canary` | pass | 6/6 clean-room canary checks passed (manifest exports, SRI match, zero leaks, stdio JSON-RPC handshake) |
 | `rebuild-stable` | pass | rebuilt to identical bytes (14929 B bundle, 689 B loader) |
+| `create-tag` | pass | created v0.6.9 at 0ceb800 |
 
 ### Discovery
 
@@ -91,7 +92,7 @@ configuration for Claude Desktop, Cursor and page embeds: [docs/INTEGRATION-MATR
 
 ### Honest limits
 
-These notes are generated from this repository's own gate receipts on v0.6.8. The npm publish
+These notes are generated from this repository's own gate receipts on v0.6.9. The npm publish
 is verified by the workflow, not by a hosted CI run reproduced here; the remote SSE transport
 is exercised against this repository's own SSE tests rather than a third-party client; and
 each architecture's container verification is recorded only where a receipt exists — a

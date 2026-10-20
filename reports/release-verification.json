@@ -1,17 +1,17 @@
 {
   "ok": true,
   "node": "v22.23.3",
-  "recordedAt": "2026-10-19T01:08:27.207Z",
+  "recordedAt": "2026-10-20T16:32:17.543Z",
   "evidence": {
-    "revision": "5fcf25ac8f659fc2d312d362218ac9e29f28c3f2",
+    "revision": "0ceb800981fe2b5ed5e0c9b689d5f7f12cb3d652",
     "branch": "main",
-    "sourceTree": "sha256:491124ef2e050527f4c085b9d8dc004a2fad6667886a802b38d8d1dfcde17f41",
+    "sourceTree": "sha256:3b2ec904bbedae7bfb68fafa05bbebc60274a0636bcb536816f3227197ef4025",
     "sri": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
     "bundleBytes": 14929,
     "loaderBytes": 689,
-    "floor": 251,
+    "floor": 257,
     "tests": [
-      251,
+      257,
       0
     ],
     "containers": [
@@ -44,7 +44,7 @@
         {
           "id": "manifest-layout",
           "ok": true,
-          "detail": "all 32 required manifest exports present (dist/navi.min.js, dist/loader.min.js, dist/mcp.mjs, bin/navi-mcp.js, …)"
+          "detail": "all 39 required manifest exports present (dist/navi.min.js, dist/loader.min.js, dist/mcp.mjs, bin/navi-mcp.js, …)"
         },
         {
           "id": "sri-and-budgets",
@@ -54,12 +54,12 @@
         {
           "id": "zero-leak-isolation",
           "ok": true,
-          "detail": "0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (35 files total)"
+          "detail": "0 forbidden/source/test files, 0 outside package.json allowlist, 0 runtime/bundled dependencies (42 files total)"
         },
         {
           "id": "mcp-initialize",
           "ok": true,
-          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.8 (Navi protocol 0.3.0)"
+          "detail": "negotiated protocolVersion 2024-11-05 with navi-mcp-server@0.6.9 (Navi protocol 0.3.0)"
         },
         {
           "id": "mcp-tools-list",
@@ -88,12 +88,12 @@
     {
       "id": "git-clean",
       "ok": true,
-      "detail": "clean apart from 0 generated path(s)"
+      "detail": "clean apart from 8 generated path(s)"
     },
     {
       "id": "version-tag",
       "ok": true,
-      "detail": "v0.6.8 does not exist yet (create it with --tag once this gate is green)"
+      "detail": "v0.6.9 does not exist yet; it will be created after all checks pass"
     },
     {
       "id": "artifact-budget",
@@ -108,7 +108,7 @@
     {
       "id": "test-suite",
       "ok": true,
-      "detail": "251 passed, 0 failed, 0 skipped (floor 251)"
+      "detail": "257 passed, 0 failed, 0 skipped (floor 257)"
     },
     {
       "id": "ci-gates",
@@ -129,6 +129,11 @@
       "id": "rebuild-stable",
       "ok": true,
       "detail": "rebuilt to identical bytes (14929 B bundle, 689 B loader)"
+    },
+    {
+      "id": "create-tag",
+      "ok": true,
+      "detail": "created v0.6.9 at 0ceb800"
     }
   ]
 }
