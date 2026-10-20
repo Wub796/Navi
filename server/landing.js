@@ -31,8 +31,10 @@ import { TIERS } from './pricing.js';
  *
  * `no-store` because the page embeds the deployment's Payment Link, which is
  * configuration rather than content; `frame-ancestors` is not in the CSP because
- * `X-Frame-Options: DENY` covers the framing and the policy is kept to the two
- * directives the page actually needs.
+ * `X-Frame-Options: DENY` covers the framing and the policy is kept to the three
+ * directives the page actually needs. `img-src 'self'` is the third and it is not
+ * optional: the page links its own favicon, and under a bare `default-src 'none'`
+ * the browser refuses to load it and logs a violation.
  */
 export const LANDING_PAGE_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
