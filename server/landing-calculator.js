@@ -96,7 +96,7 @@ ${panels}
 
 /** Styles scoped to the savings calculator. */
 export const CALCULATOR_STYLE = `
-    .calc { margin-top: .5rem; }
+    .calc { margin-top: .5rem; font-variant-numeric: tabular-nums; }
     .calc-switch {
       display: flex;
       flex-wrap: wrap;
@@ -113,7 +113,7 @@ export const CALCULATOR_STYLE = `
     }
     #vol-1k:focus-visible ~ .calc-switch label[for="vol-1k"],
     #vol-50k:focus-visible ~ .calc-switch label[for="vol-50k"],
-    #vol-250k:focus-visible ~ .calc-switch label[for="vol-250k"] { outline: 1px solid var(--accent); outline-offset: -3px; }
+    #vol-250k:focus-visible ~ .calc-switch label[for="vol-250k"] { outline: 2px solid #ffd600; outline-offset: 2px; }
     .calc .seg-label {
       padding: 1rem 1.3rem;
       border-bottom: 0;

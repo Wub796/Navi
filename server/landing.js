@@ -21,6 +21,7 @@
 
 import { escapeHtml } from './billing-success.js';
 import { CALCULATOR_STYLE, renderSavingsCalculator } from './landing-calculator.js';
+import { renderHeroMonogram } from './landing-hero.js';
 import { INSPECTOR_STYLE } from './landing-inspector.js';
 import { renderLandingStage, STAGE_STYLE } from './landing-stage.js';
 import { LANDING_STYLE } from './landing-styles.js';
@@ -156,6 +157,8 @@ npm i navi-interaction-bridge
 npx navi-mcp
 # Or run the hardened self-hosted container with SQLite WAL:
 docker compose -f deploy/docker-compose.prod.yml up -d`;
+  const openapiSnippet = `curl -sS ${escapeHtml((input.sitemapUrl ?? '/v1/sitemap/update').replace(/\/update$/, '/openapi.json'))} \\
+  -H "Authorization: Bearer $NAVI_API_KEY"`;
 
   const rawDomExample = `<div class="sc-92x-btn" onclick="run()">
   <span class="icon-wrap"><svg>...</svg></span>
@@ -259,14 +262,7 @@ navi-mcp --transport sse</code></pre>
       </div>
     </div>
 
-    <div class="hero-object" aria-hidden="true">
-      <span class="orbit"></span>
-      <div class="object-stack">
-        <span class="slab slab-1" data-label="01 / DOM"></span>
-        <span class="slab slab-2" data-label="02 / MESH"></span>
-        <span class="slab slab-3" data-label="03 / MAP"></span>
-      </div>
-    </div>
+${renderHeroMonogram()}
 
     <div class="hero-stats" role="region" aria-label="Verified protocol specifications">
       <div class="stat">
@@ -278,7 +274,7 @@ navi-mcp --transport sse</code></pre>
         <p class="stat-label">Tenant embed loader · auto-discovery</p>
       </div>
       <div class="stat">
-        <p class="stat-value">254 tests</p>
+        <p class="stat-value">264 tests</p>
         <p class="stat-label">Chromium · Postgres · MCP verification</p>
       </div>
       <div class="stat">
@@ -378,6 +374,8 @@ ${renderLandingStage()}
       <label class="tab-label" for="tab-edge">2 · Edge API (POST /v1/sitemap/update)</label>
       <input class="tab-radio" type="radio" name="integration-tab" id="tab-mcp">
       <label class="tab-label" for="tab-mcp">3 · MCP Server &amp; Docker Host</label>
+      <input class="tab-radio" type="radio" name="integration-tab" id="tab-openapi">
+      <label class="tab-label" for="tab-openapi">4 · OpenAPI 3.1 &amp; Workflows</label>
 
       <div class="tab-panel" id="panel-loader">
         <h3>1 · Embed the 689 B Subresource-Integrity Loader</h3>
@@ -393,6 +391,11 @@ ${renderLandingStage()}
         <h3>3 · Run the Self-Hosted Docker MCP Server (Stdio or SSE)</h3>
         <pre><code>${escapeHtml(mcpSnippet)}</code></pre>
         <p class="muted">Node 22+, zero runtime dependencies. Exposes <code>navi_navigate</code>, <code>navi_get_actions</code>, <code>navi_execute_action</code>, <code>navi_assert_state</code>, and <code>navi_set_session</code>.</p>
+      </div>
+      <div class="tab-panel" id="panel-openapi">
+        <h3>4 · Synthesize Typed OpenAPI 3.1 Workflows from Stored Sitemaps</h3>
+        <pre><code>${openapiSnippet}</code></pre>
+        <p class="muted">Compiles the latest stored map into an OpenAPI <code>3.1.0</code> document with typed <code>enum</code>/<code>format</code> parameters, <code>x-navi-risk-level</code> (<code>"read" | "write" | "destructive"</code>), and deterministic <code>resolveTarget</code> self-healing (confidence &ge; <code>0.85</code>).</p>
       </div>
     </div>
   </section>
@@ -434,6 +437,7 @@ ${quickstart}
       <tbody>
 ${[
   row('POST', '/v1/sitemap/update', 'Authenticated sitemap write; verifies origin allow-list and charges the tenant quota window'),
+  row('GET', '/v1/sitemap/openapi.json', 'Authenticated OpenAPI 3.1 workflow compiler; groups stored controls with x-navi-risk-level and resolveTarget metadata'),
   row('POST', '/v1/billing/webhook', 'Stripe webhook; verifies HMAC-SHA256 signature, provisions, upgrades and suspends tenants'),
   row('GET', '/v1/billing/session', 'One-time post-checkout API-key claim, returned as JSON (Cache-Control: no-store)'),
   row('GET', '/v1/billing/success', 'Browser onboarding page that consumes the one-time claim and reveals the key once'),

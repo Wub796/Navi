@@ -651,8 +651,23 @@ test('the host serves the one-time onboarding page and never repeats a claimed k
     expect(page).toContain('1 · Embed Browser Loader');
     expect(page).toContain('2 · Call Hosted Edge API');
     expect(page).toContain('3 · CLI &amp; MCP Env');
+    // The fourth integration tab is the compiled-workflow surface, and it is the same
+    // pure-CSS radio group as the first three rather than a new behaviour.
+    expect(page).toContain('4 · OpenAPI 3.1 &amp; Workflows');
+    expect(page).toContain('#onboard-openapi:checked ~ #panel-onboard-openapi');
+    expect(page).toContain('x-navi-risk-level');
+    // The credential card is a 3D object with inspection modes; the key itself is
+    // never behind a mode, and every mode is a radio the keyboard can drive.
+    expect(page).toContain('type="radio" name="vault-view"');
+    expect(page).toContain('Isometric Vault');
+    expect(page).toContain('Exploded Security Layers');
+    expect(page).toContain('#vault-view-layers:checked ~ .vault-stage .vault-card');
+    expect(page).toContain('transform-style: preserve-3d');
+    expect(page).toContain('clip-path: inset(50%)');
     expect(page).toMatch(/shown once/i);
     expect(page).toContain('noindex');
+    // A page that carries a credential carries no script at all.
+    expect(page).not.toContain('<script');
 
     // Rendering the page consumed the claim, so a refresh is an error page and the
     // key is nowhere in it.
@@ -705,7 +720,15 @@ test('reports health and refuses unknown routes', async () => {
   expect(landingBody).toContain('type="radio" name="camera-view"');
   expect(landingBody).toContain('type="radio" name="inspect-node"');
   expect(landingBody).toContain('type="radio" name="calc-volume"');
+  // Hero layer isolation, Z-plane soloing and the deploy-drift simulation are three
+  // more pure-CSS state machines on the same document.
+  expect(landingBody).toContain('type="radio" name="hero-plane"');
+  expect(landingBody).toContain('type="radio" name="stage-plane"');
+  expect(landingBody).toContain('type="checkbox" id="toggle-ui-drift"');
+  expect(landingBody).toContain('#toggle-ui-drift:checked ~ .inspector .inspect-drift');
+  expect(landingBody).toContain('role="group" aria-label="Three-plane 3D model');
   expect(landingBody).toContain('transform-style: preserve-3d');
+  expect(landingBody).toContain('clip-path: inset(50%)');
   expect(landingBody).not.toContain('<script');
   expect(landingBody.match(/<h1\b/g) ?? []).toHaveLength(1);
   expect((landingBody.match(/<h2\b/g) ?? []).length).toBeGreaterThanOrEqual(8);

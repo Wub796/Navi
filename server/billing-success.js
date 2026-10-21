@@ -14,8 +14,9 @@
 // The page carries no script. That is not an aesthetic choice: the key is the
 // secret, and a page that cannot execute code cannot be made to exfiltrate it. The
 // CSP below is the enforcement, and `style-src 'unsafe-inline'` is the only
-// exception, for the embedded stylesheet. Interactive integration tabs use pure CSS
-// `<input type="radio">` state so zero JavaScript executes.
+// exception, for the embedded stylesheet. Interactive integration tabs and 3D vault
+// inspection modes use pure CSS `<input type="radio">` state so zero JavaScript
+// executes.
 
 /**
  * Headers every response from the onboarding route carries.
@@ -64,7 +65,7 @@ const STYLE = `
       --paper: #f2f0ea;
       --fg: #f2f0ea;
       --fg-soft: #c8c6bf;
-      --muted: #8d8c85;
+      --muted: #98968e;
       --line: rgba(242, 240, 234, .16);
       --line-strong: rgba(242, 240, 234, .34);
       --accent: #ffd600;
@@ -76,15 +77,16 @@ const STYLE = `
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 3rem 1.25rem 5rem;
+      padding: clamp(1.75rem, 4vw, 3rem) 1.25rem 5rem;
       font: 16px/1.6 var(--display);
       background:
         radial-gradient(900px 520px at 50% -10%, rgba(242, 240, 234, .09), transparent 60%),
         var(--bg);
       color: var(--fg);
+      overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
     }
-    main { max-width: 46rem; margin: 0 auto; }
+    main { max-width: 48rem; margin: 0 auto; }
     .status-banner {
       display: inline-flex;
       align-items: center;
@@ -98,12 +100,13 @@ const STYLE = `
       margin-bottom: 1.4rem;
     }
     h1 {
-      font-size: clamp(2.3rem, 6vw, 3.7rem);
+      font-size: clamp(2.1rem, 6vw, 3.7rem);
       line-height: .96;
       letter-spacing: -.055em;
       font-weight: 700;
       margin: 0 0 .6rem;
       max-width: 14ch;
+      text-wrap: balance;
     }
     p { margin: 0 0 1rem; }
     .lede { color: var(--fg-soft); margin-bottom: 2rem; max-width: 34rem; }
@@ -142,7 +145,7 @@ const STYLE = `
       word-break: break-word;
     }
     .key {
-      font-size: .92rem;
+      font-size: .9rem;
       padding: .5rem .65rem;
       background: var(--accent-ink);
       border: 1px solid var(--accent-ink);
@@ -150,30 +153,77 @@ const STYLE = `
       display: inline-block;
       user-select: all;
       max-width: 100%;
+      font-variant-numeric: tabular-nums;
     }
-    dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: .7rem 1.2rem; align-items: center; }
-    dt { color: var(--muted); font: 500 .56rem/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    dl { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .7rem 1.2rem; align-items: center; }
+    dt { color: #3d3c38; font: 600 .56rem/1.2 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
     dd { margin: 0; overflow-wrap: anywhere; }
-    /* The key arrives once, so it is presented as the one white object in the room:
-       a paper card tilted in a dashed yellow orbit. It levels on hover or focus,
-       which is the page's only motion besides the ring. */
     .vault {
-      perspective: 900px;
+      perspective: 960px;
       border-top: 1px solid var(--line);
       background: transparent;
+    }
+    .vault-radio, .tab-radio {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .vault-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .35rem;
+      margin-bottom: .9rem;
+    }
+    .vault-mode-label {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      min-width: 32px;
+      padding: .42rem .7rem;
+      font: 500 .58rem/1.2 var(--mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      cursor: pointer;
+      user-select: none;
+      touch-action: manipulation;
+      transition: color 180ms, background 180ms, border-color 180ms;
+    }
+    .vault-mode-label:hover { color: var(--fg); border-color: var(--line-strong); }
+    #vault-view-iso:checked ~ .vault-toolbar label[for="vault-view-iso"],
+    #vault-view-flat:checked ~ .vault-toolbar label[for="vault-view-flat"],
+    #vault-view-layers:checked ~ .vault-toolbar label[for="vault-view-layers"] {
+      color: var(--accent-ink);
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    #vault-view-iso:focus-visible ~ .vault-toolbar label[for="vault-view-iso"],
+    #vault-view-flat:focus-visible ~ .vault-toolbar label[for="vault-view-flat"],
+    #vault-view-layers:focus-visible ~ .vault-toolbar label[for="vault-view-layers"] {
+      outline: 2px solid #ffd600;
+      outline-offset: 2px;
     }
     .vault-stage {
       position: relative;
       display: flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
-      padding: 1.6rem .35rem .9rem;
+      padding: 1.4rem .25rem 1rem;
     }
     .vault-ring {
       position: absolute;
-      width: 24rem;
-      height: 24rem;
-      max-width: 96%;
+      width: clamp(14rem, 76vw, 24rem);
+      height: clamp(14rem, 76vw, 24rem);
       border-radius: 50%;
       border: 1px dashed rgba(255, 214, 0, .4);
       transform: rotateX(68deg);
@@ -184,30 +234,81 @@ const STYLE = `
     .vault-ring::after {
       content: "";
       position: absolute;
-      inset: 2.6rem;
+      inset: 2.2rem;
       border-radius: 50%;
       border: 1px solid rgba(242, 240, 234, .12);
     }
     @keyframes vaultSpin { to { transform: rotateX(68deg) rotateZ(360deg); } }
+    .vault-tilt {
+      position: relative;
+      width: 100%;
+      max-width: 34rem;
+      transform-style: preserve-3d;
+      transition: transform 260ms var(--ease);
+      z-index: 1;
+    }
+    .vault:has(.vpad-1:is(:hover, :active)) .vault-tilt { transform: rotateX(6deg) rotateY(-8deg); }
+    .vault:has(.vpad-2:is(:hover, :active)) .vault-tilt { transform: rotateX(7deg); }
+    .vault:has(.vpad-3:is(:hover, :active)) .vault-tilt { transform: rotateX(6deg) rotateY(8deg); }
+    .vault:has(.vpad-4:is(:hover, :active)) .vault-tilt { transform: rotateY(-9deg); }
+    .vault:has(.vpad-5:is(:hover, :active)) .vault-tilt { transform: scale(1.015); }
+    .vault:has(.vpad-6:is(:hover, :active)) .vault-tilt { transform: rotateY(9deg); }
+    .vault:has(.vpad-7:is(:hover, :active)) .vault-tilt { transform: rotateX(-6deg) rotateY(-8deg); }
+    .vault:has(.vpad-8:is(:hover, :active)) .vault-tilt { transform: rotateX(-7deg); }
+    .vault:has(.vpad-9:is(:hover, :active)) .vault-tilt { transform: rotateX(-6deg) rotateY(8deg); }
     .vault-card {
       position: relative;
       width: 100%;
-      max-width: 33rem;
       padding: 1rem 1.1rem 1.05rem;
       background: var(--paper);
       color: var(--accent-ink);
       border: 1px solid var(--paper);
       box-shadow: 0 40px 90px -40px #000;
-      /* Deliberately flat: preserve-3d on a tilted card composited its children
-         onto their own layers, so the key band painted over the row above it. */
       transform: rotateX(8deg) rotateZ(-1.2deg);
-      z-index: 1;
-      transition: transform .6s var(--ease), box-shadow .6s;
+      transition: transform 280ms var(--ease), box-shadow 280ms;
+      font-variant-numeric: tabular-nums;
     }
-    .vault-card:hover, .vault-card:focus-within {
+    .vault-card:hover, .vault-card:focus-within,
+    #vault-view-flat:checked ~ .vault-stage .vault-card {
       transform: rotateX(0deg) rotateZ(0deg) translateZ(18px);
       box-shadow: 0 50px 100px -40px #000;
     }
+    #vault-view-layers:checked ~ .vault-stage .vault-card {
+      transform: rotateX(14deg) rotateZ(-3deg) translateZ(26px);
+      box-shadow: 0 0 0 2px var(--accent), 0 50px 100px -40px #000;
+    }
+    .vault-layer-hud {
+      display: none;
+      margin-top: .75rem;
+      padding: .65rem .8rem;
+      background: rgba(7, 7, 7, .94);
+      border: 1px solid var(--accent);
+      font: 500 .58rem/1.6 var(--mono);
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+    #vault-view-layers:checked ~ .vault-stage .vault-layer-hud {
+      display: block;
+      transform: translateZ(44px);
+    }
+    .vault-tilt-pad {
+      position: absolute;
+      right: .25rem;
+      bottom: .25rem;
+      display: grid;
+      grid-template-columns: repeat(3, 24px);
+      grid-template-rows: repeat(3, 24px);
+      gap: 3px;
+      z-index: 4;
+    }
+    .vpad {
+      min-width: 24px;
+      min-height: 24px;
+      touch-action: manipulation;
+      border: 1px solid rgba(242, 240, 234, .24);
+      transition: background 160ms, border-color 160ms;
+    }
+    .vpad:hover { background: var(--accent); border-color: var(--accent); }
     .vault-top {
       display: flex;
       justify-content: space-between;
@@ -225,12 +326,12 @@ const STYLE = `
       padding: .32rem .48rem;
     }
     .vault-plan {
-      font: 500 .54rem/1 var(--mono);
+      font: 600 .54rem/1.2 var(--mono);
       letter-spacing: .14em;
       text-transform: uppercase;
-      color: rgba(16, 16, 16, .55);
+      color: #3d3c38;
     }
-    .vault dl dt { color: rgba(16, 16, 16, .55); }
+    .vault dl dt { color: #3d3c38; }
     .vault dl dd { color: var(--accent-ink); }
     .vault-telemetry {
       display: grid;
@@ -238,14 +339,15 @@ const STYLE = `
       gap: .6rem;
       margin-top: 1rem;
       padding-top: .8rem;
-      border-top: 1px solid rgba(16, 16, 16, .16);
+      border-top: 1px solid rgba(16, 16, 16, .18);
+      font-variant-numeric: tabular-nums;
     }
     .vault-cell span {
       display: block;
-      font: 500 .5rem/1.4 var(--mono);
-      letter-spacing: .14em;
+      font: 600 .52rem/1.4 var(--mono);
+      letter-spacing: .12em;
       text-transform: uppercase;
-      color: rgba(16, 16, 16, .5);
+      color: #3d3c38;
     }
     .vault-cell strong {
       display: block;
@@ -260,38 +362,39 @@ const STYLE = `
       border-top: 1px solid var(--line);
       border-bottom: 1px solid var(--line);
     }
-    .tab-radio {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
-      pointer-events: none;
-    }
     .tab-label {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
       cursor: pointer;
       user-select: none;
-      font: 500 .6rem/1 var(--mono);
-      letter-spacing: .12em;
+      touch-action: manipulation;
+      font: 500 .6rem/1.2 var(--mono);
+      letter-spacing: .11em;
       text-transform: uppercase;
-      padding: 1rem 1.1rem;
+      padding: .85rem 1rem;
       color: var(--muted);
       border-right: 1px solid var(--line);
+      font-variant-numeric: tabular-nums;
       transition: color .18s, background .18s;
     }
     .tab-label:hover { color: var(--fg); }
     #onboard-loader:checked ~ label[for="onboard-loader"],
     #onboard-edge:checked ~ label[for="onboard-edge"],
-    #onboard-mcp:checked ~ label[for="onboard-mcp"] {
+    #onboard-mcp:checked ~ label[for="onboard-mcp"],
+    #onboard-openapi:checked ~ label[for="onboard-openapi"] {
       color: var(--accent-ink);
       background: var(--accent);
     }
     #onboard-loader:focus-visible ~ label[for="onboard-loader"],
     #onboard-edge:focus-visible ~ label[for="onboard-edge"],
-    #onboard-mcp:focus-visible ~ label[for="onboard-mcp"] { outline: 1px solid var(--accent); outline-offset: -3px; }
+    #onboard-mcp:focus-visible ~ label[for="onboard-mcp"],
+    #onboard-openapi:focus-visible ~ label[for="onboard-openapi"] { outline: 2px solid #ffd600; outline-offset: 2px; }
     .tab-panel { display: none; width: 100%; order: 99; padding-top: 1.4rem; }
     #onboard-loader:checked ~ #panel-onboard-loader,
     #onboard-edge:checked ~ #panel-onboard-edge,
-    #onboard-mcp:checked ~ #panel-onboard-mcp { display: block; }
+    #onboard-mcp:checked ~ #panel-onboard-mcp,
+    #onboard-openapi:checked ~ #panel-onboard-openapi { display: block; }
     .muted { color: var(--muted); font-size: .82rem; margin: .8rem 0 0; }
     footer {
       color: var(--muted);
@@ -302,23 +405,31 @@ const STYLE = `
       border-top: 1px solid var(--line);
     }
     a { color: var(--accent); }
+    @media (max-width: 640px) {
+      .vault-mode-label { min-height: 44px; }
+      .tab-label { width: 100%; border-right: 0; border-bottom: 1px solid var(--line); }
+      dl { grid-template-columns: 1fr; gap: .25rem; }
+      .vault-telemetry { grid-template-columns: 1fr; }
+    }
     @media (prefers-reduced-motion: reduce) {
-      .vault-ring { animation: none; }
-      .vault-card, .vault-card:hover, .vault-card:focus-within { transform: none; transition: none; }
+      .vault-ring { animation: none !important; }
+      .vault-card, .vault-card:hover, .vault-card:focus-within, .vault-tilt { transform: none !important; transition: none !important; }
+      *, *::before, *::after { transition-duration: .01ms !important; }
     }
 `;
 
 /**
- * Derive the sitemap ingestion endpoint URL from the loader URL when possible.
+ * Derive a sibling endpoint URL from the loader URL when possible.
  * @param {string} loaderUrl
+ * @param {string} path
  * @returns {string}
  */
-function deriveSitemapUrl(loaderUrl) {
+function deriveEndpointUrl(loaderUrl, path) {
   try {
     const parsed = new URL(loaderUrl);
-    return `${parsed.origin}/v1/sitemap/update`;
+    return `${parsed.origin}${path}`;
   } catch {
-    return '/v1/sitemap/update';
+    return path;
   }
 }
 
@@ -331,19 +442,24 @@ export function renderBillingSuccessPage({ tenant_id, api_key, loader_url }) {
   const tenant = escapeHtml(tenant_id);
   const key = escapeHtml(api_key);
   const loader = escapeHtml(loader_url);
-  const sitemapUrl = escapeHtml(deriveSitemapUrl(loader_url));
+  const rawSitemapUrl = deriveEndpointUrl(loader_url, '/v1/sitemap/update');
+  const rawOpenApiUrl = deriveEndpointUrl(loader_url, '/v1/sitemap/openapi.json');
+  const sitemapUrl = escapeHtml(rawSitemapUrl);
+  const openapiUrl = escapeHtml(rawOpenApiUrl);
   // Built as a real tag, then escaped for display, so what a customer copies is
   // exactly what the browser would have parsed.
   // Two-space continuation so the key stays on one line at 46rem: a wrapped
   // attribute reads as if the customer's key contained a newline.
   const embed = `<script src="${loader}"\n  data-key="${key}"><\/script>`;
   const header = `Authorization: Bearer ${api_key}`;
-  const curlCommand = `curl -X POST ${deriveSitemapUrl(loader_url)} \\
+  const curlCommand = `curl -X POST ${rawSitemapUrl} \\
   -H "${header}" \\
   -H "Content-Type: application/json" \\
   -d '{"url":"https://app.example.com","actions":[{"role":"button","name":"Submit"}]}'`;
   const mcpCommand = `export NAVI_API_KEY="${api_key}"
 npx navi-interaction-bridge discover --url https://app.example.com`;
+  const openapiCommand = `curl -sS ${rawOpenApiUrl} \\
+  -H "${header}"`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -366,27 +482,45 @@ npx navi-interaction-bridge discover --url https://app.example.com`;
 
   <section class="vault">
     <h2>Credentials · holographic key vault</h2>
+    <input class="vault-radio" type="radio" name="vault-view" id="vault-view-iso" checked>
+    <input class="vault-radio" type="radio" name="vault-view" id="vault-view-flat">
+    <input class="vault-radio" type="radio" name="vault-view" id="vault-view-layers">
+    <div class="vault-toolbar" role="group" aria-label="3D credential vault inspection mode">
+      <label class="vault-mode-label" for="vault-view-iso">Isometric Vault</label>
+      <label class="vault-mode-label" for="vault-view-flat">Flat Copy Surface</label>
+      <label class="vault-mode-label" for="vault-view-layers">Exploded Security Layers</label>
+    </div>
     <div class="vault-stage">
       <span class="vault-ring" aria-hidden="true"></span>
-      <div class="vault-card">
-        <div class="vault-top">
-          <span class="vault-chip">navi_live · active</span>
-          <span class="vault-plan">tenant provisioned</span>
+      <div class="vault-tilt">
+        <div class="vault-card">
+          <div class="vault-top">
+            <span class="vault-chip">navi_live · active</span>
+            <span class="vault-plan">tenant provisioned</span>
+          </div>
+          <dl>
+            <dt>Tenant</dt>
+            <dd><code>${tenant}</code></dd>
+            <dt>API key</dt>
+            <dd><span class="key"><code>${key}</code></span></dd>
+          </dl>
+          <div class="vault-telemetry">
+            <div class="vault-cell"><span>Quota window</span><strong>30 days</strong></div>
+            <div class="vault-cell"><span>Embed loader</span><strong>689 B</strong></div>
+            <div class="vault-cell"><span>Protocol</span><strong>0.3.0</strong></div>
+          </div>
         </div>
-        <dl>
-          <dt>Tenant</dt>
-          <dd><code>${tenant}</code></dd>
-          <dt>API key</dt>
-          <dd><span class="key"><code>${key}</code></span></dd>
-        </dl>
-        <div class="vault-telemetry">
-          <div class="vault-cell"><span>Quota window</span><strong>30 days</strong></div>
-          <div class="vault-cell"><span>Embed loader</span><strong>689 B</strong></div>
-          <div class="vault-cell"><span>Protocol</span><strong>0.3.0</strong></div>
+        <div class="vault-layer-hud">
+          Plane 02 · Single-use 15m claim consumed · HMAC-SHA256 verified · OpenAPI 3.1 ready
         </div>
       </div>
+      <div class="vault-tilt-pad" aria-hidden="true">
+        <span class="vpad vpad-1"></span><span class="vpad vpad-2"></span><span class="vpad vpad-3"></span>
+        <span class="vpad vpad-4"></span><span class="vpad vpad-5"></span><span class="vpad vpad-6"></span>
+        <span class="vpad vpad-7"></span><span class="vpad vpad-8"></span><span class="vpad vpad-9"></span>
+      </div>
     </div>
-    <p class="muted">Hover or focus the card to level it. The key is selected with a single click and is never rendered again.</p>
+    <p class="muted">Hover, tilt, or switch inspection modes above to level the card. The key is selected with a single click and is never rendered again.</p>
   </section>
 
   <section>
@@ -398,6 +532,8 @@ npx navi-interaction-bridge discover --url https://app.example.com`;
       <label class="tab-label" for="onboard-edge">2 · Call Hosted Edge API</label>
       <input class="tab-radio" type="radio" name="onboard-tab" id="onboard-mcp">
       <label class="tab-label" for="onboard-mcp">3 · CLI &amp; MCP Env</label>
+      <input class="tab-radio" type="radio" name="onboard-tab" id="onboard-openapi">
+      <label class="tab-label" for="onboard-openapi">4 · OpenAPI 3.1 &amp; Workflows</label>
 
       <div class="tab-panel" id="panel-onboard-loader">
         <pre>${escapeHtml(embed)}</pre>
@@ -410,6 +546,10 @@ npx navi-interaction-bridge discover --url https://app.example.com`;
       <div class="tab-panel" id="panel-onboard-mcp">
         <pre>${escapeHtml(mcpCommand)}</pre>
         <p class="muted">Store your key in a server-side secret manager or environment variable; never commit it to git.</p>
+      </div>
+      <div class="tab-panel" id="panel-onboard-openapi">
+        <pre>${escapeHtml(openapiCommand)}</pre>
+        <p class="muted">Fetches your compiled OpenAPI <code>3.1.0</code> workflow specification from <code>${openapiUrl}</code> with typed <code>workflows[]</code> and <code>x-navi-risk-level</code> metadata.</p>
       </div>
     </div>
   </section>

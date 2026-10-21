@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import worker from '../src/worker.ts';
 import { NaviPlaywrightAdapter } from '../src/adapter.js';
 import { createNaviHostServer } from '../server/index.js';
+import { LANDING_PAGE_HEADERS } from '../server/landing.js';
+import { BILLING_PAGE_HEADERS, renderBillingSuccessPage } from '../server/billing-success.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const endpoint = 'https://worker.example/v1/sitemap/update';
@@ -531,7 +533,7 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     '5.9 kB gzip',
     '14,929 B',
     '689 B',
-    '254 tests',
+    '264 tests',
     'Sigstore OIDC',
     'Without Navi · Raw DOM scraping',
     'With Navi · Deterministic protocol',
@@ -557,6 +559,19 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     'Front UI Surface',
     'Agent Matrix Overhead',
     'type="radio" name="inspect-node"',
+    // The hero and stage are each a pure-CSS state machine: a radio per plane the
+    // hero can isolate, a radio per Z plane the stage can solo, and one checkbox
+    // that simulates a deploy mutating the page underneath the agent.
+    'type="radio" name="hero-plane"',
+    'hero-plane-3',
+    '#hero-plane-2:checked ~ .hero-scene .slab-2',
+    'type="radio" name="stage-plane"',
+    '#plane-focus-3:checked ~ .stage-viewport .plane-3',
+    'type="checkbox" id="toggle-ui-drift"',
+    '#toggle-ui-drift:checked ~ .inspector .inspect-drift',
+    'resolveTarget',
+    'confidence',
+    'x-navi-risk-level',
     'act_pay_01',
     'act_shadow_02',
     'act_pii_03',
@@ -600,7 +615,7 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   // The stage's selectors actually drive the scene rather than merely naming it.
   expect(body).toContain('#cam-front:checked ~ .stage-viewport .stage-3d');
   expect(body).toContain('#toggle-explode:checked ~ .stage-viewport .stage-3d');
-  expect(body).toContain(':has(.pad-9:hover) .stage-tilt');
+  expect(body).toContain(':has(.pad-9:is(:hover, :active)) .stage-tilt');
   expect(body).toContain('@media (prefers-reduced-motion: reduce)');
 
   // Each tier's own Payment Link becomes that card's call to action. The legacy
@@ -1250,4 +1265,140 @@ test('the edge compiles a stored sitemap into OpenAPI 3.1 workflows, and names t
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('the 3D surfaces reflow without sideways scroll and change state from the keyboard', async ({ page }) => {
+  // The reference rule is the document-level one the design skills state: at every
+  // required width `scrollWidth <= clientWidth`. It is asserted in a real browser
+  // because the 3D stage is exactly the kind of transform-scaled scene that looks
+  // fine in source and pushes a label past the right edge at 320px.
+  //
+  // Both documents are served from a routed origin rather than `setContent`, so the
+  // CSP header each page ships with is applied to the navigation. `default-src
+  // 'none'` would otherwise be untested by the layout assertions that follow.
+  const origin = 'http://localhost';
+  const landingHtml = await (await workerRequest(`${origin}/`)).text();
+  const billingHtml = renderBillingSuccessPage({
+    tenant_id: 'tenant-viewport',
+    api_key: 'navi_live_viewport_key',
+    loader_url: `${origin}/v1/navi.js`
+  });
+  /** @type {string[]} */
+  const errors = [];
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('pageerror', error => errors.push(String(error)));
+  const icon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><path d="M0 0h8v8H0z"/></svg>';
+  await page.route(`${origin}/**`, route => {
+    const { pathname } = new URL(route.request().url());
+    if (pathname === '/') return route.fulfill({ status: 200, headers: LANDING_PAGE_HEADERS, body: landingHtml });
+    if (pathname === '/v1/billing/success') return route.fulfill({ status: 200, headers: BILLING_PAGE_HEADERS, body: billingHtml });
+    if (pathname.endsWith('.svg')) return route.fulfill({ status: 200, contentType: 'image/svg+xml', body: icon });
+    return route.fulfill({ status: 404, contentType: 'text/plain', body: 'not found' });
+  });
+
+  /** Tab until the element with this id has focus. @param {string} id @returns {Promise<boolean>} */
+  const tabTo = async id => {
+    for (let press = 0; press < 40; press += 1) {
+      await page.keyboard.press('Tab');
+      if (await page.evaluate(() => document.activeElement?.id) === id) return true;
+    }
+    return false;
+  };
+  /** @param {string} selector @returns {Promise<{outlineStyle: string, outlineWidth: string, outlineColor: string}>} */
+  const outlineOf = selector => page.evaluate(css => {
+    const style = getComputedStyle(/** @type {Element} */ (document.querySelector(css)));
+    return { outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth, outlineColor: style.outlineColor };
+  }, selector);
+
+  const viewports = [
+    { width: 320, height: 568 },
+    { width: 375, height: 812 },
+    { width: 768, height: 1024 },
+    { width: 1024, height: 768 },
+    { width: 1440, height: 900 }
+  ];
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    for (const path of ['/', '/v1/billing/success']) {
+      await page.goto(origin + path);
+      const measured = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        // No visually-hidden control may be `display: none`, which would take it out
+        // of the tab order and leave the label it drives unreachable.
+        hidden: [...document.querySelectorAll('input[type=radio], input[type=checkbox]')].map(candidate => {
+          const input = /** @type {HTMLInputElement} */ (candidate);
+          return {
+            id: input.id,
+            display: getComputedStyle(input).display,
+            tabbable: input.tabIndex >= 0 && !input.disabled,
+            clip: getComputedStyle(input).clipPath
+          };
+        }),
+        // Every metric, byte budget and receipt figure is set in tabular figures so
+        // a number does not shift width when it changes.
+        untabbed: [...document.querySelectorAll('.stat-value, .slab-meta, .inspect-json, .hud, .vault-telemetry, .tier-price')]
+          .filter(node => getComputedStyle(node).fontVariantNumeric !== 'tabular-nums').length
+      }));
+      expect(measured.scrollWidth, `${path} at ${viewport.width}px must not scroll sideways`).toBeLessThanOrEqual(measured.clientWidth);
+      for (const input of measured.hidden) {
+        expect(input.display, `${path} ${input.id} must not use display:none`).not.toBe('none');
+        expect(input.tabbable, `${path} ${input.id} must stay in the tab order`).toBe(true);
+        expect(input.clip, `${path} ${input.id} must be visually hidden, not removed`).toContain('inset(50%)');
+      }
+      expect(measured.untabbed, `${path} at ${viewport.width}px must use tabular figures`).toBe(0);
+    }
+  }
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(origin + '/');
+
+  // Hero: Tab to the checked plane, confirm the label draws a focus ring, then move
+  // the selection with ArrowRight. The sculpture has to actually change, not merely
+  // report a new radio value.
+  expect(await tabTo('hero-plane-all'), 'the hero radio group must be reachable by Tab').toBe(true);
+  const heroRing = await outlineOf('label[for="hero-plane-all"]');
+  expect(heroRing).toMatchObject({ outlineStyle: 'solid', outlineWidth: '2px', outlineColor: 'rgb(255, 214, 0)' });
+  const slabBefore = await page.evaluate(() => getComputedStyle(/** @type {Element} */ (document.querySelector('.slab-2'))).opacity);
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#hero-plane-1')).toBeChecked();
+  await page.waitForTimeout(350);
+  expect(Number(await page.evaluate(() => getComputedStyle(/** @type {Element} */ (document.querySelector('.slab-2'))).opacity)), 'isolating plane 01 must dim the mesh plane').toBeLessThan(Number(slabBefore));
+
+  // Stage: the camera preset and the drift simulation are keyboard state machines.
+  expect(await tabTo('cam-iso'), 'the camera presets must be reachable by Tab').toBe(true);
+  const cameraRing = await outlineOf('label[for="cam-iso"]');
+  expect(cameraRing).toMatchObject({ outlineStyle: 'solid', outlineWidth: '2px' });
+  const transformBefore = await page.evaluate(() => getComputedStyle(/** @type {Element} */ (document.querySelector('.stage-3d'))).transform);
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#cam-front')).toBeChecked();
+  await page.waitForTimeout(350);
+  expect(await page.evaluate(() => getComputedStyle(/** @type {Element} */ (document.querySelector('.stage-3d'))).transform)).not.toBe(transformBefore);
+
+  expect(await tabTo('toggle-ui-drift'), 'the drift simulation must be reachable by Tab').toBe(true);
+  await page.keyboard.press('Space');
+  await expect(page.locator('#toggle-ui-drift')).toBeChecked();
+  await page.waitForTimeout(350);
+  expect(await page.evaluate(() => getComputedStyle(/** @type {Element} */ (document.querySelector('.wire-cta'))).borderColor)).toBe('rgb(183, 241, 113)');
+  expect(await page.evaluate(() => getComputedStyle(/** @type {Element} */ (document.querySelector('.inspect-drift'))).display)).toBe('block');
+
+  // Billing: the fourth integration tab and the vault's inspection modes are the
+  // same kind of radio state, and they must work without a pointer.
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto(`${origin}/v1/billing/success`);
+  expect(await tabTo('vault-view-iso'), 'the vault modes must be reachable by Tab').toBe(true);
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#vault-view-flat')).toBeChecked();
+  await page.waitForTimeout(350);
+  expect(await page.evaluate(() => getComputedStyle(/** @type {Element} */ (document.querySelector('.vault-card'))).transform)).toContain('matrix');
+
+  expect(await tabTo('onboard-loader'), 'the integration tabs must be reachable by Tab').toBe(true);
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#onboard-openapi')).toBeChecked();
+  await expect(page.locator('#panel-onboard-openapi')).toBeVisible();
+  await expect(page.locator('#panel-onboard-openapi')).toContainText('x-navi-risk-level');
+
+  expect(errors, `the CSP must not be violated: ${errors.join(' | ')}`).toEqual([]);
 });
