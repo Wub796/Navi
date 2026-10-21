@@ -250,9 +250,7 @@ export function createIngestRoutes(options) {
       if (!tenantConfig) {
         return sendError(res, 401, 'UNAUTHORIZED', 'A tenant key is required to compile a sitemap: send "Authorization: Bearer <tenant_key>" or ?key=<tenant_key>.');
       }
-      const latest = typeof store.readLatestNavigationMap === 'function'
-        ? await store.readLatestNavigationMap(tenantConfig.id)
-        : null;
+      const latest = await store.readLatestNavigationMap(tenantConfig.id);
       if (!latest) {
         return sendError(res, 404, 'NO_SITEMAP', `No sitemap has been stored for tenant "${tenantConfig.id}" yet: POST one to /v1/sitemap/update first.`);
       }
