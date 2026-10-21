@@ -8,7 +8,7 @@
 -- security. Nothing else may read these tables: the anon key is public by definition
 -- (it ships in browser code) and a tenant's api_key must never be reachable with it.
 --
--- The three functions at the end are the whole write path. They exist because
+-- The functions at the end are the whole write path, plus one read. They exist because
 -- PostgREST cannot span several REST calls in one transaction: a claim, a site
 -- upsert and a checkout claim issued as three requests can be interleaved by two
 -- isolates, and a crash between them leaves an event id claimed by an event that
@@ -470,6 +470,56 @@ begin
 end;
 $$;
 
+/**
+ * Read one tenant's latest stored map, for the compiled workflow surface.
+ *
+ * The one function here that is not a write path: `GET /v1/sitemap/openapi.json`
+ * compiles whatever this returns into OpenAPI, so a page that was indexed once
+ * keeps answering as a typed API. The key arrives in the RPC body rather than a
+ * query string, because a PostgREST filter is a query parameter and a credential
+ * in a URL is a credential in an access log.
+ *
+ * `payload: null` with `found: true` is a tenant that has stored nothing yet, which
+ * is a different answer from an unknown key and lets the Worker say "POST a map
+ * first" instead of telling a paying customer they are unauthorized.
+ */
+create or replace function public.read_site_map(p_api_key text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  site public.sites;
+  map public.navigation_maps;
+begin
+  select * into site from public.sites where api_key = p_api_key and active = true;
+  if not found then
+    return jsonb_build_object('found', false);
+  end if;
+
+  -- The map the tenant most recently stored, which is the one its page currently
+  -- answers with. The id breaks a tie between two writes in the same instant.
+  select * into map
+    from public.navigation_maps
+   where site_id = site.id
+   order by updated_at desc, id desc
+   limit 1;
+
+  if not found then
+    return jsonb_build_object('found', true, 'id', site.id, 'payload', null);
+  end if;
+
+  return jsonb_build_object(
+    'found', true,
+    'id', site.id,
+    'url', map.url,
+    'payload', map.payload,
+    'updated_at', map.updated_at
+  );
+end;
+$$;
+
 -- EXECUTE is granted to PUBLIC on a new function, so revoking it is the step that
 -- makes these callable by the service role alone. `anon` ships in browser code and
 -- `authenticated` is every signed-in end user of a Supabase project; neither may
@@ -477,10 +527,12 @@ $$;
 revoke all on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz, text) from public, anon, authenticated;
 revoke all on function public.consume_site_quota(text, bigint, text, text, text, jsonb) from public, anon, authenticated;
 revoke all on function public.claim_checkout_session(text) from public, anon, authenticated;
+revoke all on function public.read_site_map(text) from public, anon, authenticated;
 
 grant execute on function public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz, text) to service_role;
 grant execute on function public.consume_site_quota(text, bigint, text, text, text, jsonb) to service_role;
 grant execute on function public.claim_checkout_session(text) to service_role;
+grant execute on function public.read_site_map(text) to service_role;
 
 -- PostgREST serves the tables and functions it last introspected, so a function
 -- added or replaced here is invisible over HTTP until that cache is refreshed. The

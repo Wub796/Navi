@@ -508,7 +508,7 @@ test('the published test floor is one number, stated everywhere it is promised',
   // is a deliberate change to all of them, rather than a bump in one place and a doc that
   // quietly stops matching the gate it describes.
   const verifySource = await readFile(join(root, 'scripts/verify-release.mjs'), 'utf8');
-  expect(MIN_PASSING_TESTS).toBe(257);
+  expect(MIN_PASSING_TESTS).toBe(263);
   expect(Number(/MIN_PASSING_TESTS = (\d+)/.exec(verifySource)?.[1])).toBe(MIN_PASSING_TESTS);
   for (const document of ['README.md', 'docs/ACCEPTANCE.md', 'docs/RELEASES/v0.6.8.md', 'docs/CONTAINERS.md', 'AGENTS.md']) {
     const text = await readFile(join(root, document), 'utf8');
@@ -568,21 +568,26 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   expect(schema).toContain('create unique index if not exists idx_sites_api_key');
   expect(schema).toContain('create unique index if not exists idx_navigation_maps_site_url');
 
-  // The write path is three functions, not a sequence of REST calls PostgREST
-  // cannot make atomic. Each must be idempotently defined, security definer with a
-  // pinned search_path, and executable by the service role alone.
+  // The data path is four functions: three writes that must be atomic, plus the one
+  // read the compiled-workflow route makes. Each must be idempotently defined,
+  // security definer with a pinned search_path, and executable by the service role
+  // alone.
   const functions = [
     ['apply_stripe_webhook', 'public.apply_stripe_webhook(text, text, text, jsonb, integer, integer, boolean, text, timestamptz, text)'],
     ['consume_site_quota', 'public.consume_site_quota(text, bigint, text, text, text, jsonb)'],
-    ['claim_checkout_session', 'public.claim_checkout_session(text)']
+    ['claim_checkout_session', 'public.claim_checkout_session(text)'],
+    ['read_site_map', 'public.read_site_map(text)']
   ];
   for (const [name, signature] of functions) {
     expect(schema, `${name} must be created idempotently`).toContain(`create or replace function public.${name}(`);
     expect(schema, `${name} must deny the public roles`).toContain(`revoke all on function ${signature} from public, anon, authenticated;`);
     expect(schema, `${name} must grant service_role explicitly`).toContain(`grant execute on function ${signature} to service_role;`);
   }
-  expect(schema.match(/security definer/g) ?? []).toHaveLength(3);
-  expect(schema.match(/set search_path = public/g) ?? []).toHaveLength(3);
+  expect(schema.match(/security definer/g) ?? []).toHaveLength(4);
+  expect(schema.match(/set search_path = public/g) ?? []).toHaveLength(4);
+  // The read is the latest map by time, and the id is the tie-break that makes
+  // "latest" one row rather than whichever the planner returned first.
+  expect(schema).toMatch(/from public\.navigation_maps\s+where site_id = site\.id\s+order by updated_at desc, id desc/);
   // The atomicity the functions promise, asserted on the statements that provide it:
   // a duplicate delivery changes no row, the ledger is pruned inside every write, the
   // quota charge holds the tenant row, and the claim is consumed by the delete itself.
@@ -607,6 +612,7 @@ test('the edge deployment contract pins its schema, deny rules and entrypoint', 
   expect(worker).toContain("callRpc(env, 'apply_stripe_webhook'");
   expect(worker).toContain("callRpc(env, 'consume_site_quota'");
   expect(worker).toContain("callRpc(env, 'claim_checkout_session'");
+  expect(worker).toContain("callRpc(env, 'read_site_map'");
   expect(worker).not.toContain('/rest/v1/webhook_events');
   expect(worker).not.toContain('/rest/v1/checkout_claims');
   expect(worker).not.toContain('resolution=ignore-duplicates');

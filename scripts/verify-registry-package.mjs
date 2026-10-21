@@ -66,6 +66,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'server/public-routes.js',
   'server/quota.js',
   'server/rate-limit.js',
+  'server/sitemap-workflows.js',
   'server/store.js',
   'server/store-format.js',
   'server/store-lifecycle.js',

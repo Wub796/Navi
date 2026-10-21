@@ -140,6 +140,10 @@ export function createSqliteStore(path, sqlite) {
   const deleteExpiredCheckoutClaims = db.prepare('DELETE FROM checkout_claims WHERE expires_at_ms <= ?');
   const upsertNavigationMap = db.prepare('INSERT INTO navigation_maps (site_id, url, payload, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(site_id, url) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at');
   const selectNavigationMap = db.prepare('SELECT site_id, url, payload, updated_at FROM navigation_maps WHERE site_id = ? AND url = ?');
+  // `updated_at` is an ISO-8601 instant written by this process, so text order is
+  // time order; `rowid` breaks a tie between two writes in the same millisecond so
+  // "the latest map" is one row rather than whichever the planner returned first.
+  const selectLatestNavigationMap = db.prepare('SELECT site_id, url, payload, updated_at FROM navigation_maps WHERE site_id = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1');
   const selectTenantQuota = db.prepare('SELECT window_start_ms, event_count FROM tenant_quotas WHERE tenant_id = ?');
   const upsertTenantQuota = db.prepare('INSERT INTO tenant_quotas (tenant_id, window_start_ms, event_count) VALUES (?, ?, ?) ON CONFLICT(tenant_id) DO UPDATE SET window_start_ms = excluded.window_start_ms, event_count = excluded.event_count');
   const upsertTenantDefinition = db.prepare('INSERT INTO tenant_definitions (tenant_id, api_key, allowed_origins, max_events_per_window, window_seconds, status, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id) DO UPDATE SET api_key = excluded.api_key, allowed_origins = excluded.allowed_origins, max_events_per_window = excluded.max_events_per_window, window_seconds = excluded.window_seconds, status = excluded.status, updated_at = excluded.updated_at');
@@ -172,6 +176,11 @@ export function createSqliteStore(path, sqlite) {
     },
     async readNavigationMap(siteId, url) {
       const row = /** @type {{site_id?: unknown, url?: unknown, payload?: unknown, updated_at?: unknown} | undefined} */ (selectNavigationMap.get(siteId, url));
+      if (!row) return null;
+      return { site_id: String(row.site_id), url: String(row.url), payload: JSON.parse(String(row.payload)), updated_at: String(row.updated_at) };
+    },
+    async readLatestNavigationMap(siteId) {
+      const row = /** @type {{site_id?: unknown, url?: unknown, payload?: unknown, updated_at?: unknown} | undefined} */ (selectLatestNavigationMap.get(siteId));
       if (!row) return null;
       return { site_id: String(row.site_id), url: String(row.url), payload: JSON.parse(String(row.payload)), updated_at: String(row.updated_at) };
     },

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createNaviHostServer, MAX_PAYLOAD_BYTES, SCRIPT_CACHE_CONTROL } from '../server/index.js';
 import { createStore } from '../server/store.js';
+import { labelSimilarity, resolveTarget, synthesizeWorkflows } from '../server/sitemap-workflows.js';
 import { DEV_TENANT_ID, DEV_TENANT_KEY, isOriginAllowed, loadTenants, tenantConfigFor } from '../server/tenants.js';
 
 /**
@@ -867,4 +868,202 @@ test('an older host database is rebuilt once so an unmetered ceiling can be stor
   } finally {
     await store.close();
   }
+});
+
+/**
+ * The auth guard and the empty state of the compiled-workflow route. Order matters:
+ * this runs before the tests that store a map for the development tenant, because
+ * "no sitemap yet" is a state a real deployment is in exactly once.
+ */
+test('the compiled-workflow route refuses an unknown key and says so when nothing has been indexed', async () => {
+  const openapi = () => fetch(`${state.base}/v1/sitemap/openapi.json`);
+  let response = await openapi();
+  expect(response.status).toBe(401);
+  expect((await response.json()).error.code).toBe('UNAUTHORIZED');
+
+  response = await fetch(`${state.base}/v1/sitemap/openapi.json`, { headers: { Authorization: 'Bearer not-a-tenant-key' } });
+  expect(response.status).toBe(401);
+
+  response = await openapi();
+  response = await fetch(`${state.base}/v1/sitemap/openapi.json?key=${DEV_TENANT_KEY}`);
+  expect(response.status, 'a valid key with no stored map is a missing resource, not a refusal').toBe(404);
+  const body = await response.json();
+  expect(body.error.code).toBe('NO_SITEMAP');
+  expect(body.error.message).toContain('/v1/sitemap/update');
+});
+
+/** One page of controls in the shape the crawler produces, in DOM order. */
+const shopSitemap = {
+  url: 'https://shop.example.com/checkout',
+  actions: [
+    { target_id: 't0', role: 'searchbox', name: 'Search products', action: 'type', selector: '#site-search > input:nth-of-type(1)', input_type: 'search', disabled: false },
+    { target_id: 't1', role: 'button', name: 'Search', action: 'click', selector: '#site-search > button:nth-of-type(1)', disabled: false },
+    { target_id: 't2', role: 'textbox', name: 'Email', action: 'type', selector: '#login-form > input:nth-of-type(1)', input_type: 'email', required: true, disabled: false },
+    { target_id: 't3', role: 'textbox', name: 'Password', action: 'type', selector: '#login-form > input:nth-of-type(2)', input_type: 'password', required: true, disabled: false },
+    { target_id: 't4', role: 'button', name: 'Sign in', action: 'click', selector: '#login-form > button:nth-of-type(1)', disabled: false },
+    { target_id: 't5', role: 'button', name: 'Delete account', action: 'click', selector: '#danger-zone > button:nth-of-type(1)', disabled: false },
+    { target_id: 't6', role: 'link', name: 'View cart', action: 'click', selector: 'body > a:nth-of-type(1)', disabled: false },
+    { target_id: 't7', role: 'combobox', name: 'Sort by', action: 'select', selector: '#results > select:nth-of-type(1)', options: ['Newest=newest', 'Price'], disabled: false }
+  ]
+};
+
+test('compiles the latest stored sitemap into OpenAPI 3.1 workflows with typed parameters and risk levels', async () => {
+  const crawl = (/** @type {Record<string, unknown>} */ payload) => fetch(`${state.base}/v1/sitemap/update`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${DEV_TENANT_KEY}` },
+    body: JSON.stringify(payload)
+  });
+  const openapi = async (/** @type {Record<string, string>} */ headers = { Authorization: `Bearer ${DEV_TENANT_KEY}` }) => {
+    const response = await fetch(`${state.base}/v1/sitemap/openapi.json`, { headers });
+    return { response, doc: await response.json() };
+  };
+
+  expect((await crawl(shopSitemap)).status).toBe(200);
+  const { response, doc } = await openapi();
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-type')).toContain('application/json');
+  // A compiled view of tenant data is as private as the data itself.
+  expect(response.headers.get('cache-control')).toContain('no-store');
+
+  expect(doc.openapi).toBe('3.1.0');
+  expect(doc.info.version).toBe('0.3.0');
+  // The advertised origin is the one the caller reached, not the loopback the
+  // socket is bound to: a client cannot use a document that points at 127.0.0.1.
+  expect(doc.servers[0].url).toBe(state.base);
+  expect(doc['x-navi']).toMatchObject({
+    tenant_id: DEV_TENANT_ID,
+    source_url: shopSitemap.url,
+    workflow_count: 5,
+    resolution: { strategy: 'role+label+action', threshold: 0.85 }
+  });
+
+  // Groups follow DOM order: the search form, the login form, the danger zone, the
+  // links and the results toolbar were the first members in that order.
+  expect(Object.keys(doc.paths)).toEqual([
+    '/workflows/search',
+    '/workflows/login',
+    '/workflows/submit_form',
+    '/workflows/navigate',
+    '/workflows/filter'
+  ]);
+
+  const search = doc.paths['/workflows/search'].post;
+  expect(search['x-navi-targets']).toEqual(['t0', 't1']);
+  expect(search['x-navi-risk-level']).toBe('write');
+  const searchBody = search.requestBody.content['application/json'].schema;
+  expect(searchBody.properties.search_products).toMatchObject({ type: 'string' });
+  // An optional control is not a required property; the schema does not invent one.
+  expect(searchBody.required).toBeUndefined();
+
+  // One form, one workflow: the email field and the password field belong to the
+  // "Sign in" button's container even though only some of them name themselves.
+  const loginBody = doc.paths['/workflows/login'].post.requestBody.content['application/json'].schema;
+  expect(Object.keys(loginBody.properties)).toEqual(['email', 'password']);
+  expect(loginBody.required).toEqual(['email', 'password']);
+  expect(loginBody.properties.email.format).toBe('email');
+  expect(loginBody.properties.password.format).toBe('password');
+  expect(loginBody.additionalProperties).toBe(false);
+
+  // A select is an enum of the options the crawler actually read, values included.
+  expect(doc.paths['/workflows/filter'].post.requestBody.content['application/json'].schema.properties.sort_by.enum)
+    .toEqual(['newest', 'Price']);
+  // A destructive control raises the whole workflow's risk; a link-only group is a read.
+  expect(doc.paths['/workflows/submit_form'].post['x-navi-risk-level']).toBe('destructive');
+  expect(doc.paths['/workflows/navigate'].post['x-navi-risk-level']).toBe('read');
+  expect(doc.paths['/workflows/navigate'].post.requestBody).toBeUndefined();
+
+  // Every reference resolves inside the document, which is what makes it usable by
+  // a validator rather than only by a reader.
+  const receipt = doc.components.schemas.WorkflowReceipt;
+  for (const path of Object.values(doc.paths)) {
+    expect(path.post.responses['200'].content['application/json'].schema.$ref).toBe('#/components/schemas/WorkflowReceipt');
+  }
+  expect(receipt.required).toEqual(['ok', 'workflow_id', 'resolved_target_id', 'healed', 'confidence']);
+  // 3.1 spells nullability as a type union, so this document is not a 3.0 file
+  // that merely claims the newer version.
+  expect(receipt.properties.receipt_id.type).toEqual(['string', 'null']);
+
+  // Deterministic: the same stored map compiles to the same bytes, which is what
+  // lets a CDN, a test and a second replica agree without comparing prose.
+  expect((await openapi()).doc).toEqual(doc);
+
+  // The query credential is the same tenant key as the summary route, and a newer
+  // map replaces the compiled view rather than joining it.
+  expect((await crawl({ url: 'https://shop.example.com/account', actions: [shopSitemap.actions[5]] })).status).toBe(200);
+  const latestResponse = await fetch(`${state.base}/v1/sitemap/openapi.json?key=${DEV_TENANT_KEY}`);
+  expect(latestResponse.status).toBe(200);
+  const latest = await latestResponse.json();
+  expect(latest['x-navi'].source_url).toBe('https://shop.example.com/account');
+  expect(latest['x-navi'].workflow_count).toBe(1);
+  expect(latest.paths['/workflows/search']).toBeUndefined();
+});
+
+test('reads the latest stored map from either store backend', async () => {
+  for (const mode of /** @type {Array<'sqlite' | 'log'>} */ (['sqlite', 'log'])) {
+    const file = join(tmpdir(), `navi-latest-map-${mode}-${process.pid}-${Date.now()}.${mode === 'sqlite' ? 'db' : 'log'}`);
+    const store = await createStore(file, { mode });
+    try {
+      expect(await store.readLatestNavigationMap('tenant-a'), 'an empty store has no latest map').toBeNull();
+      await store.upsertNavigationMap('tenant-a', 'https://a.example/one', { url: 'https://a.example/one', actions: [] });
+      await store.upsertNavigationMap('tenant-b', 'https://b.example/two', { url: 'https://b.example/two', actions: [] });
+      await store.upsertNavigationMap('tenant-a', 'https://a.example/three', { url: 'https://a.example/three', actions: [] });
+      expect((await store.readLatestNavigationMap('tenant-a'))?.url).toBe('https://a.example/three');
+      expect((await store.readLatestNavigationMap('tenant-b'))?.url).toBe('https://b.example/two');
+      expect(await store.readLatestNavigationMap('tenant-none')).toBeNull();
+    } finally {
+      await store.close();
+    }
+  }
+});
+
+test('synthesizes workflows deterministically and heals a stale target only when role, label and action agree', () => {
+  expect(synthesizeWorkflows(shopSitemap)).toEqual(synthesizeWorkflows(shopSitemap));
+  const { workflows } = synthesizeWorkflows(shopSitemap);
+  // Ids are unique and stable, and a disabled control is never part of a workflow:
+  // it is not something an agent can drive, so describing it would be a trap.
+  expect(new Set(workflows.map(workflow => workflow.id)).size).toBe(workflows.length);
+  const withDisabled = synthesizeWorkflows({
+    url: 'https://shop.example.com/checkout',
+    actions: [{ target_id: 't0', role: 'button', name: 'Pay now', action: 'click', selector: '#pay', disabled: true }]
+  });
+  expect(withDisabled.workflows).toEqual([]);
+
+  // A page update renumbers every target; the descriptor is what survives it.
+  const updated = {
+    actions: [
+      { target_id: 't0', role: 'link', name: 'View cart', action: 'click', selector: 'body > a:nth-of-type(1)' },
+      { target_id: 't1', role: 'button', name: 'Sign in', action: 'click', selector: '#login-form > button:nth-of-type(1)' }
+    ]
+  };
+  expect(resolveTarget({ target_id: 't9', role: 'button', name: 'Sign in', action: 'click' }, updated)).toMatchObject({
+    requested_target_id: 't9',
+    resolved_target_id: 't1',
+    healed: true,
+    confidence: 1,
+    reason: 'healed'
+  });
+  // An exact hit is not a healing: it reports the id it was given, with no guess.
+  expect(resolveTarget({ target_id: 't1', role: 'button', name: 'Sign in', action: 'click' }, updated)).toMatchObject({
+    resolved_target_id: 't1',
+    healed: false,
+    confidence: 1,
+    reason: 'exact'
+  });
+  // "Sign in" against "Sign out" shares a role and an action and is still the wrong
+  // control to press: the label similarity keeps it below the threshold.
+  expect(resolveTarget({ target_id: 't9', role: 'button', name: 'Delete account', action: 'click' }, updated)).toMatchObject({
+    resolved_target_id: null,
+    healed: false,
+    confidence: 0,
+    reason: 'miss'
+  });
+  expect(labelSimilarity('Sign in', 'Sign out')).toBeLessThan(0.85);
+  expect(labelSimilarity('Sign in!', 'sign   in')).toBe(1);
+  // Without a descriptor there is nothing to match on, so an unknown id is a miss
+  // rather than the first candidate.
+  expect(resolveTarget('t9', updated)).toMatchObject({ resolved_target_id: null, reason: 'miss' });
+  expect(resolveTarget({ target_id: 't9', role: 'button', name: 'Sign in', action: 'click' }, { actions: [] })).toMatchObject({
+    resolved_target_id: null,
+    reason: 'miss'
+  });
 });

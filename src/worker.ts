@@ -3,6 +3,7 @@ import type { CrawlerPayload } from './dom-crawler.js';
 import { BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage } from '../server/billing-success.js';
 import { LANDING_PAGE_HEADERS, renderLandingPage } from '../server/landing.js';
 import { FAVICON_SVG, LOGO_SVG, ROBOTS_TXT, SITEMAP_XML } from '../server/public-routes.js';
+import { compileOpenApi, synthesizeWorkflows } from '../server/sitemap-workflows.js';
 import { resolveQuota } from '../server/pricing.js';
 
 export interface Env {
@@ -452,6 +453,44 @@ async function handleBillingSuccess(url: URL, env: Env, pageOrigin: string): Pro
   }
 }
 
+/**
+ * Compile a tenant's latest stored sitemap into OpenAPI 3.1 workflows.
+ *
+ * The key travels in the request body, not the query string, because PostgREST
+ * filters are query parameters and a credential in a URL is a credential in an
+ * access log. The compilation itself is the same module the self-hosted server
+ * calls, so an edge tenant and a self-hosted one get the same document from the
+ * same map rather than two implementations that agree by review.
+ * @param {Request} request @param {Env} env @returns {Promise<Response>}
+ */
+async function handleWorkflows(request: Request, env: Env): Promise<Response> {
+  const authorization = request.headers.get('Authorization') ?? '';
+  const match = /^Bearer ([^\s]+)$/.exec(authorization);
+  if (!match) return json(401, { error: 'Unauthorized' });
+  try {
+    const result = await callRpc(env, 'read_site_map', { p_api_key: match[1] });
+    // An unknown key is answered exactly like a missing one: a route that
+    // distinguishes them tells a scanner which keys exist.
+    if (result.found !== true) return json(401, { error: 'Unauthorized' });
+    const payload = result.payload;
+    if (!payload || typeof payload !== 'object') {
+      return json(404, { error: 'No sitemap has been stored for this tenant yet: POST one to /v1/sitemap/update first.' });
+    }
+    const stored = payload as { url?: string; actions?: unknown[] };
+    const { workflows } = synthesizeWorkflows(stored);
+    return json(200, compileOpenApi({
+      tenantId: typeof result.id === 'string' ? result.id : '',
+      pageUrl: typeof result.url === 'string' ? result.url : (stored.url ?? ''),
+      serverUrl: new URL(request.url).origin,
+      updatedAt: typeof result.updated_at === 'string' ? result.updated_at : null,
+      workflows,
+    }));
+  } catch (error) {
+    if (error instanceof SchemaOutOfDateError) return schemaOutOfDate();
+    return json(500, { error: 'Internal server error' });
+  }
+}
+
 /** @param {URL} url @param {Env} env @returns {Promise<Response>} */
 async function handleBillingSession(url: URL, env: Env): Promise<Response> {
   const sessionId = (url.searchParams.get('session_id') ?? '').trim();
@@ -544,6 +583,10 @@ export default {
         }), { allow: 'GET' });
       }
       return handleBillingSuccess(url, env, url.origin);
+    }
+    if (url.pathname === '/v1/sitemap/openapi.json') {
+      if (request.method !== 'GET') return json(405, { error: 'Method not allowed' }, { allow: 'GET' });
+      return handleWorkflows(request, env);
     }
     if (url.pathname !== '/v1/sitemap/update' || request.method !== 'POST') {
       return json(404, { error: 'Not found' });

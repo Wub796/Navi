@@ -9,9 +9,10 @@
 import { isIP } from 'node:net';
 import { validateCrawlerPayload } from '../src/crawler-payload.js';
 import {
-  MAX_PAYLOAD_BYTES, isCanonicalOrigin, readBody, sendError, sendJson
+  MAX_PAYLOAD_BYTES, isCanonicalOrigin, readBody, requestOrigin, sendError, sendJson
 } from './http.js';
 import { chargeIngest, rateLimitHeaders } from './rate-limit.js';
+import { compileOpenApi, synthesizeWorkflows } from './sitemap-workflows.js';
 import { bearerTenantConfig, isOriginAllowed, tenantConfigFor, tenantFor } from './tenants.js';
 
 /** Largest counter value accepted; anything bigger is not a plausible page metric. */
@@ -228,6 +229,42 @@ export function createIngestRoutes(options) {
             resolveBody();
           }
         })();
+      }));
+    },
+
+    /**
+     * The tenant's latest stored sitemap, compiled into an OpenAPI 3.1 document.
+     *
+     * A read of data that already exists: nothing is synthesized at ingest time, so
+     * the stored payload keeps the exact `{url, actions}` shape the write route
+     * validates and the compiler stays the only place the grouping lives. The
+     * credential is the same tenant key as every other read here, by header or
+     * query, because an operator console and a shell one-liner are both callers.
+     * @param {import('node:http').IncomingMessage} req
+     * @param {import('node:http').ServerResponse} res
+     * @param {URL} url
+     */
+    async workflows(req, res, url) {
+      if (req.method !== 'GET') return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Use GET /v1/sitemap/openapi.json.');
+      const tenantConfig = bearerTenantConfig(tenants, req) ?? tenantConfigFor(tenants, url.searchParams.get('key'));
+      if (!tenantConfig) {
+        return sendError(res, 401, 'UNAUTHORIZED', 'A tenant key is required to compile a sitemap: send "Authorization: Bearer <tenant_key>" or ?key=<tenant_key>.');
+      }
+      const latest = typeof store.readLatestNavigationMap === 'function'
+        ? await store.readLatestNavigationMap(tenantConfig.id)
+        : null;
+      if (!latest) {
+        return sendError(res, 404, 'NO_SITEMAP', `No sitemap has been stored for tenant "${tenantConfig.id}" yet: POST one to /v1/sitemap/update first.`);
+      }
+      const { workflows: synthesized } = synthesizeWorkflows(latest.payload);
+      return sendJson(res, 200, compileOpenApi({
+        tenantId: tenantConfig.id,
+        pageUrl: latest.url,
+        // The origin the caller reached, not the loopback the socket is bound to: a
+        // document that advertises `http://127.0.0.1` is unusable behind a proxy.
+        serverUrl: requestOrigin(req),
+        updatedAt: latest.updated_at,
+        workflows: synthesized
       }));
     },
 

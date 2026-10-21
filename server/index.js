@@ -11,6 +11,7 @@
 //   GET  /v1/loader.js                  serve the tenant embed loader
 //   POST /v1/telemetry                  ingest one navigator.sendBeacon payload
 //   POST /v1/sitemap/update             ingest a tenant's semantic action map
+//   GET  /v1/sitemap/openapi.json       compile that map into OpenAPI 3.1 workflows
 //   GET  /v1/telemetry?key=<tenant_key> read that tenant's aggregate
 //   POST /v1/telemetry/violations       ingest one containment violation
 //   GET  /v1/tenants/<id>/security-audit read that tenant's blocked destinations
@@ -62,7 +63,7 @@ import {
   BILLING_SUCCESS_ENDPOINT_PATH, DEFAULT_MCP_SSE_URL, DISCOVERY_ENDPOINT_PATH, HEALTH_ENDPOINT_PATH,
   LOADER_ENDPOINT_PATH, METRICS_ENDPOINT_PATH, PRUNE_ENDPOINT_PATTERN, SCRIPT_ENDPOINT_PATH,
   SITEMAP_ENDPOINT_PATH, SOURCE_ENDPOINT_PATH, SOURCE_REPOSITORY_URL, TELEMETRY_ENDPOINT_PATH,
-  VIOLATION_ENDPOINT_PATH, routeLabel
+  VIOLATION_ENDPOINT_PATH, WORKFLOWS_ENDPOINT_PATH, routeLabel
 } from './endpoints.js';
 
 export const DEFAULT_PORT = 8790;
@@ -87,7 +88,8 @@ export {
   AGENT_BRIDGE_LINK, AGENT_CAPABILITIES, AUDIT_ENDPOINT_PATTERN, BILLING_ENDPOINT_PATH,
   BILLING_SESSION_ENDPOINT_PATH, BILLING_SUCCESS_ENDPOINT_PATH, DEFAULT_MCP_SSE_URL,
   DISCOVERY_CACHE_CONTROL, MCP_PROTOCOL_REVISION, NAVI_PROTOCOL_VERSION, PRUNE_ENDPOINT_PATTERN,
-  SCRIPT_CACHE_CONTROL, SCRIPT_CORS, SCRIPT_ENDPOINT_PATH, SOURCE_ENDPOINT_PATH, SOURCE_REPOSITORY_URL
+  SCRIPT_CACHE_CONTROL, SCRIPT_CORS, SCRIPT_ENDPOINT_PATH, SOURCE_ENDPOINT_PATH, SOURCE_REPOSITORY_URL,
+  WORKFLOWS_ENDPOINT_PATH
 } from './endpoints.js';
 export {
   CHECKOUT_CLAIM_TTL_MS, MAX_BILLING_PAYLOAD_BYTES, PROVISIONING_EVENT_TYPES,
@@ -123,6 +125,8 @@ Endpoints
   GET  /                              product landing page
   GET  /v1/navi.js?key=<tenant_key>
   GET  /v1/loader.js
+  GET  /v1/sitemap/openapi.json?key=<tenant_key>
+                                      latest stored sitemap as OpenAPI 3.1 workflows
   POST /v1/telemetry
   GET  /v1/telemetry?key=<tenant_key>
   POST /v1/telemetry/violations
@@ -213,7 +217,7 @@ async function defaultIntegrity() {
 /**
  * The store surface this service depends on, declared structurally so the host
  * does not care which backend ({@link createStore}) resolved to.
- * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, readQuota?(tenantId: string): Promise<{tenant_id: string, window_start_ms: number, event_count: number} | null>, upsertTenantDefinition(definition: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number | null, window_seconds?: number, status?: 'active' | 'suspended'}): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number | null, window_seconds: number, status: 'active' | 'suspended', updated_at: string}>, readTenantDefinition(tenantId: string): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number | null, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null>, readTenantDefinitions(): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number | null, window_seconds: number, status: 'active' | 'suspended', updated_at: string}[]>, recordWebhookEvent?(eventId: string, receivedAtMs?: number): Promise<boolean>, releaseWebhookEvent?(eventId: string): Promise<void>, applyWebhookEvent?(mutation: {event_id?: string | null, received_at_ms?: number, definition?: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number | null, window_seconds?: number, status?: 'active' | 'suspended'} | null, checkout_claim?: {session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number} | null}): Promise<{duplicate: boolean, record: {tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number | null, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null}>, recordCheckoutClaim?(claim: {session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number}): Promise<{session_id: string, tenant_id: string, api_key: string, expires_at_ms: number}>, consumeCheckoutClaim?(sessionId: string, nowMs?: number): Promise<{tenant_id: string, api_key: string} | null>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
+ * @typedef {{mode: 'sqlite' | 'log', file: string, append(record: unknown): Promise<void>, summarize(filter?: {tenant_id?: string}): Promise<any>, upsertNavigationMap(siteId: string, url: string, payload: object): Promise<void>, readNavigationMap(siteId: string, url: string): Promise<any>, readLatestNavigationMap?(siteId: string): Promise<any>, consumeQuota?(options: {tenant_id: string, max_events_per_window: number, window_seconds?: number}): Promise<{allowed: boolean, count: number, remaining: number, retry_after_seconds: number}>, readQuota?(tenantId: string): Promise<{tenant_id: string, window_start_ms: number, event_count: number} | null>, upsertTenantDefinition(definition: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number | null, window_seconds?: number, status?: 'active' | 'suspended'}): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number | null, window_seconds: number, status: 'active' | 'suspended', updated_at: string}>, readTenantDefinition(tenantId: string): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number | null, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null>, readTenantDefinitions(): Promise<{tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number | null, window_seconds: number, status: 'active' | 'suspended', updated_at: string}[]>, recordWebhookEvent?(eventId: string, receivedAtMs?: number): Promise<boolean>, releaseWebhookEvent?(eventId: string): Promise<void>, applyWebhookEvent?(mutation: {event_id?: string | null, received_at_ms?: number, definition?: {tenant_id: string, api_key: string, allowed_origins?: string[], max_events_per_window?: number | null, window_seconds?: number, status?: 'active' | 'suspended'} | null, checkout_claim?: {session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number} | null}): Promise<{duplicate: boolean, record: {tenant_id: string, api_key: string, allowed_origins: string[], max_events_per_window: number | null, window_seconds: number, status: 'active' | 'suspended', updated_at: string} | null}>, recordCheckoutClaim?(claim: {session_id: string, tenant_id: string, api_key: string, expires_at_ms?: number}): Promise<{session_id: string, tenant_id: string, api_key: string, expires_at_ms: number}>, consumeCheckoutClaim?(sessionId: string, nowMs?: number): Promise<{tenant_id: string, api_key: string} | null>, recordViolation(violation: any): Promise<{tenant_id: string, id: number}>, queryViolations(filter: {tenant_id: string, limit?: number, since?: string}): Promise<any[]>, pruneViolations(options: {max_age_days: number, tenant_id?: string}): Promise<{pruned_count: number, remaining_count: number}>, checkpoint(options?: {truncate?: boolean}): Promise<{busy: number, log: number, checkpointed: number}>, reset(): Promise<void>, close(): Promise<void>}} StoreLike
  * @typedef {{host?: string, port?: number, tenants?: import('./tenants.js').TenantRegistry, store?: StoreLike | null, storeFile?: string, sdkPath?: string, loaderPath?: string, integrity?: string | null, mcpSseUrl?: string, sourceUrl?: string, log?: (line: string) => void, retentionDays?: number, retentionIntervalMs?: number, rateLimiter?: import('./rate-limit.js').RateLimiter, maxEventsPerWindow?: number, quotaWindowSeconds?: number, metricsToken?: string, stripeWebhookSecret?: string}} HostOptions
  * @typedef {{server: import('node:http').Server, port: number, host: string, store: StoreLike, tenants: import('./tenants.js').TenantRegistry, limiter: import('./rate-limit.js').RateLimiter, retention: {days: number, intervalMs: number}, close(): Promise<void>}} NaviHost
  */
@@ -375,6 +379,7 @@ export async function createNaviHostServer(options = {}) {
     if (path === BILLING_SESSION_ENDPOINT_PATH) return billingRoutes.session(req, res, url);
     if (path === BILLING_SUCCESS_ENDPOINT_PATH) return billingRoutes.success(req, res, url);
     if (path === SITEMAP_ENDPOINT_PATH) return ingestRoutes.sitemap(req, res);
+    if (path === WORKFLOWS_ENDPOINT_PATH) return ingestRoutes.workflows(req, res, url);
     if (path === SCRIPT_ENDPOINT_PATH) return publicRoutes.script(req, res, url);
     if (path === LOADER_ENDPOINT_PATH) return publicRoutes.loader(req, res);
     if (path === VIOLATION_ENDPOINT_PATH) return ingestRoutes.violations(req, res, url);

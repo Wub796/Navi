@@ -141,7 +141,21 @@ function fakeSupabase(options = {}) {
     return { ok: true, tenant_id: found.tenant_id, api_key: found.api_key };
   };
 
-  const handlers = { apply_stripe_webhook: applyWebhook, consume_site_quota: consumeQuota, claim_checkout_session: claimSession };
+  /**
+   * The compiled-workflow read: the tenant's most recently stored map, or null
+   * payload when it has stored nothing. Insertion order in `maps` is write order,
+   * which is what the real function's `updated_at desc` selects.
+   * @param {any} body
+   */
+  const readSiteMap = body => {
+    const site = [...sites.values()].find(candidate => candidate.api_key === body.p_api_key && candidate.active !== false);
+    if (!site) return { found: false };
+    const latest = [...maps.entries()].filter(([key]) => key.startsWith(`${site.id}|`)).map(([, payload]) => payload).pop();
+    if (!latest) return { found: true, id: site.id, payload: null };
+    return { found: true, id: site.id, url: latest.url, payload: latest, updated_at: '2026-10-20T00:00:00.000Z' };
+  };
+
+  const handlers = { apply_stripe_webhook: applyWebhook, consume_site_quota: consumeQuota, claim_checkout_session: claimSession, read_site_map: readSiteMap };
 
   /** @type {typeof fetch} */
   const fetchImpl = async (input, init = {}) => {
@@ -1163,5 +1177,77 @@ test('native host sitemap endpoint enforces allowed_origins (HTTP 403 / 200) and
     expect(await response.json()).toEqual({ error: 'Quota exceeded' });
   } finally {
     await host.close();
+  }
+});
+
+test('the edge compiles a stored sitemap into OpenAPI 3.1 workflows, and names the missing migration when it cannot', async () => {
+  const originalFetch = globalThis.fetch;
+  const supabase = fakeSupabase({ sites: [{ id: 'site-1', api_key: 'api-key' }] });
+  globalThis.fetch = supabase.fetch;
+  const openapiEndpoint = 'https://worker.example/v1/sitemap/openapi.json';
+  try {
+    // A provisioned tenant that has not crawled a page yet is a 404 that names the
+    // ingest route, not an authentication failure: the key itself is valid.
+    let response = await workerRequest(openapiEndpoint, { headers: { Authorization: 'Bearer api-key' } });
+    expect(response.status).toBe(404);
+    expect((await response.json()).error).toContain('/v1/sitemap/update');
+
+    response = await workerRequest(openapiEndpoint);
+    expect(response.status).toBe(401);
+    response = await workerRequest(openapiEndpoint, { headers: { Authorization: 'Bearer not-a-key' } });
+    expect(response.status).toBe(401);
+    response = await workerRequest(openapiEndpoint, { method: 'POST', headers: { Authorization: 'Bearer api-key' } });
+    expect(response.status).toBe(405);
+    expect(response.headers.get('allow')).toBe('GET');
+
+    const sitemap = {
+      url: 'https://shop.example/account',
+      actions: [
+        { target_id: 't0', role: 'textbox', name: 'Email', action: 'type', selector: '#login > input:nth-of-type(1)', input_type: 'email', required: true, disabled: false },
+        { target_id: 't1', role: 'button', name: 'Sign in', action: 'click', selector: '#login > button:nth-of-type(1)', disabled: false },
+        { target_id: 't2', role: 'button', name: 'Delete account', action: 'click', selector: '#danger > button:nth-of-type(1)', disabled: false }
+      ]
+    };
+    response = await workerRequest(endpoint, { method: 'POST', headers: { Authorization: 'Bearer api-key' }, body: JSON.stringify(sitemap) });
+    expect(response.status).toBe(200);
+
+    response = await workerRequest(openapiEndpoint, { headers: { Authorization: 'Bearer api-key' } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('application/json');
+    const doc = await response.json();
+    expect(doc.openapi).toBe('3.1.0');
+    expect(doc.servers[0].url).toBe('https://worker.example');
+    expect(doc['x-navi']).toMatchObject({
+      tenant_id: 'site-1',
+      source_url: sitemap.url,
+      source_indexed_at: '2026-10-20T00:00:00.000Z',
+      workflow_count: 2
+    });
+    expect(Object.keys(doc.paths).sort()).toEqual(['/workflows/login', '/workflows/submit_form']);
+    const login = doc.paths['/workflows/login'].post;
+    expect(login['x-navi-risk-level']).toBe('write');
+    expect(login.requestBody.content['application/json'].schema.required).toEqual(['email']);
+    expect(doc.paths['/workflows/submit_form'].post['x-navi-risk-level']).toBe('destructive');
+
+    // The credential travels in the RPC body, never a query string a proxy or an
+    // access log would keep. Three lookups: the missing map, the unknown key (the
+    // database is what decides a key is unknown) and the compiled read.
+    const reads = supabase.calls.filter(call => call.url.includes('/rpc/read_site_map'));
+    expect(reads).toHaveLength(3);
+    expect(JSON.parse(String(reads[0].init.body))).toEqual({ p_api_key: 'api-key' });
+    expect(JSON.parse(String(reads[1].init.body))).toEqual({ p_api_key: 'not-a-key' });
+    for (const read of reads) expect(String(read.url)).not.toContain('api-key');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  // A database older than this Worker is the one answer that must name its fix.
+  globalThis.fetch = rpcStub(() => pgrstMissingFunction('read_site_map'));
+  try {
+    const response = await workerRequest(openapiEndpoint, { headers: { Authorization: 'Bearer api-key' } });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual(SCHEMA_OUT_OF_DATE);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

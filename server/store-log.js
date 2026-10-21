@@ -176,6 +176,22 @@ export function createLogStore(path) {
       }
       return null;
     },
+    async readLatestNavigationMap(siteId) {
+      // The log is append-only and each upsert appends, so the newest map is the
+      // last matching line. Scanning backwards also means a torn final line is the
+      // only one that can be skipped before a record is found.
+      const text = await readFile(path, 'utf8').catch(() => '');
+      for (const line of text.split('\n').reverse()) {
+        if (!line.trim()) continue;
+        try {
+          const record = JSON.parse(line);
+          if (record.kind === 'navigation_map' && record.site_id === siteId) {
+            return { site_id: siteId, url: record.url, payload: record.payload, updated_at: record.updated_at };
+          }
+        } catch { /* ignore torn and malformed lines */ }
+      }
+      return null;
+    },
     async consumeQuota(options) {
       const tenantId = String(options.tenant_id);
       const maxEvents = Math.max(1, Math.trunc(Number(options.max_events_per_window)));

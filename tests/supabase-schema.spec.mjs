@@ -159,13 +159,14 @@ test('the schema applies twice without error and leaves the tables, policies and
   expect(privileges).toBe([
     'apply_stripe_webhook:false:false:true',
     'claim_checkout_session:false:false:true',
-    'consume_site_quota:false:false:true'
+    'consume_site_quota:false:false:true',
+    'read_site_map:false:false:true'
   ].join('\n'));
 
   // One shape per function, not an overload set: `create or replace` with a new
   // argument list adds a function, so the file drops the previous signature itself.
   const overloads = run("select p.proname || ':' || count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' group by p.proname order by p.proname;");
-  expect(overloads).toBe(['apply_stripe_webhook:1', 'claim_checkout_session:1', 'consume_site_quota:1'].join('\n'));
+  expect(overloads).toBe(['apply_stripe_webhook:1', 'claim_checkout_session:1', 'consume_site_quota:1', 'read_site_map:1'].join('\n'));
 
   // And the public role cannot reach a table either, while the service role can.
   expect(run('set role anon; select count(*) from public.sites;', { allowFailure: true })).toContain('permission denied');
@@ -368,4 +369,29 @@ test('unmetered tenants are never charged and the ledger is pruned to 24 hours',
   run("insert into public.webhook_events (event_id, received_at) values ('ancient', now() - interval '25 hours'), ('recent', now() - interval '23 hours');");
   run(`select public.apply_stripe_webhook('evt_next', null, null, null, null, null, null);`);
   expect(run("select string_agg(event_id, ',' order by event_id) from public.webhook_events;")).toBe('evt_1,evt_next,recent');
+});
+
+test('read_site_map answers the tenant latest stored map and nothing else', () => {
+  // A provisioned tenant that has stored nothing yet is a distinct answer from an
+  // unknown key, which is what lets the Worker say "POST a map first".
+  run(`select public.apply_stripe_webhook('evt_map', 'acme', 'navi_live_map', null, null, null, true);`);
+  expect(json("select public.read_site_map('navi_live_map')::text;")).toEqual({ found: true, id: 'acme', payload: null });
+  expect(json("select public.read_site_map('navi_live_unknown')::text;")).toEqual({ found: false });
+  expect(json("select public.read_site_map(null)::text;")).toEqual({ found: false });
+
+  // Two maps for one tenant: the compiled surface must see the newer one, not
+  // whichever row the planner returns first.
+  run(`select public.consume_site_quota('navi_live_map', 1, null, null, 'https://app.example.com/one', '{"url":"https://app.example.com/one","actions":[]}'::jsonb);`);
+  run(`select public.consume_site_quota('navi_live_map', 2, null, null, 'https://app.example.com/two', '{"url":"https://app.example.com/two","actions":[{"target_id":"t0"}]}'::jsonb);`);
+  const latest = json("select public.read_site_map('navi_live_map')::text;");
+  expect(latest).toMatchObject({ found: true, id: 'acme', url: 'https://app.example.com/two' });
+  expect(latest.payload).toEqual({ url: 'https://app.example.com/two', actions: [{ target_id: 't0' }] });
+  expect(typeof latest.updated_at).toBe('string');
+
+  // It is a read, not a write: a second call changes nothing.
+  expect(json("select public.read_site_map('navi_live_map')::text;").url).toBe('https://app.example.com/two');
+  expect(run('select count(*) from public.navigation_maps;')).toBe('2');
+
+  // The service role is the only caller. `anon` ships in browser code.
+  expect(run("set role anon; select public.read_site_map('navi_live_map');", { allowFailure: true })).toContain('permission denied');
 });

@@ -22,6 +22,11 @@ export const LOADER_ENDPOINT_PATH = '/v1/loader.js';
 export const TELEMETRY_ENDPOINT_PATH = '/v1/telemetry';
 export const VIOLATION_ENDPOINT_PATH = '/v1/telemetry/violations';
 export const SITEMAP_ENDPOINT_PATH = '/v1/sitemap/update';
+/**
+ * The compiled workflow surface for a tenant's latest stored sitemap. A read, so
+ * it sits beside the write it is derived from rather than becoming a second write.
+ */
+export const WORKFLOWS_ENDPOINT_PATH = '/v1/sitemap/openapi.json';
 export const HEALTH_ENDPOINT_PATH = '/healthz';
 export const METRICS_ENDPOINT_PATH = '/metrics';
 
@@ -91,6 +96,7 @@ export const DEFAULT_MCP_SSE_URL = 'http://127.0.0.1:3001/sse';
 export function routeLabel(path) {
   if (path === SCRIPT_ENDPOINT_PATH) return 'navi.js';
   if (path === LOADER_ENDPOINT_PATH) return 'loader.js';
+  if (path === WORKFLOWS_ENDPOINT_PATH) return 'workflows';
   if (path === TELEMETRY_ENDPOINT_PATH) return 'telemetry';
   if (path === VIOLATION_ENDPOINT_PATH) return 'telemetry_violations';
   if (path === BILLING_ENDPOINT_PATH) return 'billing_webhook';
