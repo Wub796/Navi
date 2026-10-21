@@ -158,10 +158,10 @@ export const INSPECTOR_TARGETS = [
  * @returns {string}
  */
 export function renderInspectorPanels() {
-  // Labels, not spans: a pin that only looks pressable is a promise the page does
-  // not keep. Each one is bound to the target radio by `for`, so a pointer can pin a
-  // control and the radio itself stays the keyboard stop.
-  const pins = INSPECTOR_TARGETS.map(target => `          <label class="pin-chip" data-pin="${target.id}" for="${target.id}">${target.short}</label>`).join('\n');
+  // Indicators, not controls: the stage control itself is the label for its radio,
+  // so the chip mirrors the pinned state without becoming a second label for the
+  // same input (two labels concatenate into one long accessible name).
+  const pins = INSPECTOR_TARGETS.map(target => `          <span class="pin-chip" data-pin="${target.id}">${target.short}</span>`).join('\n');
   const panels = INSPECTOR_TARGETS.map(target => `        <article class="inspect-panel ${target.panel}">
           <h3 class="inspect-title">${target.label}</h3>
           <p class="inspect-meta">deterministic fingerprint · sha384 receipt</p>
@@ -178,7 +178,7 @@ export function renderInspectorPanels() {
 ${pins}
         </div>
         <div class="inspect-mode-bar">
-          <label class="drift-switch" for="toggle-ui-drift">UI Deploy Drift &amp; OpenAPI 3.1 Synthesis</label>
+          <span class="drift-switch">UI Deploy Drift &amp; OpenAPI 3.1 Synthesis</span>
         </div>
 ${panels}`;
 }
@@ -215,12 +215,9 @@ export const INSPECTOR_STYLE = `
       text-transform: uppercase;
       color: var(--muted);
       border: 1px solid var(--line);
-      cursor: pointer;
       user-select: none;
-      touch-action: manipulation;
       transition: color .18s, border-color .18s, background .18s;
     }
-    .pin-chip:hover { color: var(--fg); border-color: var(--line-strong); }
     #inspect-cta:checked ~ .inspector .pin-chip[data-pin="inspect-cta"],
     #inspect-shadow:checked ~ .inspector .pin-chip[data-pin="inspect-shadow"],
     #inspect-pii:checked ~ .inspector .pin-chip[data-pin="inspect-pii"],
@@ -229,10 +226,6 @@ export const INSPECTOR_STYLE = `
       background: var(--accent);
       border-color: var(--accent);
     }
-    #inspect-cta:focus-visible ~ .inspector .pin-chip[data-pin="inspect-cta"],
-    #inspect-shadow:focus-visible ~ .inspector .pin-chip[data-pin="inspect-shadow"],
-    #inspect-pii:focus-visible ~ .inspector .pin-chip[data-pin="inspect-pii"],
-    #inspect-pager:focus-visible ~ .inspector .pin-chip[data-pin="inspect-pager"],
     #inspect-cta:focus-visible ~ .stage-viewport label[for="inspect-cta"],
     #inspect-shadow:focus-visible ~ .stage-viewport label[for="inspect-shadow"],
     #inspect-pii:focus-visible ~ .stage-viewport label[for="inspect-pii"],
@@ -241,32 +234,44 @@ export const INSPECTOR_STYLE = `
       outline-offset: 2px;
     }
     .inspect-mode-bar { margin-bottom: .8rem; }
+    /* A readout, not a second control. The toggle itself is one label in the stage
+       toolbar; repeating it as a label here gave the checkbox two labels and a
+       concatenated accessible name, which is a WCAG 2.5.3 problem rather than a
+       convenience. The state still has to be visible beside the healing output. */
     .drift-switch {
       display: inline-flex;
       align-items: center;
+      gap: .5rem;
       min-height: 30px;
       min-width: 30px;
       padding: .42rem .65rem;
       font: 600 .56rem/1.2 var(--mono);
       letter-spacing: .1em;
       text-transform: uppercase;
-      color: var(--accent);
-      background: rgba(255, 214, 0, .08);
-      border: 1px solid rgba(255, 214, 0, .45);
-      cursor: pointer;
-      user-select: none;
-      touch-action: manipulation;
-      transition: background .18s, color .18s;
+      color: var(--muted);
+      background: rgba(255, 214, 0, .04);
+      border: 1px solid var(--line-strong);
+      font-variant-numeric: tabular-nums;
+      transition: background .18s, color .18s, border-color .18s;
     }
-    .drift-switch:hover { background: rgba(255, 214, 0, .18); }
+    .drift-switch::after {
+      content: "off";
+      padding: .16rem .28rem;
+      font: 600 .5rem/1 var(--mono);
+      letter-spacing: .08em;
+      color: var(--muted);
+      border: 1px solid var(--line-strong);
+    }
     #toggle-ui-drift:checked ~ .inspector .drift-switch {
+      color: var(--good);
+      border-color: rgba(183, 241, 113, .55);
+      background: rgba(183, 241, 113, .08);
+    }
+    #toggle-ui-drift:checked ~ .inspector .drift-switch::after {
+      content: "on";
       color: var(--accent-ink);
       background: var(--good);
       border-color: var(--good);
-    }
-    #toggle-ui-drift:focus-visible ~ .inspector .drift-switch {
-      outline: 2px solid #ffd600;
-      outline-offset: 2px;
     }
     .inspect-panel { display: none; }
     .stage-shell:has([id="inspect-cta"]:checked) .panel-cta,

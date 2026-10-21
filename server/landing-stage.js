@@ -608,7 +608,7 @@ ${targetRadios}
         <div class="inspector-head">Live 0.3.0 action-map, drift healing &amp; OpenAPI 3.1 inspector</div>
         <p class="inspector-sub">Pinned target · exact payload, resolveTarget healing &amp; workflow schema</p>
 ${panels}
-        <p class="inspect-hint">Hover or tap any control on the stage, or select a target pin above. Toggle UI Deploy Drift to inspect deterministic target healing and OpenAPI 3.1 workflow synthesis.</p>
+        <p class="inspect-hint">Tap a control on the stage to pin it here, or hover it for a preview. Toggle UI Deploy Drift on the stage to inspect deterministic target healing and OpenAPI 3.1 workflow synthesis.</p>
       </div>
 
       <p class="stage-hint">Camera presets: <code>rotateX(54deg) rotateZ(-36deg)</code> exploded · <code>rotateX(0deg)</code> front · <code>rotateX(72deg)</code> overhead. Depth is <code>translateZ(0 / 70 / 140px)</code>, doubled by Explode Z-Layers.</p>
