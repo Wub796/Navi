@@ -56,6 +56,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'server/landing-hero.js',
   'server/landing-inspector.js',
   'server/landing-calculator.js',
+  'server/landing-motion.js',
   'server/landing-stage.js',
   'server/landing-responsive.js',
   'server/landing-styles.js',

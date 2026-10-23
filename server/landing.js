@@ -18,11 +18,15 @@
 // inspector on the stage, the integration tabs, the savings calculator, and the FAQ's
 // native `<details>` are the only behaviours, and every one of them works with
 // scripts disabled and under `default-src 'none'`.
+//
+// The motion layer is CSS too: `landing-motion.js` is appended last, so the page
+// animates on scroll and on hover without gaining a script or a CSP directive.
 
 import { escapeHtml } from './billing-success.js';
 import { CALCULATOR_STYLE, renderSavingsCalculator } from './landing-calculator.js';
 import { renderHeroMonogram } from './landing-hero.js';
 import { INSPECTOR_STYLE } from './landing-inspector.js';
+import { LANDING_MOTION_STYLE } from './landing-motion.js';
 import { renderLandingStage, STAGE_STYLE } from './landing-stage.js';
 import { LANDING_STYLE } from './landing-styles.js';
 import { TIERS } from './pricing.js';
@@ -220,7 +224,7 @@ navi-mcp --transport sse</code></pre>
 <meta name="twitter:description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
 <meta name="twitter:image" content="https://navi-edge.sysctl.workers.dev/logo.svg">
 <title>Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge</title>
-<style>${LANDING_STYLE}${STAGE_STYLE}${INSPECTOR_STYLE}${CALCULATOR_STYLE}</style>
+<style>${LANDING_STYLE}${STAGE_STYLE}${INSPECTOR_STYLE}${CALCULATOR_STYLE}${LANDING_MOTION_STYLE}</style>
 </head>
 <body>
 <main>
