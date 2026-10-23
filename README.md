@@ -2,6 +2,8 @@
 
 Dependency-free browser tools for predictable target discovery and guarded native execution, including captured closed shadow roots and same-origin iframe controls. This is a custom protocol, **not an official WebMCP registration**, authorization boundary, or trusted-input replacement.
 
+Questions, feedback, or want help wiring Navi into your agent? Post in [GitHub Discussions](https://github.com/Wub796/Navi/discussions).
+
 ## Run
 
 Node ≥22 (`engines.node` is `>=22.0.0`; the pinned container runtime is 22.23.3), npm, and Playwright Chromium:
@@ -442,7 +444,7 @@ No service account, public deployment or hosted environment was created; the ing
 
 This is copyleft with a network clause, and section 13 binds whoever *runs* it, not only whoever publishes it: if you run a modified version as a network service, you must offer its Corresponding Source to the people who interact with it. The host service implements its own half of that — `GET /v1/source` redirects to the source of the running version, the discovery document publishes the same URL as `source`, and every response advertises it as `rel="source"`. **A fork must set `NAVI_SOURCE_URL` to its own repository**, because upstream's source does not discharge section 13 for a version you have modified.
 
-The copyleft choice is deliberate rather than incidental. A permissive grant on a published version cannot be withdrawn, so it forgoes the option of licensing this runtime on other terms later; copyleft keeps that option open, which is why the package is not MIT.
+The copyleft choice is deliberate rather than incidental. A permissive grant on a published version cannot be withdrawn, so it forgoes the option of licensing this runtime on other terms later; copyleft keeps that option open, which is why the package is not MIT. That option is exercised: Navi is **dual-licensed**, and Pro and Enterprise customers receive a commercial licence that waives the AGPL obligations for their deployments. [LICENSING.md](LICENSING.md) draws the boundary between the open-source core, the commercial licence and the hosted service, and [CONTRIBUTING.md](CONTRIBUTING.md) holds the contributor terms that keep the dual licence grantable.
 
 Settlement is a heuristic with a name, not a proof of completion. `mutation_settle` cannot see inside a *closed* shadow root, so a mutation that happens only there can read as silence; `target_hidden` believes Navi's own visibility/occlusion state, so a target that stays visible but inert times out; and `navigation` treats a URL change or a reload as the effect, which a same-page redirect can satisfy without the business outcome. Nothing here proves that a network write, a payment or a server-side transaction finished. The tenant loader inherits the browser's SRI/CORS rules: with `crossorigin="anonymous"` the script origin must send `Access-Control-Allow-Origin` (the reference host does), an `integrity` hash must match the bytes on the wire (a CDN that rewrites the bundle fails closed, which is the point), and a page that never supplies `data-sri` gets no verification at all.
 
