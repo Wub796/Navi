@@ -220,12 +220,13 @@ export function createPublicRoutes(options) {
     },
 
     /**
-     * AGPL-3.0 section 13: a user who interacts with this service over a network
-     * must be offered the Corresponding Source of the version answering them, at no
-     * charge, through a customary means. A redirect to the repository is that offer,
-     * and it is public metadata like the discovery document, so it is cached the same
-     * way. It is unauthenticated on purpose: an offer a reader has to identify
-     * themselves to receive is not an offer to the users of the service.
+     * Names the source of the version answering a request. MIT asks this of
+     * nobody, which is why the endpoint is worth keeping: a tenant running on the
+     * hosted service can read exactly what it is trusting, at no charge. A redirect
+     * to the repository is that answer, and it is public metadata like the discovery
+     * document, so it is cached the same way. It is unauthenticated on purpose: an
+     * answer a reader has to identify themselves to receive is not an answer to the
+     * users of the service.
      * @param {import('node:http').IncomingMessage} req
      * @param {import('node:http').ServerResponse} res
      */

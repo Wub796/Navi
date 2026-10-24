@@ -4,7 +4,7 @@
 
 Start with engineers building browser workflow agents for internal operations. Look for a repeated form-based task with dynamic controls, a known completion check, and failures they can reproduce. Treat this as a hypothesis to validate in interviews; we do not yet have evidence of customer demand.
 
-Offer a two-week assisted evaluation of one workflow. The first deliverable is a reproducible before/after result on their task. Agree on a paid continuation only after they can see the result and confirm the commercial license covers their intended use.
+Offer a two-week assisted evaluation of one workflow. The first deliverable is a reproducible before/after result on their task. Agree on a paid continuation only after they can see the result and confirm the hosted plan and service terms cover their intended use.
 
 ## A working local demonstration
 
@@ -60,6 +60,6 @@ Promote the reproducible demo in relevant developer communities and GitHub Discu
 - Recruit the teams, conduct the interviews, and agree on the task and success criteria.
 - Provide authorized test accounts, representative workflows, and an independent way to verify saved results.
 - Choose a live model and budget, or provide a suitable local model.
-- Confirm the plan and current commercial terms cover the proposed use. They permit embedding Navi in products and using it for customer work, but exclude reselling Navi itself as a browser-automation SDK or hosted service and shipping a competing fork; clarify borderline cases before promising rights to prospects.
+- Confirm the hosted plan and current service terms cover the proposed use. The code is MIT, so embedding it in a product and using it for customer work need no permission; the terms govern the hosted service (quota, tenant data, uptime), not the code, and a prospect self-hosting it needs no plan at all.
 - Confirm pricing with willingness-to-pay evidence and decide which buyer segment to pursue.
 - Review and release the local changes to npm and the hosted site. Only then will published packages and the public page include these refinements.

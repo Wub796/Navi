@@ -43,18 +43,18 @@ export const WORKFLOWS_ENDPOINT_PATH = '/v1/sitemap/openapi.json';
 export const HEALTH_ENDPOINT_PATH = '/healthz';
 export const METRICS_ENDPOINT_PATH = '/metrics';
 
-/** Path that offers the Corresponding Source by redirecting to it. */
+/** Path that names the source of the running version by redirecting to it. */
 export const SOURCE_ENDPOINT_PATH = '/v1/source';
 /**
- * Where the Corresponding Source for the running version lives, and the default
- * target of `GET /v1/source`.
+ * Where the source for the running version lives, and the default target of
+ * `GET /v1/source`.
  *
- * Normative rather than decorative: AGPL-3.0 section 13 obliges a service like
- * this one to offer its Corresponding Source to the users interacting with it over
- * a network, so changing this to a vanity URL would make the service non-compliant.
- * Override it with `NAVI_SOURCE_URL` when hosting a modified version, because the
- * obligation attaches to the source of the version actually answering requests —
- * upstream's repository does not discharge it for a fork.
+ * No longer a licence obligation — Navi is MIT-licensed, which imposes none — but
+ * still a deliberate promise: a service that serves this bundle should be able to
+ * name the code it is running, so a tenant can read what it is trusting. Override
+ * it with `NAVI_SOURCE_URL` when hosting a modified version, because the useful
+ * answer is the source of the version actually answering requests, and upstream's
+ * repository is the wrong pointer for a fork.
  */
 export const SOURCE_REPOSITORY_URL = 'https://github.com/Wub796/Navi';
 

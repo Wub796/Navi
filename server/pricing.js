@@ -15,7 +15,7 @@ export const NAMED_PLAN_CEILINGS = Object.freeze({ starter: 10000, pro: 50000, e
 
 /**
  * The four commercial tiers, in display order. `maxEventsPerWindow: null` is the
- * Community plan: self-hosted under AGPL-3.0 with no hosted ceiling.
+ * Community plan: self-hosted under MIT with no hosted ceiling.
  *
  * Hosted bundle serves and accepted sitemap writes both draw from one quota
  * window. Self-hosted beacon quotas use separate configuration.
@@ -28,7 +28,7 @@ export const TIERS = Object.freeze([
     name: 'Community',
     priceCents: 0,
     maxEventsPerWindow: null,
-    summary: 'Self-host the bridge under AGPL-3.0, with your own storage and no hosted quota.'
+    summary: 'Self-host the bridge under MIT, with your own storage and no hosted quota.'
   },
   {
     id: 'starter',
@@ -42,14 +42,14 @@ export const TIERS = Object.freeze([
     name: 'Pro',
     priceCents: 4900,
     maxEventsPerWindow: 50000,
-    summary: 'Five times the Starter window, plus a commercial licence that exempts you from AGPL-3.0.'
+    summary: 'Five times the Starter window on the hosted service. Self-hosting is free at every tier.'
   },
   {
     id: 'enterprise',
     name: 'Enterprise',
     priceCents: 19900,
     maxEventsPerWindow: 250000,
-    summary: 'The largest hosted window, plus a commercial licence for self-hosted Docker deployments.'
+    summary: 'The largest hosted window, for the highest bundle-serve and sitemap-write volume.'
   }
 ]);
 

@@ -22,13 +22,13 @@
 //   GET  /healthz                       liveness, store mode and tenant count
 //   GET  /metrics                       Prometheus counters for a scraper
 //   GET  /.well-known/navi.json         public agent discovery document
-//   GET  /v1/source                     offer of the Corresponding Source (AGPL-3.0 §13)
+//   GET  /v1/source                     names the source of the running version
 //
 // Every response carries two `Link` relations: `rel="agent-bridge"` on
 // `/.well-known/navi.json`, so an agent that can reach any route of this host can
 // find the document without knowing its path, and `rel="source"` on this version's
-// Corresponding Source, which is what AGPL-3.0 section 13 obliges a service like
-// this one to offer the users who interact with it over a network. Both relations
+// running version, so a tenant can find the code answering its requests. Both
+// relations
 // are set once, on the response object, rather than route by route, so a route
 // added later cannot forget either of them. Nothing here depends on the client
 // runtime: the document is a few literals plus the configured endpoints.
@@ -154,11 +154,10 @@ Environment
   NAVI_MCP_SSE_URL MCP SSE endpoint published in the discovery document. Defaults
                    to http://127.0.0.1:3001/sse. Point this at your own bridge
                    only if you intend to publish it.
-  NAVI_SOURCE_URL  Corresponding Source offered at /v1/source and advertised as
-                   rel="source" on every response. Defaults to
-                   https://github.com/Wub796/Navi. Set it to your own repository
-                   when serving a modified version: AGPL-3.0 section 13 requires
-                   the source of the version that is actually running.
+  NAVI_SOURCE_URL  Source offered at /v1/source and advertised as rel="source" on
+                   every response. Defaults to https://github.com/Wub796/Navi.
+                   Set it to your own repository when serving a modified version:
+                   the useful pointer is the source of the version running.
   NAVI_RETENTION_DAYS      Days of containment violations to keep. Default 30;
                            0 disables the automatic sweep, and the maintenance
                            route keeps working with an explicit max_age_days.
@@ -301,7 +300,7 @@ export async function createNaviHostServer(options = {}) {
   metrics = createHostMetrics({ store, limiter, lifecycle, quota });
   /**
    * Both relations in one header value, on every response this service emits: the
-   * discovery document and the Corresponding Source. RFC 8288 allows several
+   * discovery document and the source of the running version. RFC 8288 allows several
    * comma-separated entries, and `agentBridgeLink` in the MCP server already
    * splits them, so the reader that follows `rel="agent-bridge"` is unaffected by
    * the second relation.

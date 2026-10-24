@@ -263,3 +263,90 @@ test('100 sequential mutations: aggregate delta context stays far below full pol
   }, null, 2) + '\n');
   expect(reduction).toBeGreaterThanOrEqual(.5);
 });
+
+test('any trial seed is accepted, so a benchmark iteration number cannot become a harness refusal', async () => {
+  // The live benchmark uses its iteration number as the seed. A seed ceiling in the
+  // fixture turned every trial past it into a 400 on the first add-to-cart, which a
+  // report can only read as a model that failed the task.
+  const app = await createTcrApp({ hard: true });
+  try {
+    const page = await fetch(`${app.origin}/checkout?seed=21`);
+    expect(page.status).toBe(200);
+    const cart = await fetch(`${app.origin}/api/cart?seed=21`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seed: 21, product: 'Trail backpack', quantity: 2 })
+    });
+    expect(cart.status).toBe(201);
+    const created = await cart.json();
+    const quote = await fetch(`${app.origin}/api/shipping?cart=${created.cart}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shipping: 'express' })
+    });
+    expect(quote.status).toBe(200);
+    expect((await quote.json()).totalCents).toBe(10700);
+  } finally { await app.close(); }
+});
+
+test('a rejected submission is reported to the caller, and a control name resolves where an id does not', async () => {
+  test.setTimeout(120000);
+  // The hard fixture refuses the first order submission and commits nothing, which
+  // is the case an agent has to be able to tell apart from a page that is merely
+  // slow: same URL, same controls, and the only explanation in a live region.
+  const app = await createTcrApp({ hard: true });
+  const client = new Client({ name: 'rejection-feedback', version: '1.0.0' });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: ['bin/navi-mcp.js'], cwd: root, stderr: 'pipe', env: { ...process.env, NAVI_ALLOW_LOCAL_NETWORK: '1' } }));
+  /** @param {string} name @param {Record<string, unknown>} args @param {boolean} [expectedError] @returns {Promise<any>} */
+  const call = async (name, args, expectedError = false) => {
+    const result = await client.callTool({ name, arguments: args });
+    const body = JSON.parse(/** @type {{text: string}[]} */ (result.content)[0].text);
+    expect(result.isError === true, JSON.stringify(body)).toBe(expectedError);
+    return body;
+  };
+  /** @param {string} label @param {Record<string, unknown>} [extra] @returns {Promise<any>} */
+  const act = async (label, extra = {}) => {
+    const map = await call('navi_get_actions', {});
+    const matches = map.actions.filter((/** @type {any} */ action) => action.name === label && action.state.is_visible && action.state.is_enabled && !action.state.is_occluded);
+    expect(matches, label).toHaveLength(1);
+    return call('navi_execute_action', { target_id: matches[0].target_id, settle: { wait_for: 'mutation_settle', timeout_ms: 6000 }, ...extra });
+  };
+  try {
+    await call('navi_navigate', { url: `${app.origin}/checkout?seed=3` });
+    await act('Search products', { action_type: 'type', payload: { text: 'backpack' } });
+    await act('Quantity', { action_type: 'select', payload: { value: '2' } });
+    await act('Add Trail backpack', { action_type: 'click' });
+    const review = await act('Review checkout', { action_type: 'click', settle: { wait_for: 'navigation', timeout_ms: 6000 } });
+    expect(review.settled).toBe(true);
+    await call('navi_navigate', { url: review.final_url });
+    await act('Email address', { action_type: 'type', payload: { text: 'agent@example.test' } });
+    await act('Shipping method', { action_type: 'select', payload: { value: 'express' } });
+    // The refusal: dispatched, settled, still on the review page. Only the message
+    // the page printed distinguishes it from a submission that is still in flight.
+    const rejected = await act('Place sandbox order', { action_type: 'click' });
+    expect(rejected.executed).toBe(true);
+    expect(rejected.settled).toBe(true);
+    expect(rejected.final_url).toContain('step=review');
+    expect(rejected.page_messages.join(' ')).toContain('Payment details could not be verified');
+    // And a page read says the same, for a planner that looked before acting again.
+    const afterRejection = await call('navi_get_actions', {});
+    expect(afterRejection.page_messages.join(' ')).toContain('Payment details could not be verified');
+    // An unknown handle is refused with the nearest current controls rather than a
+    // bare "not found", so a planner that invented an id is not left guessing. It
+    // dispatched nothing, so the form is exactly where the refusal left it.
+    const invented = await call('navi_execute_action', { target_id: 'cart_btn', action_type: 'click' }, true);
+    expect(invented.error.code).toBe('NOT_FOUND');
+    expect(invented.candidates.length).toBeGreaterThan(0);
+    expect(invented.candidates[0]).toEqual(expect.objectContaining({ target_id: expect.any(String), name: expect.any(String) }));
+    // A handle that is not an id is resolved against the control's own label: this
+    // dispatched nothing on the first attempt, so acting on the resolved id is safe.
+    const resubmitted = await call('navi_execute_action', {
+      target_id: 'Place sandbox order', action_type: 'click', settle: { wait_for: 'navigation', timeout_ms: 6000 }
+    });
+    expect(resubmitted.resolved_from).toBe('Place sandbox order');
+    expect(resubmitted.settled).toBe(true);
+    const url = new URL(resubmitted.final_url);
+    expect(url.searchParams.get('step')).toBe('complete');
+    const order = await (await fetch(`${app.origin}/api/order?cart=${url.searchParams.get('cart')}`)).json();
+    expect(order).toMatchObject({ quantity: 2, email: 'agent@example.test', shipping: 'express', totalCents: 10700 });
+  } finally {
+    await client.close();
+    await app.close();
+  }
+});

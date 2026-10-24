@@ -40,7 +40,11 @@ export async function createTcrApp({ hard = false } = {}) {
       }
       const body = JSON.parse(raw || '{}');
       const seed = cart?.seed ?? Number(body.seed);
-      if (!Number.isInteger(seed) || seed < 1 || seed > 10) return json(400, { error: 'Invalid trial seed' });
+      // Any positive seed is a valid trial: the benchmark's iteration number *is* the
+      // seed, so a ceiling here silently converts every trial past it into a harness
+      // 400 that reads as a model failure. The bound only keeps the delay arithmetic
+      // exact.
+      if (!Number.isInteger(seed) || seed < 1 || seed > 1000) return json(400, { error: 'Invalid trial seed' });
       // Paired paths get the same reproducible 60–260ms response schedule.
       // Hard variant: the shipping quote answers after a long delay, so an action
       // that settles on DOM quiet can return before the total is known.

@@ -117,7 +117,7 @@ export function assertResolutionParity(sdkSource, strategy) {
  * @type {Record<string, string>}
  */
 const GUIDANCE = {
-  NOT_FOUND: 'The target_id is not in the action map. Call navi_get_actions and use a target_id from that response; ids change when the page re-renders.',
+  NOT_FOUND: 'The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read ("Place order") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.',
   AMBIGUOUS: 'The target_id matched more than one element. Re-read the action map; the page has duplicate or unstable identities.',
   UNAVAILABLE: 'The element exists but is not actionable: hidden, disabled, off-screen or covered. Use navi_scroll_to for an off-screen top-document target, wait for it to become enabled, or dismiss the overlay first.',
   TARGET_UNAVAILABLE: 'The element was not visible, enabled, in-viewport and unoccluded at execution time. Re-read the action map and retry once the element has settled.',
@@ -449,7 +449,7 @@ export const TOOLS = [
   {
     name: 'navi_get_actions',
     title: 'Read the Navi action map',
-    description: 'Return the current NaviActionMap: target_id, role, accessible name, live visible/enabled/in-viewport/occluded state, CSS-pixel coordinates and the suggested action for each interactive control. Viewport-only by default; pass all=true for the whole document, including off-screen controls.',
+    description: 'Return the current NaviActionMap: target_id, role, accessible name, live visible/enabled/in-viewport/occluded state, CSS-pixel coordinates and the suggested action for each interactive control. Viewport-only by default; pass all=true for the whole document, including off-screen controls. When the page is currently telling the reader something in a live region (an alert, a validation reason, a status line), page_messages carries that text: it is where a rejecting form explains itself, and no action map of controls can carry it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -475,11 +475,11 @@ export const TOOLS = [
   {
     name: 'navi_execute_action',
     title: 'Execute an action on a target',
-    description: 'Run click, type or select on a target_id from the action map. Uses the guarded synthetic path first; controls marked data-navi-trusted="true" automatically fall back to trusted native driver input at the target\'s live coordinates. Failed actions are never retried automatically, because they may already have applied. Pass settle to wait deterministically for the action\'s effect before this call returns; the receipt reports whether the requested condition held.',
+    description: 'Run click, type or select on a target_id from the action map. Uses the guarded synthetic path first; controls marked data-navi-trusted="true" automatically fall back to trusted native driver input at the target\'s live coordinates. Failed actions are never retried automatically, because they may already have applied - the one exception is a handle that matched no control at all, which dispatched nothing: target_id may also be the control\'s exact accessible name, and a name matching exactly one actionable control is resolved and reported as resolved_from, while an ambiguous or unknown one is answered with candidates. Pass settle to wait deterministically for the action\'s effect before this call returns; the receipt reports whether the requested condition held, and page_messages carries any live-region text the page started saying in response, such as the reason a submission was rejected. Settlement proves the DOM went quiet, not that the business effect succeeded.',
     inputSchema: {
       type: 'object',
       properties: {
-        target_id: { type: 'string', description: 'target_id from navi_get_actions.' },
+        target_id: { type: 'string', description: 'target_id from navi_get_actions, or the control\'s exact accessible name.' },
         action_type: { type: 'string', enum: ['click', 'type', 'select'], description: 'Action to perform.' },
         payload: {
           type: 'object',
@@ -888,8 +888,8 @@ export class NaviSession {
         // RESOLUTION_STRATEGY_MAP, and assertResolutionParity has already compared that
         // lookup against the value the branch set for `sdk.source` - so the two cannot
         // disagree. The source is named again here because `source` is ambiguous in a
-        // receipt that also carries the manifest's `source` (the Corresponding Source
-        // URL of the host) and `discovery.source` (how instrumentation was detected - a
+        // receipt that also carries the manifest's `source` (the source URL the host
+        // publishes) and `discovery.source` (how instrumentation was detected - a
         // link header, a meta tag, or nothing).
         runtime_resolution: {
           strategy: RESOLUTION_STRATEGY_MAP[resolution],
@@ -967,7 +967,13 @@ export class NaviSession {
       const cursor = Number.isSafeInteger(args.since_version) && Number(args.since_version) >= 0 ? Number(args.since_version) : undefined;
       const options = { viewportOnly: args.all !== true, limit };
       const map = cursor === undefined ? await adapter.discover(options) : await adapter.discover({ ...options, since_version: cursor });
-      return toolResult({ ...(args.compact === true ? compactActionMap(map) : map), viewportOnly: args.all !== true, url: adapter.page.url() });
+      // What the page itself is saying, when it is saying anything. A rejected form
+      // usually explains itself in a non-interactive element, which an action map of
+      // controls cannot carry; omitting that explanation is what makes a refusal
+      // indistinguishable from a page that simply has not finished yet.
+      const messages = await adapter.pageMessages();
+      return toolResult({ ...(args.compact === true ? compactActionMap(map) : map), viewportOnly: args.all !== true, url: adapter.page.url(),
+        ...(messages.length ? { page_messages: messages } : {}) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/Incomplete action map/.test(message)) {
@@ -1008,13 +1014,20 @@ export class NaviSession {
       if (this.blockedRequests > blockedBefore) return toolError(CONTAINMENT_CODE, 'An action attempted blocked network access.', { may_have_applied: true });
       if (!result.ok) {
         const code = result.error?.code ?? 'EXECUTION_ERROR';
-        return toolError(code, result.error?.message ?? 'The action failed.', { target_id: targetId, action_type: actionType });
+        return toolError(code, result.error?.message ?? 'The action failed.', { target_id: targetId, action_type: actionType,
+          ...(result.error?.candidates ? { candidates: result.error.candidates } : {}) });
       }
       const settle = result.settle;
       return toolResult({
         executed: true,
         target_id: targetId,
         action_type: actionType,
+        // Present only when the handle was a name that resolved to an id, so a
+        // caller can tell which control it actually acted on.
+        ...(result.resolved_from ? { resolved_from: result.resolved_from } : {}),
+        // What the page said in response, when it said anything new. A receipt that
+        // reports only "the DOM went quiet" cannot tell a rejection from a pending request.
+        ...(result.page_messages?.length ? { page_messages: result.page_messages } : {}),
         mode: result.mode,
         trusted_fallback: result.mode === 'native-driver',
         dispatched: result.result?.dispatched === true,

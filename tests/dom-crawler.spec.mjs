@@ -563,7 +563,7 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     'Navi does not create backups or guarantee replication or point-in-time recovery',
     'Replace <code>YOUR_BUILD_HASH</code> with the exact SHA-384 from the build output',
     'The self-hosted',
-    'Commercial license',
+    'Optional hosted plans',
     'Operational FAQ',
     // The 3D stage: camera presets, depth toggles, the tilt sensor, and the four
     // targets the receipt inspector can pin.

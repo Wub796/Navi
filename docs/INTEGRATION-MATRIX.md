@@ -2,7 +2,7 @@
 
 The three places Navi meets somebody else's system — a host's discovery metadata, an MCP client's server configuration, and a page embed — collected in one file, with the reference implementation's values and an explicit note on what this repository does and does not verify. Substitute your own origins; nothing here is a deployed service.
 
-Versions in play: Navi protocol **0.3.0**, MCP protocol revision **2025-11-25**, package `navi-interaction-bridge` **0.6.9**. The Navi protocol version is the value in `dist/navi.min.js`; the MCP revision is the transport revision, negotiated separately.
+Versions in play: Navi protocol **0.3.0**, MCP protocol revision **2025-11-25**, package `navi-interaction-bridge` **0.7.0**. The Navi protocol version is the value in `dist/navi.min.js`; the MCP revision is the transport revision, negotiated separately.
 
 ## Discovery: how an agent finds Navi without being told
 
@@ -10,7 +10,7 @@ Three signals, cheapest first. An agent that only has a URL can use all three wi
 
 | Signal | Where it comes from | What it means |
 |---|---|---|
-| `Link: </.well-known/navi.json>; rel="agent-bridge", <https://github.com/Wub796/Navi>; rel="source"` | every response of the host service | this origin publishes Navi discovery metadata, and offers the Corresponding Source of the version answering it (AGPL-3.0 section 13) |
+| `Link: </.well-known/navi.json>; rel="agent-bridge", <https://github.com/Wub796/Navi>; rel="source"` | every response of the host service | this origin publishes Navi discovery metadata, and names the source of the version answering it |
 | `GET /.well-known/navi.json` | host service | the machine-readable manifest below |
 | `<meta name="agent-bridge" content="active" data-version="0.3.0">` | injected into the page by the tenant loader | this document is instrumented and the runtime that executed it is `data-version` |
 
@@ -38,7 +38,7 @@ The manifest is fixed-shape and cacheable:
 | `capabilities` | Capability names an agent may gate its own behaviour on. |
 | `endpoints.mcp_sse` | Absolute URL of the remote MCP transport. Defaults to the loopback SSE endpoint; set `NAVI_MCP_SSE_URL` when the transport is reachable elsewhere. |
 | `endpoints.script` | Path of the distributed bundle. Key-gated: the loader appends `?key=<tenant key>`. |
-| `source` | Absolute URL of the Corresponding Source for the running version, offered at `GET /v1/source` and advertised as `rel="source"` on every response. Defaults to `https://github.com/Wub796/Navi`; `NAVI_SOURCE_URL` overrides it, which is what a fork serving a modified version must set, because AGPL-3.0 section 13 attaches to the version actually answering requests. |
+| `source` | Absolute URL of the source for the running version, served at `GET /v1/source` and advertised as `rel="source"` on every response. Defaults to `https://github.com/Wub796/Navi`; `NAVI_SOURCE_URL` overrides it, which is what a fork serving a modified version should set, because the useful pointer is the version actually answering requests. |
 
 Caching is the one thing worth reproducing exactly: the manifest answers with `Cache-Control: public, max-age=300, stale-while-revalidate=3600` and a strong `ETag`, and honours `If-None-Match` with `304`. It is not `no-store`, because a discovery document that cannot be cached is a discovery document an agent will not consult. A five-minute `max-age` keeps `status` and `mcp_sse` honest.
 
@@ -155,7 +155,7 @@ Both the loader and the bundle are served by the host service; `npm run serve` l
 | `GET /v1/loader.js` | The embed snippet. Carries no key of its own; reads `data-key` from its tag. |
 | `GET /v1/navi.js?key=<tenant_key>` | The bundle, tenant-gated, with `Access-Control-Allow-Origin: *` and the SRI hash as its `ETag`. |
 | `GET /.well-known/navi.json` | The discovery manifest. |
-| `GET /v1/source` | Redirects (`302`) to the Corresponding Source of the running version. Unauthenticated, and cached with the same public policy as the manifest. |
+| `GET /v1/source` | Redirects (`302`) to the source of the running version. Unauthenticated, and cached with the same public policy as the manifest. |
 | `GET /healthz` | Liveness, store mode, tenant count. |
 
 `data-sri` is the published `sha384-…` of `navi.min.js` (`dist/sri.txt`; `npm run build` prints the exact tag with the current hash). The loader appends it as `integrity` and sets `crossorigin="anonymous"` on the tag it injects, so the browser verifies the bytes before executing them — which also means the loader's own origin must send `Access-Control-Allow-Origin`, and a CDN that rewrites the bundle fails closed.

@@ -251,8 +251,45 @@ __export(adapter_exports, {
   NAVI_KEYBOARD_KEYS: () => NAVI_KEYBOARD_KEYS,
   NAVI_PROTOCOL_VERSION: () => NAVI_PROTOCOL_VERSION,
   NaviPlaywrightAdapter: () => NaviPlaywrightAdapter,
+  addedMessages: () => addedMessages,
   naviAdapter: () => naviAdapter
 });
+function collectMessages(arg) {
+  const found = [];
+  const seen = /* @__PURE__ */ new Set();
+  const regions = document.querySelectorAll('[role="alert"],[role="status"],[role="log"],[aria-live]');
+  for (const region of regions) {
+    if (region.getAttribute("aria-live") === "off") continue;
+    if (region.getAttribute("aria-hidden") === "true") continue;
+    if (!region.getClientRects().length) continue;
+    const element = (
+      /** @type {HTMLElement} */
+      region
+    );
+    const raw = (element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+    if (!raw) continue;
+    const text = raw.length > arg.chars ? `${raw.slice(0, arg.chars - 1)}\u2026` : raw;
+    if (seen.has(text)) continue;
+    seen.add(text);
+    found.push(text);
+    if (found.length >= arg.max) break;
+  }
+  return found;
+}
+function addedMessages(before, after) {
+  const remaining = /* @__PURE__ */ new Map();
+  for (const text of before) remaining.set(text, (remaining.get(text) ?? 0) + 1);
+  const added = [];
+  for (const text of after) {
+    const count = remaining.get(text) ?? 0;
+    if (count > 0) {
+      remaining.set(text, count - 1);
+      continue;
+    }
+    added.push(text);
+  }
+  return added;
+}
 function collectTargets(options = {}) {
   const documentRef = document;
   const escape = (value) => CSS.escape(value);
@@ -381,7 +418,7 @@ function executeTarget(arg) {
 function naviAdapter(page, options) {
   return new NaviPlaywrightAdapter(page, options);
 }
-var NAVI_PROTOCOL_VERSION, ACTIONS, MAX_TEXT, NAVI_KEYBOARD_KEYS, NaviPlaywrightAdapter;
+var NAVI_PROTOCOL_VERSION, ACTIONS, MAX_TEXT, MAX_MESSAGES, MAX_MESSAGE_CHARS, MAX_CANDIDATES, NAVI_KEYBOARD_KEYS, NaviPlaywrightAdapter;
 var init_adapter = __esm({
   "src/adapter.js"() {
     "use strict";
@@ -389,6 +426,9 @@ var init_adapter = __esm({
     NAVI_PROTOCOL_VERSION = "0.3.0";
     ACTIONS = ["click", "type", "select"];
     MAX_TEXT = 1e4;
+    MAX_MESSAGES = 4;
+    MAX_MESSAGE_CHARS = 200;
+    MAX_CANDIDATES = 6;
     NAVI_KEYBOARD_KEYS = Object.freeze(["Enter", "Escape", "Tab", "Shift+Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "Backspace", "Delete", "Space", "ControlOrMeta+A"]);
     NaviPlaywrightAdapter = class {
       /** @param {NaviPageLike} page @param {NaviAdapterOptions} [options] */
@@ -430,6 +470,26 @@ var init_adapter = __esm({
           /** @type {NaviActionMap} */
           resolved
         );
+      }
+      /**
+       * What the page itself is saying right now: its rendered live regions.
+       *
+       * The action map answers "what can I press"; this answers "what did it tell
+       * me", which is the half a rejecting form keeps in a non-interactive element.
+       * It never throws: feedback is an addition to a call that already succeeded,
+       * so a page that cannot be read (a torn-down context, a document that
+       * navigated to another origin) reports no messages rather than turning a
+       * dispatched action into a failure.
+       * @returns {Promise<string[]>}
+       */
+      async pageMessages() {
+        try {
+          this.checkOrigin();
+          const messages = await this.page.evaluate(collectMessages, { max: MAX_MESSAGES, chars: MAX_MESSAGE_CHARS });
+          return Array.isArray(messages) ? messages.filter((message) => typeof message === "string") : [];
+        } catch {
+          return [];
+        }
       }
       /**
        * Scroll a unique top-document control into view and return its fresh state.
@@ -539,12 +599,40 @@ var init_adapter = __esm({
         }
         this.busy = true;
         try {
+          const before = await this.pageMessages();
           const prepared = plan ? await prepareSettle(this.page, plan) : null;
           const dispatchedAt = Date.now();
+          const outcome = await this.#dispatch(targetId, actionType, payload, plan, prepared, dispatchedAt);
+          const messages = addedMessages(before, await this.pageMessages());
+          return messages.length ? { ...outcome, page_messages: messages } : outcome;
+        } finally {
+          this.busy = false;
+        }
+      }
+      /**
+       * Dispatch one action, resolving a name-shaped handle when no id matches it.
+       *
+       * A `NOT_FOUND` that never dispatched is the one refusal that is provably
+       * hands-off, so it is the one place a second attempt is safe. It is worth
+       * taking because the handle a planner usually has is the control's *name* ("Add
+       * to cart", "Place order") rather than the id a map happened to assign it,
+       * and a name that resolves to exactly one actionable control is a lookup, not
+       * a guess. Zero or several matches are refused with the nearest current
+       * controls, so a planner that misremembered a label gets one bounded step
+       * forward instead of repeating the same invented id.
+       * @param {string} targetId @param {string} actionType @param {{text?: string, value?: string}} payload
+       * @param {{waitFor: 'mutation_settle'|'navigation'|'target_hidden', timeoutMs: number, quietMs: number} | null} plan
+       * @param {{token: string | null, beforeUrl: string | null, armed: boolean} | null} prepared
+       * @param {number} dispatchedAt
+       * @returns {Promise<AdapterResult>}
+       */
+      async #dispatch(targetId, actionType, payload, plan, prepared, dispatchedAt) {
+        let id = targetId;
+        let resolvedFrom;
+        const send = async (handle) => {
           const expected = this.protocolVersion;
-          let response;
           try {
-            response = await this.page.evaluate(async (arg) => {
+            const response2 = await this.page.evaluate(async (arg) => {
               const navi = (
                 /** @type {any} */
                 globalThis.Navi
@@ -565,50 +653,91 @@ var init_adapter = __esm({
                   dispatched: failure.dispatched
                 } };
               }
-            }, { targetId, actionType, payload, expected });
-            if (response === void 0) {
-              const result = await this.page.evaluate(executeTarget, { targetId, actionType, payload });
-              response = { ok: true, result };
+            }, { targetId: handle, actionType, payload, expected });
+            if (response2 === void 0) {
+              const result = await this.page.evaluate(executeTarget, { targetId: handle, actionType, payload });
+              return { ok: true, result };
             }
+            return response2;
           } catch (error) {
             if (!plan || !prepared) throw error;
-            const receipt = await completeSettle(this.page, plan, targetId, prepared);
+            const receipt = await completeSettle(this.page, plan, handle, prepared);
             if (!receipt.settled) throw error;
-            return {
-              ok: true,
-              result: { target_id: targetId, action: actionType, dispatched: true },
-              mode: "synthetic",
-              settle: {
-                mode: plan.waitFor,
-                settled: true,
-                elapsed_ms: Date.now() - dispatchedAt,
-                final_url: this.page.url(),
-                ...receipt.reason ? { reason: receipt.reason } : {}
-              }
-            };
+            return { replacedDocument: receipt };
           }
-          const returned = (
-            /** @type {{success?:boolean,reason?:string,dispatched?:boolean} | undefined} */
-            response.result
-          );
-          const needsTrusted = returned?.success === false && returned.reason === "untrusted_gesture_required" && returned.dispatched !== true;
-          const dispatchFailed = response.error?.reason === "dispatch_failed" && response.error.dispatched === false;
-          const safeReturnedFailure = returned?.success === false && returned.reason === "dispatch_failed" && returned.dispatched === false;
-          if (!needsTrusted && !dispatchFailed && !safeReturnedFailure) {
-            if (response.ok === false) return { ok: false, error: response.error };
-            if (returned?.success === false) {
-              return { ok: false, error: { code: "EXECUTION_FAILED", message: returned.reason || "Host reported failure" } };
-            }
-            return await this.#withSettle({ ok: true, result: response.result, mode: "synthetic" }, plan, prepared, dispatchedAt, targetId);
+        };
+        const attributed = (outcome) => resolvedFrom && outcome.ok === true ? { ...outcome, resolved_from: resolvedFrom } : outcome;
+        const settledInPage = (receipt) => attributed({
+          ok: true,
+          result: { target_id: id, action: actionType, dispatched: true },
+          mode: "synthetic",
+          settle: {
+            mode: plan ? plan.waitFor : "mutation_settle",
+            settled: true,
+            elapsed_ms: Date.now() - dispatchedAt,
+            final_url: this.page.url(),
+            ...receipt.reason ? { reason: receipt.reason } : {}
           }
-          if (!this.fallback) return { ok: false, error: { code: "FALLBACK_DISABLED", message: "Target requires trusted input and fallback is disabled" } };
-          if (actionType !== "click" && actionType !== "type") {
-            return { ok: false, error: { code: "FALLBACK_UNSUPPORTED", message: "Trusted fallback supports click and type only" } };
+        });
+        let response = await send(id);
+        if (response.replacedDocument) return settledInPage(response.replacedDocument);
+        const unhandled = response.ok === false && response.error?.code === "NOT_FOUND" && response.error.dispatched !== true;
+        if (unhandled) {
+          const resolution = await this.#byName(id, actionType).catch(() => null);
+          if (!resolution) return { ok: false, error: response.error };
+          if (!("targetId" in resolution)) {
+            return { ok: false, error: { code: "NOT_FOUND", message: resolution.message, candidates: resolution.candidates } };
           }
-          return await this.#withSettle(await this.#fallback(targetId, actionType, payload), plan, prepared, dispatchedAt, targetId);
-        } finally {
-          this.busy = false;
+          resolvedFrom = id;
+          id = resolution.targetId;
+          response = await send(id);
+          if (response.replacedDocument) return settledInPage(response.replacedDocument);
         }
+        const returned = (
+          /** @type {{success?:boolean,reason?:string,dispatched?:boolean} | undefined} */
+          response.result
+        );
+        const needsTrusted = returned?.success === false && returned.reason === "untrusted_gesture_required" && returned.dispatched !== true;
+        const dispatchFailed = response.error?.reason === "dispatch_failed" && response.error.dispatched === false;
+        const safeReturnedFailure = returned?.success === false && returned.reason === "dispatch_failed" && returned.dispatched === false;
+        if (!needsTrusted && !dispatchFailed && !safeReturnedFailure) {
+          if (response.ok === false) return { ok: false, error: response.error };
+          if (returned?.success === false) {
+            return { ok: false, error: { code: "EXECUTION_FAILED", message: returned.reason || "Host reported failure" } };
+          }
+          return attributed(await this.#withSettle({ ok: true, result: response.result, mode: "synthetic" }, plan, prepared, dispatchedAt, id));
+        }
+        if (!this.fallback) return { ok: false, error: { code: "FALLBACK_DISABLED", message: "Target requires trusted input and fallback is disabled" } };
+        if (actionType !== "click" && actionType !== "type") {
+          return { ok: false, error: { code: "FALLBACK_UNSUPPORTED", message: "Trusted fallback supports click and type only" } };
+        }
+        return attributed(await this.#withSettle(await this.#fallback(id, actionType, payload), plan, prepared, dispatchedAt, id));
+      }
+      /**
+       * Resolve a handle that is not a target id against the page's live accessible
+       * names. Normalization is deliberately blunt (case, punctuation and runs of
+       * whitespace are folded) because that is the difference between "Place order"
+       * and "place-order", not between two different controls.
+       * @param {string} handle @param {string} actionType
+       * @returns {Promise<{targetId: string} | {message: string, candidates: {target_id: string, name: string, action: string}[]}>}
+       */
+      async #byName(handle, actionType) {
+        const map = (
+          /** @type {NaviActionMap} */
+          await this.discover({ viewportOnly: false, limit: 5e3 })
+        );
+        const normalize = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const wanted = normalize(handle);
+        const actionable = map.actions.filter((action) => action.state.is_visible && action.state.is_enabled && !action.state.is_occluded);
+        const typed = actionType === "click" ? actionable : actionable.filter((action) => action.suggested_action === actionType);
+        const matched = typed.filter((action) => normalize(action.name) === wanted || normalize(action.target_id) === wanted);
+        if (matched.length === 1) return { targetId: matched[0].target_id };
+        const tokens = new Set(wanted.split(" ").filter(Boolean));
+        const candidates = actionable.map((action) => ({ action, score: normalize(`${action.name} ${action.target_id}`).split(" ").filter((word) => tokens.has(word)).length })).sort((left, right) => right.score - left.score).slice(0, MAX_CANDIDATES).map((entry) => ({ target_id: entry.action.target_id, name: entry.action.name, action: entry.action.suggested_action }));
+        return {
+          message: matched.length > 1 ? `${matched.length} controls are named ${JSON.stringify(handle)}; use one of their target_ids instead.` : `No control is named ${JSON.stringify(handle)}. candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle.`,
+          candidates
+        };
       }
       /**
        * Attach a settlement receipt to a dispatched outcome. The receipt carries the

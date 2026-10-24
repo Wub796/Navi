@@ -1,10 +1,14 @@
-# Navi Commercial Terms
+# Navi Hosted Service Terms
 
-Last updated: 23 October 2026
+Last updated: 24 October 2026
 
 These terms govern paid Navi subscriptions (Starter, Pro and Enterprise). You accept them by
-checking the terms box at checkout. "We" means Benjamin Wu, the copyright holder of Navi. "You"
+checking the terms box at checkout. "We" means Benjamin Wu, who operates the hosted service. "You"
 means the person or organisation that buys the subscription.
+
+These terms cover the **hosted service only**. The Navi source code is licensed separately under the
+[MIT licence](LICENSE), which needs no subscription, grants no rights that these terms can remove,
+and is not affected by whether you subscribe.
 
 ## 1. Subscription
 
@@ -18,41 +22,33 @@ billing period.
 1.3 You can cancel at any time through Stripe. Cancellation takes effect at the end of the
 current billing period.
 
-## 2. Commercial licence (Pro and Enterprise)
+## 2. What a subscription buys
 
-2.1 Navi is published under the GNU Affero General Public License, version 3 or later ("AGPL").
-While your Pro or Enterprise subscription is active and paid, we also grant you a non-exclusive,
-non-transferable, worldwide licence to use, modify and run Navi, and to distribute it as part of
-your own products, **without the obligations of the AGPL**. In particular you do not have to
-publish your modifications, and you do not have to offer source code to users of your network
-services.
+2.1 A subscription buys **hosted capacity**: serving the Navi browser bundle to your tenants,
+accepting sitemap writes, and ingesting the telemetry those produce, metered against the plan's
+30-day allowance. It does not buy a licence to the code, because the code is MIT and needs none.
 
-2.2 Pro covers your hosted and proprietary SaaS deployments. Enterprise also covers self-hosted
-Docker and air-gapped deployments of the Navi host.
+2.2 Self-hosting is free at every tier. You may run the reference host yourself, without a
+subscription, for any purpose, including products you sell.
 
-2.3 The licence covers your organisation and any companies it controls. You may embed Navi in
-products you sell, and use it to deliver work to your own customers, under the plan you bought.
-What the licence does not cover is passing Navi itself on: you may not sublicense it, resell access
-to it as a browser-automation SDK or hosted service, or ship a fork of it as one that competes with
-Navi. A product of yours that uses Navi to do a job for its users is not that.
+2.3 Exceeding the allowance is not a breach. Requests past the window are refused with `429` and a
+`Retry-After` header until it resets; there is no automatic overage billing.
 
-2.4 You may evaluate Navi under the AGPL without a subscription, including a time-limited pilot of
-one workflow on systems you are entitled to automate. Putting Navi in front of third parties as
-part of something you charge for needs Pro or Enterprise.
+2.4 Commercial support, an uptime commitment or an air-gapped deployment review are available only
+under a separate written agreement. They are not included in Starter or Pro.
 
-2.5 You get no rights to the Navi name or logo, and no ownership of Navi. We keep all rights we do
-not expressly grant.
-
-2.6 Starter subscriptions include hosted usage only. Any use of the source code under Starter is
-under the AGPL.
+2.5 You get no rights to the Navi name or logo. The MIT licence grants copyright and patent
+permissions; it does not grant trademark rights.
 
 ## 3. When a subscription ends
 
-3.1 The commercial licence ends when your subscription ends. You may keep using copies of Navi
-you already have only under the AGPL. That means complying with it, including its
-source-offer obligation, or stopping use of Navi within 30 days.
+3.1 Your hosted access ends at the end of the paid period: the tenant key stops being served and
+ingest answers `429`. No code rights are affected, because none came from the subscription.
 
-3.2 We may suspend or end your subscription if you do not pay or if you breach these terms. We
+3.2 You may keep using, modifying and self-hosting any copy of Navi you already have under the
+[MIT licence](LICENSE), before or after cancelling.
+
+3.3 We may suspend or end your subscription if you do not pay or if you breach these terms. We
 will give you 14 days' notice where we reasonably can.
 
 ## 4. Hosted service
@@ -68,8 +64,8 @@ delete it according to the retention settings described in the documentation.
 
 ## 5. Disclaimer and liability
 
-5.1 Navi and the hosted service are provided "as is", without warranties of any kind, to the
-extent the law allows.
+5.1 The hosted service is provided "as is", without warranties of any kind, to the extent the law
+allows. This does not narrow the permissions the MIT licence grants in the code.
 
 5.2 Neither party is liable for indirect, incidental, special or consequential damages, or for
 lost profits or lost data. Each party's total liability under these terms is limited to the fees
@@ -83,6 +79,6 @@ you paid in the 12 months before the claim.
 billing period. If you do not accept them, you can cancel before they take effect.
 
 6.3 These terms, together with [LICENSING.md](LICENSING.md), are the whole agreement about your
-subscription.
+subscription. They do not modify the [MIT licence](LICENSE) that governs the code.
 
 6.4 Contact: wub67608@gmail.com.

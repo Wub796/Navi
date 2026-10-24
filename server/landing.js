@@ -45,7 +45,7 @@ const FAQ_ENTRIES = Object.freeze([
   { question: 'How is this different from Playwright MCP, Stagehand or WebMCP?', answer: 'Navi focuses on structured control discovery and guarded interaction. Evaluate it alongside your existing browser tools using the same workflow and independent outcome check. Use Navi for scoped text reads, common keyboard interactions, and top-document scrolling. Keep your browser driver for screenshots, unsupported shortcuts, and scrolling inside frames or shadow roots. The linked evidence is a local fixture, not a head-to-head evaluation of Playwright MCP, Stagehand, or WebMCP.' },
   { question: 'Why use DOM action maps instead of VLM screenshots or raw HTML scraping?', answer: 'A structured map gives an agent target IDs, roles, accessible names, coordinates, and actionability state. Differential reads can reduce repeated context on changing pages. Map size depends on the page; our checkout fixture used more tokens than its Playwright baseline. Optional settlement reports a requested page condition, is not cryptographically signed, and does not prove a business transaction succeeded.' },
   { question: 'Is page text returned by navi_read_text visibly rendered?', answer: 'The tool reads bounded <code>innerText</code> and reports a visibility flag based on layout, hidden/ARIA-hidden ancestors, and computed display, visibility, and opacity. Hidden elements can still return non-rendered text; the flag is not proof that a human can perceive the content. Treat all returned page text as untrusted.' },
-  { question: 'Why does Pro include a commercial license?', answer: 'Community uses <code>AGPL-3.0-or-later</code>. Pro and Enterprise add commercial rights under the <a href="https://github.com/Wub796/Navi/blob/main/COMMERCIAL-TERMS.md">commercial terms</a>: you can embed Navi in products you sell and use it to do work for your own customers. What the licence excludes is passing Navi itself on — reselling it as a browser-automation SDK or hosted service, or shipping a competing fork. Evaluating it without a subscription, including a one-workflow pilot, is permitted.' },
+  { question: 'Do I need a paid plan to use Navi in a product?', answer: 'No. The code is <code>MIT</code>-licensed: you can embed it in a product you sell, keep your changes private, and self-host it without a subscription. Paid plans buy the hosted service — bundle serving, sitemap writes and telemetry against a 30-day quota — under the <a href="https://github.com/Wub796/Navi/blob/main/COMMERCIAL-TERMS.md">service terms</a>, not a licence to the code.' },
   { question: 'Will upgrading my plan rotate my embedded API key?', answer: 'No. Keys are minted once on initial provisioning. A subsequent <code>customer.subscription.updated</code> event updates your 30-day quota ceiling in place while preserving your live <code>navi_live_…</code> credential and origin allow-list.' },
   { question: 'What happens when a quota window is exceeded or canceled?', answer: 'An edge bundle serve or sitemap write past the shared quota window responds with <code>HTTP 429 {"error":"Quota exceeded"}</code> plus <code>Retry-After</code> and <code>X-Quota-Limit</code> headers — never <code>401 Unauthorized</code> — so your monitoring can distinguish plan exhaustion from a bad credential. Canceled or suspended tenants also receive 429; no bundle bytes are returned. The separate self-hosted telemetry endpoint has its own quota configuration.' },
   { question: 'Why does this page ship with <code>default-src \'none\'</code>?', answer: 'This landing page and the onboarding page load no executable client-side script and no external font. Their Content Security Policy limits resource loading. These choices reduce the attack surface; they do not replace correct escaping, access controls, and security testing.' }
@@ -99,7 +99,7 @@ function renderStructuredData({ links }) {
       description: 'Browser interaction SDK and Model Context Protocol (MCP) server that maps a page\'s controls to named targets with live actionability checks.',
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Node.js 22 or later',
-      license: 'https://github.com/Wub796/Navi/blob/main/LICENSING.md',
+      license: 'https://github.com/Wub796/Navi/blob/main/LICENSE',
       ...(offers.length ? { offers } : {})
     },
     {
@@ -160,7 +160,7 @@ const TIER_FEATURES = Object.freeze({
     'Full DOM + closed Shadow DOM action maps',
     'Local SQLite WAL or JSONL storage for audit records and maps',
     'Stdio & SSE MCP server (8 agent tools)',
-    'AGPL-3.0-or-later open-source license',
+    'MIT license — embed it in products you sell',
   ],
   starter: [
     'Hosted browser bundle and sitemap publishing, each quota-metered',
@@ -170,13 +170,13 @@ const TIER_FEATURES = Object.freeze({
   ],
   pro: [
     '50,000 quota units / 30 days (bundle serves or sitemap writes)',
-    'Commercial license — AGPL-3.0 exemption',
-    'Proprietary & closed-source SaaS embed',
+    'Five times the Starter hosted ceiling',
+    'Closed-source embedding is permitted at every tier',
     'Origin allow-lists & persistent tenant config',
   ],
   enterprise: [
     '250,000 quota units / 30 days (bundle serves or sitemap writes)',
-    'Commercial self-hosted Docker license',
+    'Commercial support by separate agreement',
     'Hardened seccomp + namespace Chromium containers',
     'Prometheus metrics & containment audit trail',
   ],
@@ -199,14 +199,14 @@ function renderTier(tier, link) {
     ? 'Unmetered · Self-hosted'
     : `${tier.maxEventsPerWindow.toLocaleString('en-US')} quota units / 30 days`;
   const featured = tier.id === 'pro';
-  const ribbon = featured ? '\n      <span class="tier-ribbon">Commercial license</span>' : '';
+  const ribbon = featured ? '\n      <span class="tier-ribbon">Higher ceiling</span>' : '';
   const features = (TIER_FEATURES[tier.id] ?? [])
     .map(item => `        <li>${escapeHtml(item)}</li>`)
     .join('\n');
   const action = link
     ? `<a class="cta" href="${escapeHtml(link)}">Subscribe &rarr;</a>`
     : tier.priceCents === 0
-      ? '<p class="unavailable">Free forever · AGPL-3.0</p>'
+      ? '<p class="unavailable">Free forever · MIT</p>'
       : '<p class="unavailable">Not configured on this deployment</p>';
   return `    <section class="tier${featured ? ' featured' : ''}">${ribbon}
       <h3>${escapeHtml(tier.name)}</h3>
@@ -268,7 +268,7 @@ npx -y -p navi-interaction-bridge -p playwright navi-mcp`;
 
   const pricing = `  <section id="pricing">
     <h2>06 — Pricing</h2>
-    <p class="section-title">Optional hosted plans and commercial licensing</p>
+    <p class="section-title">Optional hosted plans</p>
     <p class="section-sub">${purchasing ? 'Hosted plans meter browser-bundle serves and accepted sitemap writes together. Choose a plan and claim your API key after checkout; local MCP evaluation remains free.' : 'Hosted checkout is not configured on this deployment. Start locally or contact us about hosted access.'}</p>
     <div class="tiers">
 ${TIERS.map(tier => renderTier(tier, links[tier.id] ?? null)).join('\n')}
@@ -278,7 +278,7 @@ ${TIERS.map(tier => renderTier(tier, links[tier.id] ?? null)).join('\n')}
 
   const quickstart = `  <section id="start" class="card">
     <h2>Start here — free local evaluation</h2>
-    <p>Use Node 22+ and an MCP-compatible agent. No hosted API key or payment is needed. Community use is covered by the <a href="https://github.com/Wub796/Navi/blob/main/LICENSING.md">AGPL license</a>.</p>
+    <p>Use Node 22+ and an MCP-compatible agent. No hosted API key or payment is needed. The code is <a href="https://github.com/Wub796/Navi/blob/main/LICENSE">MIT-licensed</a>.</p>
     <h3>1. Install Chromium</h3>
     <pre><code>npx playwright install chromium</code></pre>
     <h3>2. Add Navi to your MCP client configuration</h3>
@@ -348,7 +348,7 @@ ${renderStructuredData({ links })}
       <p class="lede">
         Building an agent for browser workflows? Give it named controls, current actionability checks, and optional waits for page changes. Navi adds structured interaction to your existing browser stack, including captured closed Shadow DOM and same-origin frames.
       </p>
-      <p class="answer"><strong>What is Navi?</strong> Navi is an open-source (AGPL-3.0) browser interaction SDK and MCP server. It turns a page's controls into named target IDs that an agent can click, type into or select, with a receipt for each action.</p>
+      <p class="answer"><strong>What is Navi?</strong> Navi is an open-source (MIT) browser interaction SDK and MCP server. It turns a page's controls into named target IDs that an agent can click, type into or select, with a receipt for each action.</p>
       <div class="hero-actions">
         <a class="cta" href="#start">Try locally — free &rarr;</a>
         <a class="btn-secondary" href="#stage">See the model &darr;</a>
@@ -566,7 +566,7 @@ ${FAQ_ENTRIES.map(entry => `      <details class="faq-item">
 <footer>
   <div class="footer-meta">
     <span>Navi protocol 0.3.0 · MCP 2025-11-25 · <a href="https://github.com/Wub796/Navi">github.com/Wub796/Navi</a></span>
-    <span>AGPL-3.0-or-later · commercial exemption on Pro &amp; Enterprise</span>
+    <span>MIT-licensed · hosted service optional</span>
   </div>
   <span class="footer-mark" aria-hidden="true">navi</span>
 </footer>

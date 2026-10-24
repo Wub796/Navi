@@ -2,11 +2,11 @@
 
 **Structured interaction for teams building browser workflow agents.** Navi maps indexed controls to named targets with live actionability checks, including captured closed shadow roots and same-origin frames. Its adapter dispatches guarded actions and can wait for a requested page condition. Verify the saved record or completed transaction separately.
 
-[![npm](https://img.shields.io/npm/v/navi-interaction-bridge)](https://www.npmjs.com/package/navi-interaction-bridge) [![License: AGPL-3.0 + commercial](https://img.shields.io/badge/license-AGPL--3.0%20%2B%20commercial-blue)](LICENSING.md) [![Discussions](https://img.shields.io/github/discussions/Wub796/Navi)](https://github.com/Wub796/Navi/discussions)
+[![npm](https://img.shields.io/npm/v/navi-interaction-bridge)](https://www.npmjs.com/package/navi-interaction-bridge) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Discussions](https://img.shields.io/github/discussions/Wub796/Navi)](https://github.com/Wub796/Navi/discussions)
 
 ## Quickstart: try locally for free
 
-Use Node 22+ and install Chromium with `npx playwright install chromium`. No hosted API key or payment is required for local Community evaluation under the [AGPL license](LICENSING.md).
+Use Node 22+ and install Chromium with `npx playwright install chromium`. No hosted API key or payment is required: the code is [MIT-licensed](LICENSE).
 
 Add this to your MCP client config (Claude Desktop, Cursor, or any MCP host):
 
@@ -32,7 +32,7 @@ Use Navi for discovering controls, checking actionability, and executing click/t
 
 Evaluate Navi alongside your current browser stack on the same workflows. The [pilot guide](docs/PILOT-GUIDE.md) defines the measurements and a two-week customer validation plan.
 
-Questions or integration feedback: [GitHub Discussions](https://github.com/Wub796/Navi/discussions). Community is AGPL-3.0-or-later; commercial use is governed by the [commercial terms](COMMERCIAL-TERMS.md). Those terms let you embed Navi in products you sell and use it for your own customers, and exclude reselling Navi itself or shipping a competing fork. Evaluation, including a one-workflow pilot, needs no subscription.
+Questions or integration feedback: [GitHub Discussions](https://github.com/Wub796/Navi/discussions). The code is MIT-licensed, so you can embed it in a product you sell, keep your changes private and self-host it without a subscription. The paid plans cover the [hosted service](COMMERCIAL-TERMS.md), not a licence to the code.
 
 ## Run from source
 
@@ -152,9 +152,9 @@ Exit codes: `0` success, `1` flow/assertion failure, `2` usage or invalid flow, 
 | Tool | Purpose |
 |---|---|
 | `navi_navigate` | Open an http(s) URL and wait for Navi initialization. Reports which SDK install strategy was used. |
-| `navi_get_actions` | Return the current action map. Viewport-filtered by default; `all: true` returns the whole document. |
+| `navi_get_actions` | Return the current action map. Viewport-filtered by default; `all: true` returns the whole document. `page_messages` carries the page's rendered live-region text (an alert, a validation reason, a status line) when it is saying anything. |
 | `navi_scroll_to` | Scroll a unique top-document `target_id` into view and return fresh state. Use `navi_get_actions({all:true})` to discover off-screen targets first. |
-| `navi_execute_action` | Run `click`/`type`/`select` on a `target_id`. Falls back to trusted native input at live coordinates for `data-navi-trusted="true"` controls. Pass `settle` to wait for a requested page condition before the call returns. |
+| `navi_execute_action` | Run `click`/`type`/`select` on a `target_id`, or on a control's exact accessible name when it matches exactly one actionable control (reported back as `resolved_from`; an ambiguous or unknown handle is refused with `candidates`). Falls back to trusted native input at live coordinates for `data-navi-trusted="true"` controls. Pass `settle` to wait for a requested page condition before the call returns; the receipt also carries `page_messages`, the live-region text the action made the page say. |
 | `navi_press_key` | Send Enter, Escape, Tab, arrows, or a supported key combination to current focus. Optional `target_id` checks focus and actionability first. Respects `--no-fallback`. |
 | `navi_read_text` | Read normalized, untrusted text from one top-level element, bounded to 2,000 characters by default and 4,000 maximum. |
 | `navi_assert_state` | Check that a target exists, is visible/enabled/in-viewport, and matches an expected accessible name. |
@@ -303,7 +303,7 @@ NAVI_TENANTS="live_key_abc:acme" node server/index.js --port 8790 --store server
 | `GET /healthz` | `{ ok, mode, tenants, retention_days }`, where `mode` is `sqlite` or `log` and `retention_days: 0` means nothing is pruned automatically. |
 | `GET /metrics` | Prometheus `text/plain; version=0.0.4`: `navi_host_requests_total{route,status}`, `navi_host_rate_limited_total{tenant_id}`, `navi_host_prune_events_total`, `navi_host_pruned_records_total`, `navi_host_active_tenants`, `navi_host_store_bytes`, and per metered tenant `navi_host_tenant_quota_limit`, `navi_host_tenant_quota_events`, `navi_host_tenant_quota_window_start_seconds` and `navi_host_quota_exceeded_total`. Open like `/healthz` until `NAVI_METRICS_TOKEN` is set, after which a scrape needs `Authorization: Bearer <token>` and a missing or wrong one is `401`. Aggregate-only, `no-store`, and the `route` label comes from a closed set so an unmatched path is one `other` series rather than one per path a scanner tries. |
 | `GET /.well-known/navi.json` | The agent discovery document — `{ version, protocol, status, capabilities, endpoints, source }` — served `public, max-age=300` with a strong `ETag` and `304` on `If-None-Match`. Every response on this service carries both relations in one header — `Link: </.well-known/navi.json>; rel="agent-bridge", <https://github.com/Wub796/Navi>; rel="source"` — so an agent that can reach any route can find the document, and every reader is offered its source. |
-| `GET /v1/source` | Redirects (`302`) to the Corresponding Source of the version answering — `https://github.com/Wub796/Navi`, or `NAVI_SOURCE_URL` when this host runs a modified version. Unauthenticated, and cached like the discovery document. This is the offer AGPL-3.0 section 13 requires a network service to make. |
+| `GET /v1/source` | Redirects (`302`) to the source of the version answering — `https://github.com/Wub796/Navi`, or `NAVI_SOURCE_URL` when this host runs a modified version. Unauthenticated, and cached like the discovery document, so a tenant can read what the service is running. |
 
 ### Commercial plans
 
@@ -311,10 +311,10 @@ The hosted edge sells four tiers, and `GET /` renders them as a pricing grid who
 
 | Plan | Price | 30-day hosted-site quota |
 |---|---|---|
-| Community | $0 | Self-hosted under AGPL-3.0, unmetered |
+| Community | $0 | Self-hosted under MIT, unmetered |
 | Starter | $29/mo | 10,000 quota units |
-| Pro | $49/mo | 50,000 quota units, plus a commercial licence exempting the buyer from AGPL-3.0 |
-| Enterprise | $199/mo | 250,000 quota units, plus a commercial self-hosted Docker licence |
+| Pro | $49/mo | 50,000 quota units |
+| Enterprise | $199/mo | 250,000 quota units |
 
 Each authorized edge serve of `navi.js` (including a `304` revalidation) and each accepted sitemap write consumes one unit from the same 30-day quota window. Quota is enforced: after it is exhausted, both operations return `429` until the window resets or the plan changes. There is no automatic overage billing. The local self-hosted telemetry host has a separate ingest quota configuration; its beacon counts do not feed the hosted-site plan quota.
 
@@ -433,7 +433,7 @@ node scripts/verify-release.mjs --tag    # ...and create the annotated v<version
 
 [verify-release.mjs](scripts/verify-release.mjs) is the release gate. It requires a worktree clean apart from build output and generated reports, an SRI that hashes to the bytes of `dist/navi.min.js`, a suite with zero failures and at least 264 passing tests, a clean-room tarball canary (`cleanroom-package-canary`) that verifies the unpacked package layout, SRI byte parity, zero leaks, and a live stdio JSON-RPC handshake, a rebuild that reproduces the shipped artifacts byte for byte, both byte budgets, the CI gates and the publish allowlist — and only then, with `--tag`, creates the annotated `v<version>` tag. Its receipt records structured `evidence` beside the prose details: the revision, a digest of every tracked path outside `reports/`, the SRI, the artifact sizes, the container receipts, and the clean-room canary results it verified.
 
-[release.yml](.github/workflows/release.yml) runs that gate on a tag push and then publishes the revision it just verified, with `--provenance --access public`, behind the `release` environment so required reviewers can hold any publish for a human. The publish job depends on two verification jobs by id: the release gate above, and a container verification that builds and exercises the image on both released architectures on their own hardware against `deploy/docker-compose.prod.yml` — the file an operator deploys — so a release whose runtime posture failed is never published. One further gate stands between a tag and the registry: [publish-preflight.mjs](scripts/publish-preflight.mjs) checks the decisions a pipeline must not make on an owner's behalf — a LICENSE file, a `license` field, the access and provenance settings, a tag matching `package.json`, a receipt that still describes the exact bytes being published, provenance parity (`provenance-parity`) — because the receipt is committed by a later commit than the one it names, the preflight proves that HEAD is that revision or an ancestor with nothing outside `reports/` changed, so a report commit that quietly carried a source edit cannot be published — container verification of a configuration this repository deploys recorded green in that receipt, and clean-room package canary verification (`evidence.canary` with 6/6 passing checks), so an image whose runtime posture or packaged tarball was never proven cannot be published on the strength of a receipt that is silent about it. **It passes today: the package ships a `LICENSE` file and declares `AGPL-3.0-or-later`.** Release notes are generated from those receipts by [release-notes.mjs](scripts/release-notes.mjs) rather than retyped, so a note cannot describe a different artifact than the one published.
+[release.yml](.github/workflows/release.yml) runs that gate on a tag push and then publishes the revision it just verified, with `--provenance --access public`, behind the `release` environment so required reviewers can hold any publish for a human. The publish job depends on two verification jobs by id: the release gate above, and a container verification that builds and exercises the image on both released architectures on their own hardware against `deploy/docker-compose.prod.yml` — the file an operator deploys — so a release whose runtime posture failed is never published. One further gate stands between a tag and the registry: [publish-preflight.mjs](scripts/publish-preflight.mjs) checks the decisions a pipeline must not make on an owner's behalf — a LICENSE file, a `license` field, the access and provenance settings, a tag matching `package.json`, a receipt that still describes the exact bytes being published, provenance parity (`provenance-parity`) — because the receipt is committed by a later commit than the one it names, the preflight proves that HEAD is that revision or an ancestor with nothing outside `reports/` changed, so a report commit that quietly carried a source edit cannot be published — container verification of a configuration this repository deploys recorded green in that receipt, and clean-room package canary verification (`evidence.canary` with 6/6 passing checks), so an image whose runtime posture or packaged tarball was never proven cannot be published on the strength of a receipt that is silent about it. **It passes today: the package ships a `LICENSE` file and declares `MIT`.** Release notes are generated from those receipts by [release-notes.mjs](scripts/release-notes.mjs) rather than retyped, so a note cannot describe a different artifact than the one published.
 
 ### Required status checks
 
@@ -483,11 +483,11 @@ The edge Worker is deployed and its Payment Links are live; no end-to-end purcha
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE), declared in `package.json` as `"license": "AGPL-3.0-or-later"` and detected from [LICENSE](LICENSE) itself.
+[MIT](LICENSE), declared in `package.json` as `"license": "MIT"`.
 
-This is copyleft with a network clause, and section 13 binds whoever *runs* it, not only whoever publishes it: if you run a modified version as a network service, you must offer its Corresponding Source to the people who interact with it. The host service implements its own half of that — `GET /v1/source` redirects to the source of the running version, the discovery document publishes the same URL as `source`, and every response advertises it as `rel="source"`. **A fork must set `NAVI_SOURCE_URL` to its own repository**, because upstream's source does not discharge section 13 for a version you have modified.
+You can use, modify, embed and sell products built on Navi, and run a modified version as a closed network service, with no copyleft and no source-offer obligation. Self-hosting is free at every tier; the paid plans buy hosted capacity, not a licence.
 
-The copyleft choice is deliberate rather than incidental. A permissive grant on a published version cannot be withdrawn, so it forgoes the option of licensing this runtime on other terms later; copyleft keeps that option open, which is why the package is not MIT. That option is exercised: Navi is **dual-licensed**, and Pro and Enterprise customers receive a commercial licence that waives the AGPL obligations for their deployments. [LICENSING.md](LICENSING.md) draws the boundary between the open-source core, the commercial licence and the hosted service, and [CONTRIBUTING.md](CONTRIBUTING.md) holds the contributor terms that keep the dual licence grantable.
+The switch from AGPL-3.0 to MIT is deliberate, and it is one-way: a permissive grant on a published version cannot be withdrawn. Releases up to and including v0.6.9 on npm remain AGPL-3.0-or-later exactly as published, and their release notes stay as written; everything from v0.7.0 is MIT. The reasoning, and what it costs, is in [LICENSING.md](LICENSING.md). The hosted service still names the source of the version it is running at `GET /v1/source` and in the `rel="source"` link on every response — nothing requires that now, which is why it is worth keeping: a tenant can read exactly what it is trusting. **A fork should set `NAVI_SOURCE_URL` to its own repository** so that pointer stays truthful.
 
 Settlement is a heuristic with a name, not a proof of completion. `mutation_settle` cannot see inside a *closed* shadow root, so a mutation that happens only there can read as silence; `target_hidden` believes Navi's own visibility/occlusion state, so a target that stays visible but inert times out; and `navigation` treats a URL change or a reload as the effect, which a same-page redirect can satisfy without the business outcome. Nothing here proves that a network write, a payment or a server-side transaction finished. The tenant loader inherits the browser's SRI/CORS rules: with `crossorigin="anonymous"` the script origin must send `Access-Control-Allow-Origin` (the reference host does), an `integrity` hash must match the bytes on the wire (a CDN that rewrites the bundle fails closed, which is the point), and a page that never supplies `data-sri` gets no verification at all.
 

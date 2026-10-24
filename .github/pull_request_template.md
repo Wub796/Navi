@@ -2,4 +2,4 @@
 
 ## How it was verified
 
-- [ ] I agree to the [contributor terms](../CONTRIBUTING.md#contributor-terms), which let this contribution ship under both AGPL-3.0-or-later and the commercial licence.
+- [ ] I agree to the [contributor terms](../CONTRIBUTING.md#contributor-terms), which let this contribution ship under the project's licence, including a later licence change.

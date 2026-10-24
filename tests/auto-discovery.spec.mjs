@@ -32,11 +32,11 @@ import { DEFAULT_SSE_PORT } from '../src/mcp/sse.js';
  *   1. a host publishes `/.well-known/navi.json` and advertises it from every
  *      response with `Link: rel="agent-bridge"`, so an agent that can reach any
  *      route can find the document without a hard-coded path (driven over HTTP);
- *   2. the same responses offer the host's Corresponding Source - `rel="source"`,
- *      `GET /v1/source`, and a `source` field in the document - which is what
- *      AGPL-3.0 section 13 obliges a network service to do for the users who
- *      interact with it, including the ones who only ever see an error (driven
- *      over HTTP, and asserted for a fork serving its own source);
+ *   2. the same responses point at the host's source - `rel="source"`,
+ *      `GET /v1/source`, and a `source` field in the document - so every user who
+ *      interacts with it, including the ones who only ever see an error, can read
+ *      which code answered them (driven over HTTP, and asserted for a fork serving
+ *      its own source);
  *   3. `navi_navigate` reads the marker the tenant loader injects, binds to the
  *      Navi the host is already running, and - when the host publishes nothing, or
  *      publishes a marker whose runtime never ran - falls back to the packaged
@@ -79,7 +79,7 @@ const manifestUrl = () => `${state.base}/.well-known/navi.json`;
 
 /**
  * Both `Link` relations on one header: the discovery document an agent follows and
- * the Corresponding Source AGPL-3.0 section 13 requires this service to offer.
+ * the source pointer a reader can follow to see what answered them.
  *
  * Asserted as containment rather than as one exact string, because the contract is
  * that both relations are advertised on every response - not that they are
@@ -90,7 +90,7 @@ const manifestUrl = () => `${state.base}/.well-known/navi.json`;
  */
 const expectBothRelations = link => {
   expect(link, 'every response must advertise the discovery document').toContain(AGENT_BRIDGE_LINK);
-  expect(link, 'and offer the Corresponding Source section 13 requires').toContain(`<${SOURCE_REPOSITORY_URL}>; rel="source"`);
+  expect(link, 'and name the source of the running version').toContain(`<${SOURCE_REPOSITORY_URL}>; rel="source"`);
 };
 
 /** One document, with the marker the loader injects and the real bundle. @param {boolean} marker @param {boolean} bundle */
@@ -168,11 +168,11 @@ test('a host publishes one discovery document, advertised by every response', as
   expect(wrongMethod.status).toBe(405);
 });
 
-test('a host offers its Corresponding Source to the users who reach it, on every response', async () => {
-  // AGPL-3.0 section 13 is not discharged by a LICENSE file: it requires the running
-  // service to offer the source of the version answering requests, to the users it
-  // answers. So the offer is asserted where a user actually meets it, including on
-  // the responses they never asked for - which is where an offer that lived only in
+test('a host names its source to the users who reach it, on every response', async () => {
+  // No licence obliges this any more, which is exactly why it is easy to lose: a
+  // pointer is only worth having if it names the version actually answering requests,
+  // to the users it answers. So it is asserted where a user meets it, including on
+  // the responses they never asked for - which is where a pointer that lived only in
   // documentation would be missing.
   const offer = await fetch(`${state.base}${SOURCE_ENDPOINT_PATH}`, { redirect: 'manual' });
   expect(offer.status).toBe(302);

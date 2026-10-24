@@ -6,15 +6,15 @@ before opening a pull request against `main`.
 
 ## Contributor terms
 
-Navi is [dual-licensed](LICENSING.md): AGPL-3.0-or-later for everyone, and a commercial licence for
-paying customers. To keep that possible, every contribution is accepted under these terms. Opening
-a pull request means you agree to them.
+Navi is [MIT-licensed](LICENSE). So that the project can change licence again later without
+hunting down every contributor, each contribution is accepted under these terms. Opening a pull
+request means you agree to them.
 
 1. You keep the copyright in your contribution.
 2. You grant Benjamin Wu and anyone who receives Navi from him a perpetual, worldwide,
    non-exclusive, royalty-free, irrevocable licence to use, reproduce, modify, sublicense and
-   distribute your contribution, under AGPL-3.0-or-later and under any other licence, including
-   commercial ones.
+   distribute your contribution, under the project's current licence and under any other licence,
+   including a later licence change.
 3. You grant a matching patent licence for any patent claims you hold that your contribution
    necessarily infringes.
 4. You have the right to make the contribution: it is your own work, or you have your employer's
