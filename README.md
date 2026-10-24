@@ -407,7 +407,7 @@ LLM_ENDPOINT=ollama LLM_MODEL=YOUR_MODEL npm run benchmark:llm
 # Also supported: LLM_ENDPOINT=vllm, lmstudio, or a full /v1 base URL.
 ```
 
-Preflight validates `/models` and a real tool-calling response before opening a task browser. Setup failures exit `2` without changing any report. Successful live runs write `reports/LLM-TCR-BENCHMARK-LIVE.md` and `reports/llm-benchmark-live.json` with provider token counts, cached prompt tokens, per-turn latency and TCR; missing usage stays unknown. The [fixture baseline](reports/LLM-TCR-BENCHMARK.md) remains separate. With no endpoint/model configured, the existing fixture mode still runs, so use `NAVI_LLM_FIXTURE=0` when a run must use a model.
+Preflight validates `/models` and a real tool-calling response before opening a task browser. Setup failures exit `2` without changing any report. Successful live runs write `reports/LLM-TCR-BENCHMARK-LIVE.md` and `reports/llm-benchmark-live.json` with provider token counts, cached prompt tokens, per-turn latency and TCR; missing usage stays unknown. `NAVI_LLM_HARD=1` runs the harder checkout — the shipping quote answers after a 2.5s delay and the first order submission is refused while committing nothing — into [its own report](reports/LLM-TCR-BENCHMARK-LIVE-HARD.md) and raw record, so the two live tasks can never be confused. The [fixture baseline](reports/LLM-TCR-BENCHMARK.md) remains separate. With no endpoint/model configured, the existing fixture mode still runs, so use `NAVI_LLM_FIXTURE=0` when a run must use a model.
 
 ## Continuous integration
 

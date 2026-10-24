@@ -1,6 +1,7 @@
 {
   "status": "measured",
   "fixture": null,
+  "hard": true,
   "recordedAt": "2026-10-24T21:21:30.574Z",
   "model": "gemma4:31b-cloud",
   "node": "v24.21.0",
