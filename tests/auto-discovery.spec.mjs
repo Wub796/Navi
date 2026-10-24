@@ -389,7 +389,7 @@ test('the shipped client configs are runnable: an MCP client starts the command 
   try {
     const listed = await client.listTools();
     expect(listed.tools.map(/** @returns {string} */ tool => tool.name).sort())
-      .toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_read_text', 'navi_scroll_to', 'navi_set_session']);
+      .toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_press_key', 'navi_read_text', 'navi_scroll_to', 'navi_set_session']);
     // ...and the protocol version the documentation states is the one it advertises.
     const navigate = listed.tools.find(/** @returns {boolean} */ tool => tool.name === 'navi_navigate');
     expect(navigate?.description).toContain(`protocol ${NAVI_PROTOCOL_VERSION}`);

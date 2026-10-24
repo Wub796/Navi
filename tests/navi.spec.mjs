@@ -319,7 +319,7 @@ test('full transaction exclusively uses Navi.execute including a closed root and
   await execute(page, 'checkout-gift', 'click');
   await execute(page, 'payment-demo', 'click');
   await execute(page, 'checkout-submit', 'click');
-  await expect(page.getByRole('status')).toHaveText('Sandbox checkout complete — no payment was made.');
+  await expect(page.locator('#status')).toHaveText('Sandbox checkout complete — no payment was made.');
   await expect(page.frameLocator('iframe').locator('button')).toHaveAttribute('aria-pressed', 'true');
   expect(errors).toEqual([]);
 });

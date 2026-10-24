@@ -1,0 +1,1097 @@
+{
+  "status": "measured",
+  "fixture": null,
+  "recordedAt": "2026-10-24T18:06:46.585Z",
+  "model": "gemma4:31b-cloud",
+  "node": "v24.21.0",
+  "endpoint": "http://127.0.0.1:11434/v1",
+  "endpointPreset": "ollama",
+  "preflight": {
+    "models": [
+      "gemma4:31b-cloud",
+      "beam:cloud",
+      "qwen2.5:7b",
+      "llama3.2:3b",
+      "qwen2.5-coder:7b"
+    ],
+    "modelCount": 5,
+    "probeMs": 348.591125
+  },
+  "pricing": {
+    "inputPerMillion": null,
+    "outputPerMillion": null
+  },
+  "summaries": [
+    {
+      "path": "raw-playwright",
+      "successes": 10,
+      "trials": 10,
+      "meanSteps": 20.9,
+      "inputTokens": 341456,
+      "outputTokens": 6181,
+      "failureBuckets": {
+        "SELECTOR_HALLUCINATION": 60
+      },
+      "cachedInputTokens": 312416,
+      "cachedTokenRatio": 0.915,
+      "latency": {
+        "turns": 209,
+        "meanTurnMs": 572.340386985646,
+        "p50TurnMs": 508.82608400000026,
+        "p95TurnMs": 906.3991249999963,
+        "slowestTurnMs": 4871.184291000012
+      },
+      "costUsd": null
+    },
+    {
+      "path": "navi-differential",
+      "successes": 10,
+      "trials": 10,
+      "meanSteps": 13,
+      "inputTokens": 265928,
+      "outputTokens": 3987,
+      "failureBuckets": {},
+      "cachedInputTokens": 236832,
+      "cachedTokenRatio": 0.8906,
+      "latency": {
+        "turns": 130,
+        "meanTurnMs": 605.0307628153851,
+        "p50TurnMs": 455.4550000000163,
+        "p95TurnMs": 925.419167,
+        "slowestTurnMs": 13428.591083000001
+      },
+      "costUsd": null
+    }
+  ],
+  "trials": [
+    {
+      "path": "raw-playwright",
+      "iteration": 1,
+      "success": true,
+      "steps": 21,
+      "requests": 21,
+      "inputTokens": 34474,
+      "outputTokens": 618,
+      "cachedTokens": 29280,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 12317.448167,
+      "turnLatenciesMs": [
+        363.48920799999985,
+        474.70441700000015,
+        678.335292,
+        399.46520899999996,
+        494.7645000000002,
+        534.3922499999999,
+        379.2701670000006,
+        482.38458400000036,
+        452.22479099999964,
+        435.56145800000013,
+        343.43983300000036,
+        446.7783750000008,
+        331.57137500000044,
+        601.2643750000007,
+        571.2680419999997,
+        547.0008749999997,
+        453.3898330000011,
+        390.7073340000006,
+        1070.225708,
+        327.5248339999998,
+        328.30462500000067
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Email address\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Shipping method\",\"value\":\"Express\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 1,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26556,
+      "outputTokens": 394,
+      "cachedTokens": 21184,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 20623.643166,
+      "turnLatenciesMs": [
+        339.5660420000004,
+        701.131625,
+        341.3092919999999,
+        13428.591083000001,
+        598.8765829999975,
+        480.7181669999991,
+        456.2486250000002,
+        337.2748750000028,
+        639.5371250000026,
+        409.5980410000011,
+        500.7702910000007,
+        376.49154199999975,
+        331.1171669999967
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 2,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26683,
+      "outputTokens": 397,
+      "cachedTokens": 24032,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 8189.643875000002,
+      "turnLatenciesMs": [
+        352.544041000001,
+        603.9017089999979,
+        359.7962919999991,
+        527.203416999997,
+        692.8711670000048,
+        340.65329100000235,
+        581.1255830000009,
+        779.7147080000068,
+        513.7385420000064,
+        529.8697919999977,
+        347.6070000000036,
+        475.73125000000437,
+        349.62729099999706
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 2,
+      "success": true,
+      "steps": 21,
+      "requests": 21,
+      "inputTokens": 34483,
+      "outputTokens": 611,
+      "cachedTokens": 31840,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 12802.723957999995,
+      "turnLatenciesMs": [
+        344.09833300000173,
+        514.0439999999944,
+        579.9125829999975,
+        433.9381250000006,
+        554.6151249999966,
+        538.3967919999996,
+        349.94545800000196,
+        559.4931670000005,
+        994.0504999999976,
+        497.15333400000236,
+        391.67887500000506,
+        514.818124999998,
+        367.3644170000043,
+        496.71345799999835,
+        504.5093330000018,
+        530.0418750000026,
+        499.22854099999677,
+        335.64483299999847,
+        544.2252909999952,
+        881.1548330000005,
+        355.12970900000073
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Email address\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Shipping method\",\"value\":\"Express\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 3,
+      "success": true,
+      "steps": 21,
+      "requests": 21,
+      "inputTokens": 34421,
+      "outputTokens": 615,
+      "cachedTokens": 31744,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 13812.521458000003,
+      "turnLatenciesMs": [
+        335.1440419999999,
+        943.5641249999971,
+        716.1764579999945,
+        405.0345410000009,
+        869.0149160000001,
+        1557.9162499999948,
+        418.8364999999976,
+        600.619458000001,
+        439.82566699999734,
+        540.7214590000003,
+        416.22020899999916,
+        472.3142500000031,
+        343.93741600000067,
+        494.1548750000002,
+        507.5409589999981,
+        439.48704200000793,
+        517.9455830000079,
+        468.4617500000022,
+        488.68670900000143,
+        354.4194579999894,
+        459.27404200000456
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Email address\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Shipping method\",\"value\":\"Express\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 3,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26556,
+      "outputTokens": 407,
+      "cachedTokens": 23968,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 7501.072542000009,
+      "turnLatenciesMs": [
+        333.7848329999979,
+        409.6135420000064,
+        302.3005830000038,
+        696.3712920000107,
+        489.3861670000042,
+        408.3662500000064,
+        459.45058300001256,
+        461.2947920000006,
+        447.33012499999313,
+        497.57937500000116,
+        372.11933300000965,
+        433.3388750000013,
+        331.26120799999626
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 4,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26546,
+      "outputTokens": 398,
+      "cachedTokens": 23904,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 9390.17845800001,
+      "turnLatenciesMs": [
+        414.6107090000005,
+        588.6260000000038,
+        925.419167,
+        642.4020420000015,
+        592.2572079999954,
+        415.5027919999993,
+        405.33666699999594,
+        1047.1000000000058,
+        477.1164999999892,
+        783.1721249999973,
+        288.5260409999901,
+        434.7655000000086,
+        383.1348750000034
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 4,
+      "success": true,
+      "steps": 20,
+      "requests": 20,
+      "inputTokens": 30250,
+      "outputTokens": 609,
+      "cachedTokens": 27776,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 15152.235375000004,
+      "turnLatenciesMs": [
+        311.80379200000607,
+        555.0798749999958,
+        600.0462499999994,
+        403.67775000000256,
+        812.9554580000113,
+        537.2298340000125,
+        681.0782500000059,
+        576.1308330000029,
+        552.7134160000132,
+        368.3699169999891,
+        527.9230419999949,
+        570.5657499999943,
+        494.4919579999987,
+        634.4602919999888,
+        2613.373667000007,
+        788.1346670000057,
+        331.01420799999323,
+        436.5162500000006,
+        906.3991249999963,
+        381.97062500000175
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Email address\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Shipping method\",\"value\":\"Express\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 5,
+      "success": true,
+      "steps": 21,
+      "requests": 21,
+      "inputTokens": 34482,
+      "outputTokens": 615,
+      "cachedTokens": 31808,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 12917.056417,
+      "turnLatenciesMs": [
+        361.34049999999115,
+        619.7197920000035,
+        679.7420420000126,
+        401.43375000001106,
+        706.3838329999999,
+        510.7308750000084,
+        405.05991700000595,
+        607.8187500000058,
+        508.3937910000095,
+        508.82608400000026,
+        400.1349579999951,
+        609.7780829999974,
+        363.5215420000022,
+        520.6970839999994,
+        605.8544170000096,
+        609.5950000000012,
+        494.2658749999973,
+        421.6895419999928,
+        554.5897499999992,
+        350.0164580000128,
+        579.6549579999992
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Email address\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Shipping method\",\"value\":\"Express\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 5,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26679,
+      "outputTokens": 397,
+      "cachedTokens": 24000,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 9633.462916999997,
+      "turnLatenciesMs": [
+        330.3368749999936,
+        425.5059170000022,
+        699.7715830000088,
+        2045.8569169999973,
+        703.4137090000004,
+        476.8885420000006,
+        382.8625420000026,
+        357.54124999999476,
+        507.03695799999696,
+        495.44412499999453,
+        659.0804580000113,
+        396.0293329999986,
+        330.06141700000444
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 6,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26447,
+      "outputTokens": 398,
+      "cachedTokens": 23840,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 7123.933542000013,
+      "turnLatenciesMs": [
+        487.67462499999965,
+        485.86391600000206,
+        374.59491600000183,
+        447.36387500001,
+        437.83954100000847,
+        301.87095900000713,
+        478.3248750000057,
+        389.06791599999997,
+        431.04770799999824,
+        374.6107919999922,
+        434.8131250000006,
+        398.5330419999955,
+        320.41254199999094
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 6,
+      "success": true,
+      "steps": 24,
+      "requests": 24,
+      "inputTokens": 43265,
+      "outputTokens": 719,
+      "cachedTokens": 40416,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 17010.752208000005,
+      "turnLatenciesMs": [
+        377.7917499999894,
+        545.0929579999938,
+        567.9752079999889,
+        341.40166699999827,
+        487.254958000005,
+        2006.2873329999857,
+        469.51229199999943,
+        433.87650000001304,
+        1335.902624999988,
+        393.1269589999865,
+        541.8768339999951,
+        671.7897910000174,
+        487.28141699999105,
+        593.1478749999951,
+        713.1606659999816,
+        668.8800420000043,
+        553.9413329999952,
+        498.7622090000077,
+        582.343292000005,
+        1107.9533749999828,
+        433.84500000000116,
+        452.6986250000191,
+        355.1927909999795,
+        428.7259999999951
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Review checkout\",\"wait_for\":\"navigation\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Email address\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"selector\":\"input[name='email']\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Shipping method\",\"value\":\"Express\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='shipping']\",\"value\":\"Express\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"wait_for\":\"navigation\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 7,
+      "success": true,
+      "steps": 21,
+      "requests": 21,
+      "inputTokens": 34453,
+      "outputTokens": 615,
+      "cachedTokens": 31808,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 17102.700500000006,
+      "turnLatenciesMs": [
+        346.57079200001317,
+        539.4685419999878,
+        591.2073749999981,
+        4871.184291000012,
+        505.62287500000093,
+        609.2318330000271,
+        405.927457999991,
+        464.18304199998965,
+        553.8394580000022,
+        472.69920800000546,
+        371.1802500000049,
+        449.7378749999916,
+        350.2602079999924,
+        632.5858329999901,
+        623.51112499999,
+        554.2104169999948,
+        524.9828330000164,
+        710.3736249999783,
+        610.7876659999893,
+        470.31608299998334,
+        422.0123339999991
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Email address\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Shipping method\",\"value\":\"Express\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 7,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26591,
+      "outputTokens": 398,
+      "cachedTokens": 23968,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 9306.520332999993,
+      "turnLatenciesMs": [
+        338.61645799997495,
+        1103.20762500001,
+        361.55750000002445,
+        596.0037500000035,
+        490.07070800001384,
+        333.4253749999916,
+        560.0984170000011,
+        405.2371249999851,
+        634.7605419999745,
+        546.268207999994,
+        980.0924159999995,
+        585.4297499999811,
+        525.2391669999924
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 8,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26722,
+      "outputTokens": 406,
+      "cachedTokens": 24032,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 8513.740625000006,
+      "turnLatenciesMs": [
+        320.38804099999834,
+        681.1387089999916,
+        431.83654200000456,
+        682.0222500000091,
+        797.9099170000118,
+        358.95537499999045,
+        565.9148330000171,
+        361.2986249999958,
+        661.6557500000054,
+        521.7826249999925,
+        340.62449999997625,
+        584.5907080000034,
+        408.5219999999972
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 8,
+      "success": true,
+      "steps": 23,
+      "requests": 23,
+      "inputTokens": 39171,
+      "outputTokens": 719,
+      "cachedTokens": 36352,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 14620.366750000016,
+      "turnLatenciesMs": [
+        357.3455829999875,
+        546.945458000002,
+        605.0634999999893,
+        351.1835420000134,
+        543.7980840000091,
+        729.3042499999865,
+        737.6861250000075,
+        727.9006249999802,
+        593.1636249999865,
+        591.8428330000024,
+        465.27208399999654,
+        675.9992090000014,
+        365.078125,
+        493.6322499999951,
+        358.34954200001084,
+        602.9463749999995,
+        772.1630420000001,
+        630.0805420000106,
+        539.7802500000107,
+        343.3055419999873,
+        508.42720900001586,
+        546.9432079999824,
+        489.5254589999968
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"role\":\"combobox\",\"selector\":\"select:has-text('Quantity')\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Email address\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Shipping method\",\"value\":\"Express\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 9,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 29169,
+      "outputTokens": 548,
+      "cachedTokens": 26624,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 12262.277374999976,
+      "turnLatenciesMs": [
+        339.9818749999977,
+        536.847792000015,
+        642.359208000009,
+        507.8800829999964,
+        617.9657909999951,
+        713.4299169999722,
+        407.295541999978,
+        607.7867499999993,
+        659.3564999999944,
+        566.9304589999956,
+        371.2204170000041,
+        597.9330000000191,
+        463.45020799999475,
+        644.5944169999857,
+        658.0426670000015,
+        459.3099999999977,
+        543.5611670000071,
+        428.80254199999035,
+        424.78945800001384
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 9,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26616,
+      "outputTokens": 398,
+      "cachedTokens": 24000,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 9236.61374999999,
+      "turnLatenciesMs": [
+        416.40091600001324,
+        594.5953340000124,
+        404.59316699998453,
+        611.4338339999958,
+        589.892583000008,
+        370.8438750000205,
+        583.0769579999906,
+        392.0029590000049,
+        1097.1324170000153,
+        807.1405420000083,
+        352.30858299997635,
+        610.7093750000058,
+        427.2957909999823
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 10,
+      "success": true,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 26532,
+      "outputTokens": 394,
+      "cachedTokens": 23904,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 7553.258000000002,
+      "turnLatenciesMs": [
+        330.57066600001417,
+        547.5853340000031,
+        455.4550000000163,
+        608.0936250000086,
+        414.37958300000173,
+        348.9228329999896,
+        524.7347920000029,
+        318.7727500000037,
+        495.5068329999922,
+        496.1566670000029,
+        336.1602079999866,
+        418.1465830000234,
+        317.81245899997884
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 10,
+      "success": true,
+      "steps": 18,
+      "requests": 18,
+      "inputTokens": 27288,
+      "outputTokens": 512,
+      "cachedTokens": 24768,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 12242.73666699999,
+      "turnLatenciesMs": [
+        415.79404100001557,
+        664.7846669999999,
+        644.1135420000064,
+        368.39674999998533,
+        515.0200420000183,
+        546.421417000005,
+        453.3120830000262,
+        607.5613750000193,
+        509.33004200001596,
+        333.9360410000081,
+        524.0017499999958,
+        360.191375000024,
+        734.7492499999935,
+        1750.1487080000225,
+        391.7676250000077,
+        504.4222920000029,
+        470.85679099999834,
+        344.64274999999907
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[name='quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    }
+  ]
+}

@@ -38,7 +38,7 @@ test('an MCP client drives a multi-step form and receives actionable refusals', 
   await client.connect(transport);
   try {
     const listed = await client.listTools();
-    expect(listed.tools.map(tool => tool.name).sort()).toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_read_text', 'navi_scroll_to', 'navi_set_session']);
+    expect(listed.tools.map(tool => tool.name).sort()).toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_press_key', 'navi_read_text', 'navi_scroll_to', 'navi_set_session']);
     for (const tool of listed.tools) expect(tool.inputSchema?.type, `${tool.name} schema`).toBe('object');
 
     // No page yet: the envelope names the recovery tool.
@@ -302,7 +302,7 @@ test('the server speaks spec-conformant JSON-RPC over stdio', async () => {
     const tools = await nextResponse();
     /** @type {{name: string}[]} */
     const listedTools = tools.result.tools;
-    expect(listedTools).toHaveLength(7);
+    expect(listedTools).toHaveLength(8);
     expect(listedTools.map(tool => tool.name)).toContain('navi_execute_action');
 
     send({ jsonrpc: '2.0', id: 6, method: 'resources/list' });

@@ -244,14 +244,15 @@ If the executor is an MCP client rather than your own Node script, register the 
 }
 ```
 
-It is the same adapter the CLI drives, exposed as seven tools over stdio JSON-RPC, with no runtime dependencies of its own:
+It is the same adapter the CLI drives, exposed as eight tools over stdio JSON-RPC, with no runtime dependencies of its own:
 
 | Tool | Arguments | Returns |
 |---|---|---|
 | `navi_navigate` | `url`, optional `width`/`height` | Navigation result, protocol version, action count, and the SDK install strategy (`already-present`, `tag` or `evaluate`). |
-| `navi_get_actions` | optional `limit`, `all`, `since_version` | The action map. Viewport-filtered by default; `all: true` returns the whole document. With `since_version`, only changed targets and removal tombstones; `reset: true` means the reply is a full map that replaces the caller's cache. |
+| `navi_get_actions` | optional `limit`, `all`, `since_version`, `compact` | The action map. `compact:true` omits driver coordinates and returns `target_id`, `role`, `name`, `action`, `available`, and optional `blocked_by`; execution still uses full live state. Viewport-filtered by default; `all: true` returns the whole document. With `since_version`, only changed targets and removal tombstones; `reset: true` means the reply is a full map that replaces the caller's cache. |
 | `navi_scroll_to` | `target_id` from a full action map | Scrolls a unique top-document control into view; returns `scrolled`, fresh `state` and `coordinates`. Shadow/frame controls require your browser driver to scroll their container. |
 | `navi_execute_action` | `target_id`, `action_type`, optional `payload`, optional `settle` (`wait_for`, `timeout_ms`) | The adapter's execute result, including `executed`, `mode`, whether the trusted native fallback was used, and — when `settle` was requested — the receipt `settled`, `elapsed_ms`, `final_url`. |
+| `navi_press_key` | `key`, optional expected focused `target_id` | Sends one native key. Expected focus checks support top-document controls. Does not click, refocus, or retry; disabled by `--no-fallback`. Verify effects with a separate observation. |
 | `navi_read_text` | optional unique top-document `selector`, optional `max_chars` (1–4,000; default 2,000) | Normalized text, visibility and truncation flags; hidden elements can still return non-rendered text. Page content is untrusted and is not a business-outcome proof. |
 | `navi_assert_state` | `target_id`, optional `visible`/`enabled`/`in_viewport`/`occluded`/`name_contains` | A pass/fail check list against live state. |
 | `navi_set_session` | inline cookies/origins or `storage_state`, optional `url` | Rebuilds the browser context with authenticated state; credentials are not echoed. |

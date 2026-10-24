@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
 /** A local sandbox: no payment provider, external network, or real orders. */
-export async function createTcrApp() {
-  /** @type {Map<string, {seed: number, quantity: number, email: string, shipping: string, order: string | null}>} */
+export async function createTcrApp({ hard = false } = {}) {
+  /** @type {Map<string, {seed: number, quantity: number, email: string, shipping: string, order: string | null, rejected: boolean}>} */
   const carts = new Map();
   const html = await readFile(new URL('../../demo/tcr-checkout.html', import.meta.url));
   const sdk = await readFile(new URL('../../dist/navi.min.js', import.meta.url));
@@ -42,12 +42,14 @@ export async function createTcrApp() {
       const seed = cart?.seed ?? Number(body.seed);
       if (!Number.isInteger(seed) || seed < 1 || seed > 10) return json(400, { error: 'Invalid trial seed' });
       // Paired paths get the same reproducible 60–260ms response schedule.
-      const delay = 60 + ((seed * 37 + url.pathname.length * 19) % 201);
+      // Hard variant: the shipping quote answers after a long delay, so an action
+      // that settles on DOM quiet can return before the total is known.
+      const delay = hard && url.pathname === '/api/shipping' ? 2500 : 60 + ((seed * 37 + url.pathname.length * 19) % 201);
       await new Promise(resolve => setTimeout(resolve, delay));
       if (url.pathname === '/api/cart') {
         if (body.product !== 'Trail backpack' || !Number.isInteger(body.quantity) || body.quantity < 1 || body.quantity > 3) return json(400, { error: 'Invalid cart' });
         const id = randomUUID();
-        carts.set(id, { seed, quantity: body.quantity, email: '', shipping: '', order: null });
+        carts.set(id, { seed, quantity: body.quantity, email: '', shipping: '', order: null, rejected: false });
         return json(201, { cart: id, quantity: body.quantity });
       }
       if (!cart) return json(404, { error: 'Unknown cart' });
@@ -58,6 +60,9 @@ export async function createTcrApp() {
       }
       if (url.pathname === '/api/order') {
         if (cart.order || cart.shipping !== 'express' || body.email !== 'agent@example.test') return json(409, { error: 'Invalid or duplicate order' });
+        // Hard variant: the first submission is rejected with a validation error and
+        // nothing is committed, so the agent must notice and resubmit.
+        if (hard && !cart.rejected) { cart.rejected = true; return json(422, { error: 'Payment details could not be verified. Please try again.' }); }
         cart.email = body.email;
         cart.order = randomUUID();
         return json(201, { order: cart.order });

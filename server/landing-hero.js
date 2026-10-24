@@ -76,6 +76,7 @@ export const LANDING_HERO_STYLE = `
       color: var(--accent);
       display: block;
     }
+    .answer { margin: .75rem 0 0; font-size: .95rem; color: var(--fg-soft, inherit); max-width: 42rem; }
     .lede {
       font-size: clamp(.95rem, 1.1vw, 1.04rem);
       line-height: 1.55;

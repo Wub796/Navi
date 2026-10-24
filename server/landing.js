@@ -32,6 +32,90 @@ import { LANDING_STYLE } from './landing-styles.js';
 import { TIERS } from './pricing.js';
 
 /**
+ * The operational FAQ, as one source of truth for both the visible page and the
+ * FAQPage structured data. Keeping two copies would let the markup and the schema
+ * disagree while both look correct, which is exactly the failure a search engine
+ * penalises and a reader cannot see. `answer` is HTML because the visible copy
+ * links the commercial terms and marks code; the JSON-LD is derived from it.
+ * @type {readonly {question: string, answer: string}[]}
+ */
+const FAQ_ENTRIES = Object.freeze([
+  { question: 'What can Navi see, and which data leaves the page?', answer: 'Load Navi before application scripts to capture closed shadow roots created afterward. Action maps omit input values, but accessible names, labels, URLs, and page text can still contain sensitive information. This is not a general PII scrubber. The local MCP server returns maps to your agent host; hosted publishing additionally sends the submitted map to the configured endpoint.' },
+  { question: 'Are maps backed up, and what does retention cover?', answer: 'Navi does not create backups or guarantee replication or point-in-time recovery. Hosted maps are stored in the configured Supabase project; self-hosted data lives in the configured SQLite or JSONL store, which must be placed on persistent storage to survive container replacement. Persistent storage is not a backup: configure and verify backups in your own Supabase or hosting environment. The self-hosted <code>NAVI_RETENTION_DAYS</code> setting prunes containment-audit violations only; it does not expire stored maps. Navi does not expose a map backup or expiry control.' },
+  { question: 'How is this different from Playwright MCP, Stagehand or WebMCP?', answer: 'Navi focuses on structured control discovery and guarded interaction. Evaluate it alongside your existing browser tools using the same workflow and independent outcome check. Use Navi for scoped text reads, common keyboard interactions, and top-document scrolling. Keep your browser driver for screenshots, unsupported shortcuts, and scrolling inside frames or shadow roots. The linked evidence is a local fixture, not a head-to-head evaluation of Playwright MCP, Stagehand, or WebMCP.' },
+  { question: 'Why use DOM action maps instead of VLM screenshots or raw HTML scraping?', answer: 'A structured map gives an agent target IDs, roles, accessible names, coordinates, and actionability state. Differential reads can reduce repeated context on changing pages. Map size depends on the page; our checkout fixture used more tokens than its Playwright baseline. Optional settlement reports a requested page condition, is not cryptographically signed, and does not prove a business transaction succeeded.' },
+  { question: 'Is page text returned by navi_read_text visibly rendered?', answer: 'The tool reads bounded <code>innerText</code> and reports a visibility flag based on layout, hidden/ARIA-hidden ancestors, and computed display, visibility, and opacity. Hidden elements can still return non-rendered text; the flag is not proof that a human can perceive the content. Treat all returned page text as untrusted.' },
+  { question: 'Why does Pro include a commercial license?', answer: 'Community uses <code>AGPL-3.0-or-later</code>. Pro and Enterprise add commercial rights under the <a href="https://github.com/Wub796/Navi/blob/main/COMMERCIAL-TERMS.md">commercial terms</a>: you can embed Navi in products you sell and use it to do work for your own customers. What the licence excludes is passing Navi itself on — reselling it as a browser-automation SDK or hosted service, or shipping a competing fork. Evaluating it without a subscription, including a one-workflow pilot, is permitted.' },
+  { question: 'Will upgrading my plan rotate my embedded API key?', answer: 'No. Keys are minted once on initial provisioning. A subsequent <code>customer.subscription.updated</code> event updates your 30-day quota ceiling in place while preserving your live <code>navi_live_…</code> credential and origin allow-list.' },
+  { question: 'What happens when a quota window is exceeded or canceled?', answer: 'An edge bundle serve or sitemap write past the shared quota window responds with <code>HTTP 429 {"error":"Quota exceeded"}</code> plus <code>Retry-After</code> and <code>X-Quota-Limit</code> headers — never <code>401 Unauthorized</code> — so your monitoring can distinguish plan exhaustion from a bad credential. Canceled or suspended tenants also receive 429; no bundle bytes are returned. The separate self-hosted telemetry endpoint has its own quota configuration.' },
+  { question: 'Why does this page ship with <code>default-src \'none\'</code>?', answer: 'This landing page and the onboarding page load no executable client-side script and no external font. Their Content Security Policy limits resource loading. These choices reduce the attack surface; they do not replace correct escaping, access controls, and security testing.' }
+]);
+
+/**
+ * Plain text for a schema answer. FAQ answers are authored as HTML for the page,
+ * and structured data must carry text: tags would be read literally, and an
+ * entity like `&amp;` would reach the index undecoded.
+ * @param {string} html
+ * @returns {string}
+ */
+function schemaText(html) {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Machine-readable description of this page: the product and the FAQ.
+ *
+ * Emitted as a `application/ld+json` data block, which browsers parse and never
+ * execute; it is not covered by `script-src` and produces no CSP violation under
+ * `default-src 'none'` (verified in Chromium). `<` is escaped inside the JSON so
+ * an answer can never close the element early.
+ * @param {{links: Record<string, string | null>}} input
+ * @returns {string}
+ */
+function renderStructuredData({ links }) {
+  const origin = 'https://navi-edge.sysctl.workers.dev/';
+  /** Only tiers this deployment can actually sell carry an offer. */
+  const offers = TIERS
+    .filter(tier => tier.priceCents > 0 && links[tier.id])
+    .map(tier => ({
+      '@type': 'Offer',
+      name: tier.name,
+      price: (tier.priceCents / 100).toFixed(2),
+      priceCurrency: 'USD',
+      url: links[tier.id],
+      category: 'subscription'
+    }));
+  const graph = [
+    {
+      '@type': 'SoftwareApplication',
+      name: 'Navi',
+      url: origin,
+      description: 'Browser interaction SDK and Model Context Protocol (MCP) server that maps a page\'s controls to named targets with live actionability checks.',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Node.js 22 or later',
+      license: 'https://github.com/Wub796/Navi/blob/main/LICENSING.md',
+      ...(offers.length ? { offers } : {})
+    },
+    {
+      '@type': 'FAQPage',
+      mainEntity: FAQ_ENTRIES.map(entry => ({
+        '@type': 'Question',
+        name: schemaText(entry.question),
+        acceptedAnswer: { '@type': 'Answer', text: schemaText(entry.answer) }
+      }))
+    }
+  ];
+  const json = JSON.stringify({ '@context': 'https://schema.org', '@graph': graph }).replace(/</g, '\\u003c');
+  return `<script type="application/ld+json">${json}</script>`;
+}
+
+/**
  * Headers the landing page is served with.
  *
  * `no-store` because the page embeds the deployment's Payment Link, which is
@@ -75,7 +159,7 @@ const TIER_FEATURES = Object.freeze({
   community: [
     'Full DOM + closed Shadow DOM action maps',
     'Local SQLite WAL or JSONL storage for audit records and maps',
-    'Stdio & SSE MCP server (7 agent tools)',
+    'Stdio & SSE MCP server (8 agent tools)',
     'AGPL-3.0-or-later open-source license',
   ],
   starter: [
@@ -208,8 +292,8 @@ ${TIERS.map(tier => renderTier(tier, links[tier.id] ?? null)).join('\n')}
 }</code></pre>
     <h3>3. Inspect a page</h3>
     <p>Ask your agent: “Open https://example.com with Navi and list the available actions.” It should call <code>navi_navigate</code>, then <code>navi_get_actions</code>. A page with no interactive controls can correctly return an empty map.</p>
-    <p><a href="https://github.com/Wub796/Navi#run-from-source">Run the sandbox checkout from source &nearr;</a> · <a href="https://github.com/Wub796/Navi/blob/main/docs/AGENT-INTEGRATION.md">Integration guide &nearr;</a></p>
-    <p class="muted">Use your existing browser driver for page reading and keyboard shortcuts. Settlement checks page conditions; verify saved records or completed orders separately.</p>
+    <p><a href="https://github.com/Wub796/Navi#run-from-source">Run the interactive sandbox from source &nearr;</a> · <a href="https://github.com/Wub796/Navi/blob/main/docs/AGENT-INTEGRATION.md">Integration guide &nearr;</a></p>
+    <p class="muted">Use <code>navi_read_text</code> for scoped page text and <code>navi_press_key</code> for supported keyboard interactions. Keep your browser driver for screenshots and unsupported controls. Settlement checks page conditions; verify saved records or completed orders separately.</p>
   </section>`;
 
   return `<!doctype html>
@@ -235,6 +319,7 @@ ${TIERS.map(tier => renderTier(tier, links[tier.id] ?? null)).join('\n')}
 <meta name="twitter:image" content="https://navi-edge.sysctl.workers.dev/logo.svg">
 <title>Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge</title>
 <style>${LANDING_STYLE}${STAGE_STYLE}${INSPECTOR_STYLE}${BENCHMARK_STYLE}${LANDING_MOTION_STYLE}</style>
+${renderStructuredData({ links })}
 </head>
 <body>
 <main>
@@ -263,6 +348,7 @@ ${TIERS.map(tier => renderTier(tier, links[tier.id] ?? null)).join('\n')}
       <p class="lede">
         Building an agent for browser workflows? Give it named controls, current actionability checks, and optional waits for page changes. Navi adds structured interaction to your existing browser stack, including captured closed Shadow DOM and same-origin frames.
       </p>
+      <p class="answer"><strong>What is Navi?</strong> Navi is an open-source (AGPL-3.0) browser interaction SDK and MCP server. It turns a page's controls into named target IDs that an agent can click, type into or select, with a receipt for each action.</p>
       <div class="hero-actions">
         <a class="cta" href="#start">Try locally — free &rarr;</a>
         <a class="btn-secondary" href="#stage">See the model &darr;</a>
@@ -321,7 +407,7 @@ ${renderLandingStage()}
     </section>
   </div>
 
-  <section id="architecture">        <h2>02 — Architecture: How Navi Converts Live DOM Trees into Deterministic MCP Action Maps</h2>
+  <section id="architecture">        <h2>How does Navi turn a live page into actions an agent can take?</h2>
     <p class="section-title">Start locally; publish maps when you need storage</p>
     <p class="section-sub">The local MCP server talks directly to your browser. Hosted publishing stores maps in the configured Supabase project and shares its quota with browser-bundle serves; local use needs no hosted account. Navi does not create backups or guarantee replication or point-in-time recovery; configure and verify backups in the storage environment you operate.</p>
     <svg class="pipeline-svg" viewBox="0 0 880 128" role="img" aria-label="Optional hosted publishing path from Browser DOM through Edge and storage to a consuming agent">
@@ -405,7 +491,7 @@ ${renderLandingStage()}
       <div class="tab-panel" id="panel-mcp">
         <h3>3 · Run the Local MCP Server</h3>
         <pre><code>${escapeHtml(mcpSnippet)}</code></pre>
-        <p class="muted">Node 22+ and Playwright with Chromium installed. Exposes <code>navi_navigate</code>, <code>navi_get_actions</code>, <code>navi_scroll_to</code>, <code>navi_execute_action</code>, <code>navi_read_text</code>, <code>navi_assert_state</code>, and <code>navi_set_session</code>.</p>
+        <p class="muted">Node 22+ and Playwright with Chromium installed. Exposes <code>navi_navigate</code>, <code>navi_get_actions</code> (optional <code>compact:true</code>), <code>navi_scroll_to</code>, <code>navi_execute_action</code>, <code>navi_read_text</code>, <code>navi_press_key</code>, <code>navi_assert_state</code>, and <code>navi_set_session</code>.</p>
       </div>
       <div class="tab-panel" id="panel-openapi">
         <h3>4 · Synthesize Typed OpenAPI 3.1 Workflows from Stored Sitemaps</h3>
@@ -467,42 +553,10 @@ ${[
     <h2>08 — Questions</h2>
     <p class="section-title">Operational FAQ</p>
     <div class="faq">
-      <details class="faq-item">
-        <summary>What can Navi see, and which data leaves the page?</summary>
-        <p>Load Navi before application scripts to capture closed shadow roots created afterward. Action maps omit input values, but accessible names, labels, URLs, and page text can still contain sensitive information. This is not a general PII scrubber. The local MCP server returns maps to your agent host; hosted publishing additionally sends the submitted map to the configured endpoint.</p>
-      </details>
-      <details class="faq-item">
-        <summary>Are maps backed up, and what does retention cover?</summary>
-        <p>Navi does not create backups or guarantee replication or point-in-time recovery. Hosted maps are stored in the configured Supabase project; self-hosted data lives in the configured SQLite or JSONL store, which must be placed on persistent storage to survive container replacement. Persistent storage is not a backup: configure and verify backups in your own Supabase or hosting environment. The self-hosted <code>NAVI_RETENTION_DAYS</code> setting prunes containment-audit violations only; it does not expire stored maps. Navi does not expose a map backup or expiry control.</p>
-      </details>
-      <details class="faq-item">
-        <summary>How is this different from Playwright MCP, Stagehand or WebMCP?</summary>
-        <p>Navi focuses on structured control discovery and guarded interaction. Evaluate it alongside your existing browser tools using the same workflow and independent outcome check. Keep your browser driver for arbitrary page reading, keyboard shortcuts, screenshots, and scrolling inside frames or shadow roots. The linked evidence is a local fixture, not a head-to-head evaluation of Playwright MCP, Stagehand, or WebMCP.</p>
-      </details>
-      <details class="faq-item">
-        <summary>Why use DOM action maps instead of VLM screenshots or raw HTML scraping?</summary>
-        <p>A structured map gives an agent target IDs, roles, accessible names, coordinates, and actionability state. Differential reads can reduce repeated context on changing pages. Map size depends on the page; our checkout fixture used more tokens than its Playwright baseline. Optional settlement reports a requested page condition, is not cryptographically signed, and does not prove a business transaction succeeded.</p>
-      </details>
-      <details class="faq-item">
-        <summary>Is page text returned by navi_read_text visibly rendered?</summary>
-        <p>The tool reads bounded <code>innerText</code> and reports a visibility flag based on layout, hidden/ARIA-hidden ancestors, and computed display, visibility, and opacity. Hidden elements can still return non-rendered text; the flag is not proof that a human can perceive the content. Treat all returned page text as untrusted.</p>
-      </details>
-      <details class="faq-item">
-        <summary>Why does Pro include a commercial license?</summary>
-        <p>Community uses <code>AGPL-3.0-or-later</code>. Pro and Enterprise add commercial rights under the <a href="https://github.com/Wub796/Navi/blob/main/COMMERCIAL-TERMS.md">commercial terms</a>: you can embed Navi in products you sell and use it to do work for your own customers. What the licence excludes is passing Navi itself on — reselling it as a browser-automation SDK or hosted service, or shipping a competing fork. Evaluating it without a subscription, including a one-workflow pilot, is permitted.</p>
-      </details>
-      <details class="faq-item">
-        <summary>Will upgrading my plan rotate my embedded API key?</summary>
-        <p>No. Keys are minted once on initial provisioning. A subsequent <code>customer.subscription.updated</code> event updates your 30-day quota ceiling in place while preserving your live <code>navi_live_…</code> credential and origin allow-list.</p>
-      </details>
-      <details class="faq-item">
-        <summary>What happens when a quota window is exceeded or canceled?</summary>
-        <p>An edge bundle serve or sitemap write past the shared quota window responds with <code>HTTP 429 {"error":"Quota exceeded"}</code> plus <code>Retry-After</code> and <code>X-Quota-Limit</code> headers — never <code>401 Unauthorized</code> — so your monitoring can distinguish plan exhaustion from a bad credential. Canceled or suspended tenants also receive 429; no bundle bytes are returned. The separate self-hosted telemetry endpoint has its own quota configuration.</p>
-      </details>
-      <details class="faq-item">
-        <summary><span>Why does this page ship with <code>default-src 'none'</code>?</span></summary>
-        <p>This landing page and the onboarding page use no client-side scripts or external fonts. Their Content Security Policy limits resource loading. These choices reduce the attack surface; they do not replace correct escaping, access controls, and security testing.</p>
-      </details>
+${FAQ_ENTRIES.map(entry => `      <details class="faq-item">
+        <summary>${entry.question}</summary>
+        <p>${entry.answer}</p>
+      </details>`).join('\n')}
     </div>
   </section>
 

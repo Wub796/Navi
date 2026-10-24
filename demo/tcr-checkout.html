@@ -42,7 +42,7 @@ if (params.get('step') === 'complete') {
   app.innerHTML = '<h1>Order confirmed</h1><p>Your Trail backpack order has been committed.</p><p class="note">Confirmation: ' + params.get('order') + '</p>';
 } else if (params.get('step') === 'review') {
   const quantity = Number(params.get('quantity') || 2);
-  app.innerHTML = '<h1>Delivery and payment</h1><p>Trail backpack × ' + quantity + ' · $' + (quantity * 49).toFixed(2) + '</p><label for="email">Email address</label><input id="email" type="email" data-agent-target="email"><label for="shipping">Shipping method</label><select id="shipping" data-agent-target="shipping"><option value="">Choose shipping</option><option value="standard">Standard</option><option value="express">Express</option></select><p id="quote">Select a shipping method to calculate your total.</p><p role="status">Ready</p><button id="place" data-agent-target="place" disabled>Place sandbox order</button>';
+  app.innerHTML = '<h1>Delivery and payment</h1><p>Trail backpack × ' + quantity + ' · $' + (quantity * 49).toFixed(2) + '</p><label for="email">Email address</label><input id="email" type="email" data-agent-target="email"><label for="shipping">Shipping method</label><select id="shipping" data-agent-target="shipping"><option value="">Choose shipping</option><option value="standard">Standard</option><option value="express">Express</option></select><p id="quote">Select a shipping method to calculate your total.</p><p id="notice" role="alert" style="color:#a1261b"></p><p role="status">Ready</p><button id="place" data-agent-target="place" disabled>Place sandbox order</button>';
   let shippingReady = false;
   const valid = () => { document.querySelector('#place').disabled = !shippingReady || document.querySelector('#email').value !== 'agent@example.test'; };
   document.querySelector('#email').addEventListener('input', valid);
@@ -54,7 +54,14 @@ if (params.get('step') === 'complete') {
   });
   document.querySelector('#place').addEventListener('click', async () => {
     document.querySelector('#place').disabled = true;
-    const result = await post('/api/order', { email: document.querySelector('#email').value });
+    let result;
+    try { result = await post('/api/order', { email: document.querySelector('#email').value }); }
+    catch (error) {
+      // A rejected submission commits nothing; show why and allow a retry.
+      document.querySelector('#notice').textContent = error.message;
+      valid();
+      return;
+    }
     location.assign('/checkout?step=complete&cart=' + cart + '&order=' + result.order);
   });
 } else {

@@ -122,6 +122,7 @@ export const EXPECTED_MCP_TOOL_NAMES = [
   'navi_scroll_to',
   'navi_execute_action',
   'navi_read_text',
+  'navi_press_key',
   'navi_assert_state',
   'navi_set_session'
 ];

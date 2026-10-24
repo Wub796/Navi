@@ -119,6 +119,8 @@ export declare class NaviPlaywrightAdapter {
   discover(options?: { viewportOnly?: boolean; limit?: number }): Promise<NaviActionMap>;
   /** Scroll a unique top-document target into view; returns its fresh state. */
   scrollTo(targetId: string): Promise<NaviAction>;
+  /** Native keyboard input; optional targetId checks the current top-document focus. */
+  pressKey(key: string, targetId?: string): Promise<{ pressed: boolean; key: string; mode: string }>;
   execute(targetId: string, actionType: 'click' | 'type' | 'select' | string, payload?: { text?: string; value?: string }): Promise<AdapterResult>;
 }
 

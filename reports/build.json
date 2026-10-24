@@ -1,6 +1,6 @@
 {
   "rawBytes": 14929,
-  "gzipBytes": 5901,
+  "gzipBytes": 5883,
   "budgetBytes": 15000,
   "integrity": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv",
   "loaderBytes": 689,
@@ -8,33 +8,33 @@
   "artifacts": {
     "dist/navi.min.js": {
       "bytes": 14929,
-      "gzipBytes": 5901,
+      "gzipBytes": 5883,
       "minified": true,
       "budgetBytes": 15000,
       "integrity": "sha384-TmtbTx4Um3FaZ25htbRgiApDW48G3G8321WSwpRCRvAvbvad2hGkA8aOMWiod1Tv"
     },
     "dist/index.mjs": {
-      "bytes": 52519,
-      "gzipBytes": 12971,
+      "bytes": 56621,
+      "gzipBytes": 13730,
       "minified": false
     },
     "dist/index.cjs": {
-      "bytes": 53840,
-      "gzipBytes": 13317,
+      "bytes": 57942,
+      "gzipBytes": 14039,
       "minified": false
     },
     "dist/cli.mjs": {
-      "bytes": 61360,
-      "gzipBytes": 15600,
+      "bytes": 65074,
+      "gzipBytes": 16385,
       "minified": false
     },
     "dist/mcp.mjs": {
-      "bytes": 126481,
-      "gzipBytes": 33930,
+      "bytes": 141509,
+      "gzipBytes": 37508,
       "minified": false
     },
     "dist/index.d.ts": {
-      "bytes": 6688,
+      "bytes": 7011,
       "minified": false
     },
     "dist/navi.d.ts": {

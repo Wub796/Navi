@@ -1,0 +1,60 @@
+{
+  "reviewedOn": "2026-10-24",
+  "baselineCommit": "c279b28",
+  "runtime": "Node v22.23.3",
+  "auditPasses": 3,
+  "finalChecks": {
+    "gateSelfTest": "passed",
+    "build": "passed",
+    "bundleBudget": "passed",
+    "typecheck": "passed",
+    "chromiumSuite": {
+      "passed": 285,
+      "failed": 0
+    },
+    "traversalLongTaskGate": "passed",
+    "packageBoundary": "passed"
+  },
+  "compactObservation": {
+    "fixture": "local demo checkout, full action map",
+    "tokenizer": "cl100k_base",
+    "pairs": 5,
+    "order": "alternating",
+    "fullTokens": [
+      1369,
+      1369,
+      1369,
+      1369,
+      1369
+    ],
+    "compactTokens": [
+      558,
+      558,
+      558,
+      558,
+      558
+    ],
+    "reductionPercent": 59.24,
+    "scope": "serialized observation payload only",
+    "liveModelCalled": false,
+    "providerCostMeasured": false,
+    "competitorAdvantageMeasured": false
+  },
+  "workflowChecks": [
+    "SDK and zero-config Enter submission exactly once",
+    "focus and unsupported-key refusals",
+    "Escape modal dismissal",
+    "no-fallback refusal",
+    "MCP execution and separate UI outcome read",
+    "compact state reasons and differential tombstones",
+    "scripted sandbox completion and reset at 1360px and 390px",
+    "scripted sandbox stops on guarded refusal"
+  ],
+  "limitations": [
+    "Fixtures do not establish external production reliability",
+    "UI confirmation does not prove a server-side transaction",
+    "No running local Ollama endpoint was available; no paid model run was made",
+    "Local changes have not been published or deployed"
+  ],
+  "report": "docs/YC-PRODUCT-REVIEW.md"
+}

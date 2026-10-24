@@ -85,7 +85,7 @@ test('an MCP client drives the same multi-step flow over the SSE transport', asy
 
     // The remote transport must expose the same tool surface as stdio.
     const listed = await client.listTools();
-    expect(listed.tools.map(tool => tool.name).sort()).toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_read_text', 'navi_scroll_to', 'navi_set_session']);
+    expect(listed.tools.map(tool => tool.name).sort()).toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_press_key', 'navi_read_text', 'navi_scroll_to', 'navi_set_session']);
     for (const tool of listed.tools) expect(tool.inputSchema?.type, `${tool.name} schema`).toBe('object');
 
     // No page yet: the refusal is structured exactly as it is over stdio.

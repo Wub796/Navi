@@ -729,7 +729,10 @@ test('reports health and refuses unknown routes', async () => {
   expect(landingBody).toContain('role="group" aria-label="Three-plane 3D model');
   expect(landingBody).toContain('transform-style: preserve-3d');
   expect(landingBody).toContain('clip-path: inset(50%)');
-  expect(landingBody).not.toContain('<script');
+  // No executable script. Unlike the credential-bearing page above, this document
+  // is allowed one inert `application/ld+json` data block for search engines.
+  expect(landingBody).not.toMatch(/<script(?![^>]*type="application\/ld\+json")/i);
+  expect(landingBody.match(/<script/g) ?? []).toHaveLength(1);
   expect(landingBody.match(/<h1\b/g) ?? []).toHaveLength(1);
   expect((landingBody.match(/<h2\b/g) ?? []).length).toBeGreaterThanOrEqual(8);
   expect((landingBody.match(/<h3\b/g) ?? []).length).toBeGreaterThanOrEqual(8);

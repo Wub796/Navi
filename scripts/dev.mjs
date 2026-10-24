@@ -22,6 +22,7 @@ const csp = "default-src 'self'; script-src 'self' 'nonce-naviCspNonce'; style-s
 /** @type {Map<string, [string, string, string?]>} */
 const routes = new Map([
   ['/', ['demo/index.html', 'text/html; charset=utf-8']],
+  ['/workflow-demo.js', ['demo/workflow-demo.js', 'application/javascript; charset=utf-8']],
   ['/frame.html', ['demo/frame.html', 'text/html; charset=utf-8']],
   ['/auth.html', ['demo/auth.html', 'text/html; charset=utf-8']],
   ['/settlement.html', ['demo/settlement.html', 'text/html; charset=utf-8']],

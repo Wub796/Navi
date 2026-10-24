@@ -597,10 +597,10 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     'translateZ(70px)',
     'translateZ(140px)',
     'Check the result against your workflow',
-    '1,025.7',
-    '2,890.2',
-    '1.968 s',
-    '1.772 s',
+    '1,026.1',
+    '972.3',
+    '1.975 s',
+    '1.764 s',
     'No LLM planner was used.',
     'Illustrative map entry and tool input',
 
@@ -611,9 +611,39 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   for (const unsupported of ['sha384 receipt', 'cryptographic settlement receipt', 'The loader\'s generated bundle must pass its SHA-384 integrity check', 'Navi backs up your data', 'automatic backups', 'point-in-time recovery included', '~650 tokens', 'Most popular', 'Save $3,991.50']) {
     expect(body).not.toContain(unsupported);
   }
-  // Every interaction is form state: a document that shipped a script would be
-  // blocked by its own policy, so the assertion is that none exists at all.
-  expect(body, 'the landing page must carry no script element').not.toContain('<script');
+  // Every interaction is form state: a document that shipped an executable script
+  // would be blocked by its own policy, so the assertion is that none exists. The
+  // one `<script>`-shaped element allowed is the inert `application/ld+json` data
+  // block, which a browser parses and never executes, so `script-src` does not
+  // govern it and it produces no violation under `default-src 'none'`.
+  expect(body, 'the landing page must carry no executable script element')
+    .not.toMatch(/<script(?![^>]*type="application\/ld\+json")/i);
+  // Structured data must describe what the page actually says. Both sides are read
+  // back out of the served bytes: a schema that drifts from the visible FAQ is a
+  // machine-readable lie that no human reviewer would catch.
+  const ldMatch = body.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+  expect(ldMatch, 'the landing page must publish JSON-LD').not.toBeNull();
+  const ld = JSON.parse(/** @type {RegExpMatchArray} */ (ldMatch)[1]);
+  expect(ld['@context']).toBe('https://schema.org');
+  const graph = ld['@graph'];
+  const faqPage = graph.find(/** @param {any} node */ node => node['@type'] === 'FAQPage');
+  expect(faqPage, 'JSON-LD must include the FAQPage').toBeTruthy();
+  const visibleQuestions = [...body.matchAll(/<summary>([\s\S]*?)<\/summary>/g)]
+    .map(/** @param {RegExpMatchArray} match */ match => match[1].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim());
+  expect(faqPage.mainEntity).toHaveLength(visibleQuestions.length);
+  expect(faqPage.mainEntity.map(/** @param {any} entry */ entry => entry.name)).toEqual(visibleQuestions);
+  for (const entry of faqPage.mainEntity) {
+    expect(entry['@type']).toBe('Question');
+    expect(entry.acceptedAnswer['@type']).toBe('Answer');
+    // An answer is text, not markup: a tag would be indexed literally.
+    expect(entry.acceptedAnswer.text).not.toMatch(/<[a-z/]/i);
+    expect(entry.acceptedAnswer.text.length).toBeGreaterThan(20);
+  }
+  const app = graph.find(/** @param {any} node */ node => node['@type'] === 'SoftwareApplication');
+  expect(app, 'JSON-LD must describe the application').toBeTruthy();
+  expect(app.name).toBe('Navi');
+  // A data block must not be able to close its own element early.
+  expect(/** @type {RegExpMatchArray} */ (ldMatch)[1]).not.toContain('<');
   // Single <h1>, hierarchical <h2>/<h3> sections, meta description, canonical URL, and Open Graph tags.
   expect(body.match(/<h1\b/g) ?? []).toHaveLength(1);
   expect((body.match(/<h2\b/g) ?? []).length).toBeGreaterThanOrEqual(8);

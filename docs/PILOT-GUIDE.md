@@ -8,7 +8,7 @@ Offer a two-week assisted evaluation of one workflow. The first deliverable is a
 
 ## A working local demonstration
 
-From the repository, run `npm ci`, `npx playwright install chromium`, `npm run build`, and `npm run dev`. In another terminal, run:
+From the repository, run `npm ci`, `npx playwright install chromium`, `npm run build`, and `npm run dev`. Open the displayed local URL and choose **Run sample workflow** to see the protocol work without configuring an agent. The progress list checks the resulting sandbox state and stops if any action is refused. To run the same checkout through the CLI, use another terminal:
 
 ```sh
 npx navi run --url http://127.0.0.1:4173/ \
@@ -17,7 +17,7 @@ npx navi run --url http://127.0.0.1:4173/ \
 
 This flow submits only the sandbox checkout and checks its confirmation text. No payment occurs. That final assertion proves the demo's UI result; it does not prove a real order was saved. `npm run benchmark:tcr` runs the separate checkout fixture with an independent server-side order check.
 
-For MCP, start with the README configuration. Discover off-screen controls with `navi_get_actions({all:true})`, call `navi_scroll_to({target_id:...})` for a top-document control, and recheck its state before acting. Keep the existing browser driver for arbitrary page text, keyboard shortcuts, screenshots, and frame/shadow-container scrolling.
+For MCP, start with the README configuration. Discover off-screen controls with `navi_get_actions({all:true})`, call `navi_scroll_to({target_id:...})` for a top-document control, and recheck its state before acting. Keep the existing browser driver for arbitrary page text, unsupported keyboard shortcuts, screenshots, and frame/shadow-container scrolling.
 
 ## Agree on success before the pilot
 

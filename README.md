@@ -22,11 +22,11 @@ Restart your MCP client, then ask your agent: *"Open https://example.com with Na
 
 ## Where Navi fits
 
-Use Navi for discovering controls, checking actionability, and executing click/type/select actions. `navi_read_text` provides a bounded read of one top-document element for workflows that need page text. Keep your existing browser driver for screenshots, keyboard shortcuts, and scrolling inside frames or shadow roots. The MCP `navi_scroll_to` tool scrolls top-document controls only.
+Use Navi for discovering controls, checking actionability, and executing click/type/select actions. `navi_press_key` handles common keyboard interactions after typing or focusing a control. `navi_read_text` provides a bounded read of one top-document element for workflows that need page text. Keep your existing browser driver for screenshots, unsupported keyboard shortcuts, and scrolling inside frames or shadow roots. The MCP `navi_scroll_to` tool scrolls top-document controls only.
 
 - **Closed roots:** capture starts when Navi is loaded; inject it before the application's scripts. Already-created closed roots and cross-origin frames are not generally accessible.
 - **Differential reads:** a controlled 100-mutation fixture used 96.9% fewer estimated tokens than repeatedly sending Navi's own full map. This is not a comparison with another agent product. [Raw fixture](reports/differential-mutations.json).
-- **Current checkout result:** both paths completed 10/10 server-verified orders. Navi used 2,890.2 observation tokens/task versus 1,025.7 for Playwright; mean times were 1.772 s and 1.968 s. The baseline included explicit 300 ms waits, and no LLM planner was used. This does not establish general savings or superiority. [Methodology](reports/TCR-BENCHMARK.md).
+- **Current checkout result:** both paths completed 10/10 server-verified orders. Navi used 972.3 observation tokens/task (compact planner maps) versus 1,026.1 for Playwright; mean times were 1.764 s and 1.975 s. The baseline included explicit 300 ms waits, and no LLM planner was used. This does not establish general savings or superiority. [Methodology](reports/TCR-BENCHMARK.md).
 - **Outcome checks:** optional settlement waits for DOM quiet, navigation, or target disappearance. `navi_read_text` can read the resulting UI, but neither a settlement nor rendered text proves a server-side transaction completed. Use an independent business assertion before declaring success.
 - **Data handling:** action maps omit input values. Accessible names, labels, URLs, and page text can still contain sensitive information. Review what your agent host and optional hosted publishing endpoint receive.
 
@@ -47,7 +47,7 @@ npm run build
 npm run dev -- --host 127.0.0.1 --port 4173
 ```
 
-Open `http://127.0.0.1:4173`. No real payment occurs. Test server uses port 4174; keep it free. After SDK edits, rebuild and reload; the small static server does not implement HMR.
+Open `http://127.0.0.1:4173` and choose **Run sample workflow**. The scripted demo fills the form, discovers a dynamic field, uses the captured closed root and same-origin frame, then verifies local UI state. It shows failures without retrying and can be reset. No AI model or real payment is involved. Test server uses port 4174; keep it free. After SDK edits, rebuild and reload; the small static server does not implement HMR.
 
 ## Protocol
 
@@ -155,11 +155,18 @@ Exit codes: `0` success, `1` flow/assertion failure, `2` usage or invalid flow, 
 | `navi_get_actions` | Return the current action map. Viewport-filtered by default; `all: true` returns the whole document. |
 | `navi_scroll_to` | Scroll a unique top-document `target_id` into view and return fresh state. Use `navi_get_actions({all:true})` to discover off-screen targets first. |
 | `navi_execute_action` | Run `click`/`type`/`select` on a `target_id`. Falls back to trusted native input at live coordinates for `data-navi-trusted="true"` controls. Pass `settle` to wait for a requested page condition before the call returns. |
+| `navi_press_key` | Send Enter, Escape, Tab, arrows, or a supported key combination to current focus. Optional `target_id` checks focus and actionability first. Respects `--no-fallback`. |
 | `navi_read_text` | Read normalized, untrusted text from one top-level element, bounded to 2,000 characters by default and 4,000 maximum. |
 | `navi_assert_state` | Check that a target exists, is visible/enabled/in-viewport, and matches an expected accessible name. |
 | `navi_set_session` | Seed cookies and localStorage from an inline payload or a Playwright `storageState.json` path, so `navi_navigate` opens a pre-authenticated page instead of a sign-in screen. |
 
 Every tool answers with the structured envelope `{ content: [{ type: "text", text }], isError }`, where the text is JSON. Refusals carry the failure code and actionable guidance: `UNAVAILABLE` says the control is hidden, disabled, off-screen or covered, `NOT_FOUND` says to re-read the action map because ids change with re-renders, and `INVALID_URL` never echoes embedded credentials.
+
+#### Compact planner observations
+
+Call `navi_get_actions({"compact":true})` for a smaller observation: each entry contains `target_id`, `role`, `name`, `action`, `available`, and `blocked_by` when unavailable. Full coordinates stay inside the execution adapter, which still performs its normal live checks. Use `all:true` to include off-screen targets and `since_version` for differential updates; removed targets retain their tombstones. Keep one format per cached map, or replace the cache when changing formats.
+
+The default response remains the full map for existing clients. Compact observations reduce payload size by omitting detail; they do not establish a provider cost saving or guarantee task success.
 
 #### Deterministic settlement
 

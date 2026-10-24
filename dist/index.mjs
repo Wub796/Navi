@@ -248,6 +248,7 @@ var init_settle = __esm({
 // src/adapter.js
 var adapter_exports = {};
 __export(adapter_exports, {
+  NAVI_KEYBOARD_KEYS: () => NAVI_KEYBOARD_KEYS,
   NAVI_PROTOCOL_VERSION: () => NAVI_PROTOCOL_VERSION,
   NaviPlaywrightAdapter: () => NaviPlaywrightAdapter,
   naviAdapter: () => naviAdapter
@@ -353,10 +354,12 @@ function executeTarget(arg) {
   if (!element.isConnected || element.getClientRects().length === 0 || style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0 || element.closest('[hidden],[inert],[aria-hidden="true"]')) throw Object.assign(new Error("Target is unavailable"), { code: "UNAVAILABLE" });
   if (element.matches(":disabled") || element.getAttribute("aria-disabled") === "true" || !element.isConnected) throw Object.assign(new Error("Target is disabled or detached"), { code: "UNAVAILABLE" });
   if (arg.actionType === "type" && element instanceof HTMLInputElement && !["button", "submit", "reset", "image", "checkbox", "radio", "file", "hidden"].includes(element.type.toLowerCase())) {
+    element.focus();
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(element, arg.payload.text ?? "");
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
   } else if (arg.actionType === "type" && element instanceof HTMLTextAreaElement) {
+    element.focus();
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(element, arg.payload.text ?? "");
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
@@ -364,10 +367,12 @@ function executeTarget(arg) {
   else if (arg.actionType === "select" && element instanceof HTMLSelectElement) {
     const option = [...element.options].find((candidate) => candidate.value === arg.payload.value && !candidate.disabled && !candidate.closest("optgroup:disabled"));
     if (!option) throw Object.assign(new Error("No enabled select option has that value"), { code: "INVALID_ACTION" });
+    element.focus();
     element.value = arg.payload.value ?? "";
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
   } else if (arg.actionType === "type" && element.isContentEditable) {
+    element.focus();
     element.textContent = arg.payload.text ?? "";
     element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: arg.payload.text ?? "" }));
   } else throw Object.assign(new Error("Action does not match target"), { code: "INVALID_ACTION" });
@@ -376,7 +381,7 @@ function executeTarget(arg) {
 function naviAdapter(page, options) {
   return new NaviPlaywrightAdapter(page, options);
 }
-var NAVI_PROTOCOL_VERSION, ACTIONS, MAX_TEXT, NaviPlaywrightAdapter;
+var NAVI_PROTOCOL_VERSION, ACTIONS, MAX_TEXT, NAVI_KEYBOARD_KEYS, NaviPlaywrightAdapter;
 var init_adapter = __esm({
   "src/adapter.js"() {
     "use strict";
@@ -384,6 +389,7 @@ var init_adapter = __esm({
     NAVI_PROTOCOL_VERSION = "0.3.0";
     ACTIONS = ["click", "type", "select"];
     MAX_TEXT = 1e4;
+    NAVI_KEYBOARD_KEYS = Object.freeze(["Enter", "Escape", "Tab", "Shift+Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "Backspace", "Delete", "Space", "ControlOrMeta+A"]);
     NaviPlaywrightAdapter = class {
       /** @param {NaviPageLike} page @param {NaviAdapterOptions} [options] */
       constructor(page, options = {}) {
@@ -462,6 +468,45 @@ var init_adapter = __esm({
             throw Object.assign(new Error("Target is still not in the viewport after scrolling"), { code: "SCROLL_INCOMPLETE" });
           }
           return visible[0];
+        } finally {
+          this.busy = false;
+        }
+      }
+      /**
+       * Send one native key to the current focus, optionally checking its identity.
+       * @param {string} key
+       * @param {string} [targetId] Expected focused top-document target.
+       */
+      async pressKey(key, targetId) {
+        this.checkOrigin();
+        if (this.busy) throw Object.assign(new Error("Adapter execution in flight"), { code: "BUSY" });
+        if (!NAVI_KEYBOARD_KEYS.includes(key)) throw Object.assign(new Error("Unsupported keyboard key"), { code: "INVALID_KEY" });
+        if (targetId !== void 0 && (typeof targetId !== "string" || !targetId || targetId.length > 512)) {
+          throw Object.assign(new Error("target_id must be a non-empty string of at most 512 characters"), { code: "INVALID_PAYLOAD" });
+        }
+        if (!this.fallback) throw Object.assign(new Error("Native keyboard input is disabled by --no-fallback"), { code: "FALLBACK_DISABLED" });
+        this.busy = true;
+        try {
+          if (targetId !== void 0) {
+            const map = await this.discover({ viewportOnly: false, limit: 5e3 });
+            const matches = map.actions.filter((action) => action.target_id === targetId);
+            if (matches.length !== 1) throw Object.assign(new Error("Missing or ambiguous keyboard target"), { code: matches.length ? "AMBIGUOUS" : "NOT_FOUND" });
+            const state = matches[0].state;
+            if (!state.is_visible || !state.is_enabled || !state.is_in_viewport || state.is_occluded) {
+              throw Object.assign(new Error("Keyboard target is not actionable"), { code: "UNAVAILABLE" });
+            }
+            const focused = await this.page.evaluate((arg) => {
+              const selector = arg.zeroConfig ? arg.targetId : `[data-agent-target="${CSS.escape(arg.targetId)}"]`;
+              return document.activeElement?.matches(selector) === true;
+            }, { targetId, zeroConfig: map.version === "zero-config" });
+            if (!focused) throw Object.assign(new Error("Expected target is not the focused top-document control"), { code: "KEY_TARGET_NOT_FOCUSED" });
+          }
+          try {
+            await this.page.keyboard.press(key);
+          } catch (error) {
+            throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { code: "KEYBOARD_FAILED", may_have_applied: true });
+          }
+          return { pressed: true, key, mode: "native-driver" };
         } finally {
           this.busy = false;
         }

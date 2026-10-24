@@ -109,9 +109,11 @@ async function naviTrial(origin, seed) {
     await call('navi_navigate', { url: `${origin}/checkout?seed=${seed}` });
     let finalUrl = '';
     for (const step of steps) {
-      const map = await call('navi_get_actions', {}, true);
+      // Planner observation: the compact map is the documented planner format.
+      // Execution still re-checks the full live state before dispatching.
+      const map = await call('navi_get_actions', { compact: true }, true);
       expect(map.truncated).toBe(false);
-      const candidates = /** @type {import('../src/adapter.js').NaviAction[]} */ (map.actions).filter(action => action.name === step.name && action.role === step.role && action.state.is_visible && action.state.is_enabled && !action.state.is_occluded);
+      const candidates = /** @type {{target_id: string, name: string, role: string, available: boolean}[]} */ (map.actions).filter(action => action.name === step.name && action.role === step.role && action.available);
       expect(candidates, `one actionable ${step.name}`).toHaveLength(1);
       const mode = step.navigation ? 'navigation' : 'mutation_settle';
       const receipt = await call('navi_execute_action', {
