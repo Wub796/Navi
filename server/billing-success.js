@@ -457,7 +457,7 @@ export function renderBillingSuccessPage({ tenant_id, api_key, loader_url }) {
   -H "Content-Type: application/json" \\
   -d '{"url":"https://app.example.com","actions":[{"role":"button","name":"Submit"}]}'`;
   const mcpCommand = `export NAVI_API_KEY="${api_key}"
-npx navi-interaction-bridge discover --url https://app.example.com`;
+npx -y -p navi-interaction-bridge -p playwright navi discover --url https://app.example.com`;
   const openapiCommand = `curl -sS ${rawOpenApiUrl} \\
   -H "${header}"`;
   return `<!doctype html>
@@ -537,7 +537,7 @@ npx navi-interaction-bridge discover --url https://app.example.com`;
 
       <div class="tab-panel" id="panel-onboard-loader">
         <pre>${escapeHtml(embed)}</pre>
-        <p class="muted">Place before application scripts to capture closed Shadow roots and expose <code>window.Navi</code>.</p>
+        <p class="muted">Place before application scripts; closed roots created before Navi hooks <code>attachShadow</code> remain inaccessible. This basic snippet does not enable Subresource Integrity; add the published bundle hash as <code>data-sri</code> if you want the loader to verify the bundle before execution.</p>
       </div>
       <div class="tab-panel" id="panel-onboard-edge">
         <pre>${escapeHtml(curlCommand)}</pre>

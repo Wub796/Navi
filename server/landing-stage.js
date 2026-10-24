@@ -8,7 +8,7 @@
 // the styles and the structural wiring they bind to.
 //
 // The art direction follows the page's references: the host page is a bone-white
-// slab floating in a black room, the redaction mesh is a sodium-yellow wireframe,
+// slab floating in a black room, the control index is a sodium-yellow wireframe,
 // and the action map is a terminal of yellow monospace on black. No rounded cards,
 // no glass — hairlines and one accent.
 
@@ -507,7 +507,7 @@ export function renderLandingStage() {
   return `  <section id="stage" class="showcase">
     <h2>01 — The model</h2>
     <p class="section-title">The page, the mesh and the action map — three planes of one object</p>
-    <p class="section-sub">Every control is an <code>&lt;input&gt;</code>. Camera presets rotate the scene, Z-plane isolation solos individual layers, depth and drift toggles simulate live UI mutations and OpenAPI 3.1 synthesis, and pinning a control switches the receipt inspector beside it. The whole stage is CSS <code>transform-style: preserve-3d</code> under <code>default-src 'none'</code>.</p>
+    <p class="section-sub">Explore an illustration of a browser page, indexed controls, and a sample action map. Select a control to see illustrative data and tool calls. The diagram does not run a browser or execute a transaction.</p>
 
     <div class="stage-shell">
       <input class="stage-radio" type="radio" name="camera-view" id="cam-iso" checked>
@@ -541,12 +541,12 @@ ${targetRadios}
         </div>
       </div>
 
-      <div class="stage-viewport" role="group" aria-label="Three-plane 3D model of a checkout page, its Navi redaction mesh, and its deterministic action map">
+      <div class="stage-viewport" role="group" aria-label="Three-plane 3D model of a checkout page, its Navi control index, and its deterministic action map">
         <div class="stage-3d">
           <div class="stage-tilt">
 
             <div class="plane plane-1">
-              <span class="plane-tag">01 · Raw host DOM · closed shadow</span>
+              <span class="plane-tag">01 · Host DOM · captured roots</span>
               <div class="mock-card">
                 <div class="mock-bar">
                   <span class="mock-dot r"></span><span class="mock-dot y"></span><span class="mock-dot g"></span>
@@ -558,10 +558,10 @@ ${targetRadios}
                   <div class="mock-line"><span>Pro plan · monthly</span><strong>$49.00</strong></div>
                   <label class="t-pii mock-field" for="inspect-pii">
                     <span class="mock-label">Card number</span>
-                    <span class="mock-input">•••• •••• •••• 4242<span class="mask-badge">[REDACTED]</span></span>
+                    <span class="mock-input">Illustrative field<span class="mask-badge">VALUE OMITTED</span></span>
                   </label>
                   <div class="mock-shadow">
-                    <span class="mock-shadow-tag">#shadow-root (closed)</span>
+                    <span class="mock-shadow-tag">captured closed root*</span>
                     <label class="t-shadow mock-btn" for="inspect-shadow">Pay $49.00</label>
                   </div>
                   <label class="t-cta mock-btn primary" for="inspect-cta">Complete order</label>
@@ -574,22 +574,21 @@ ${targetRadios}
             </div>
 
             <div class="plane plane-2">
-              <span class="plane-tag neon">02 · Navi mesh · translateZ(70px)</span>
+              <span class="plane-tag neon">02 · Navi index · translateZ(70px)</span>
               <div class="mesh-grid"></div>
-              <span class="budget">&le; 2 ms slice</span>
+              <span class="budget">2 ms work target</span>
               <span class="wire wire-cta"><i>act_pay_01</i></span>
               <span class="wire wire-shadow"><i>act_shadow_02</i></span>
               <span class="wire wire-pii"></span>
-              <span class="redact-mask"></span>
               <span class="wire wire-pager"><i>act_pager_04</i></span>
               <span class="strut" aria-hidden="true"></span>
             </div>
 
             <div class="plane plane-3">
-              <span class="plane-tag accent">03 · Action map · translateZ(140px)</span>
+              <span class="plane-tag accent">03 · Illustrative action map · translateZ(140px)</span>
               <span class="hud hud-1"><code>target_id: "act_pay_01"</code><span>role: "button" · healed &ge; 0.85</span></span>
-              <span class="hud hud-2"><code>bbox: [412, 288, 140, 44]</code><span>sha384 receipt · OpenAPI 3.1</span></span>
-              <span class="hud hud-3"><code>root: "closed"</code><span>pierceDepth: 1</span></span>
+              <span class="hud hud-2"><code>coordinates: { x: 412, y: 288 }</code><span>page-condition wait · OpenAPI 3.1</span></span>
+              <span class="hud hud-3"><code>Closed root captured*</code><span>Hook active when root is created</span></span>
               <span class="beam beam-1" aria-hidden="true"></span>
               <span class="beam beam-2" aria-hidden="true"></span>
               <span class="beam beam-3" aria-hidden="true"></span>
@@ -605,13 +604,13 @@ ${targetRadios}
       </div>
 
       <div class="inspector">
-        <div class="inspector-head">Live 0.3.0 action-map, drift healing &amp; OpenAPI 3.1 inspector</div>
-        <p class="inspector-sub">Pinned target · exact payload, resolveTarget healing &amp; workflow schema</p>
+        <div class="inspector-head">Illustrative 0.3.0 action-map inspector</div>
+        <p class="inspector-sub">Pinned target · sample data, tool input &amp; workflow excerpt</p>
 ${panels}
-        <p class="inspect-hint">Tap a control on the stage to pin it here, or hover it for a preview. Toggle UI Deploy Drift on the stage to inspect deterministic target healing and OpenAPI 3.1 workflow synthesis.</p>
+        <p class="inspect-hint">Tap a control on the stage to pin it here, or hover it for a preview. Toggle UI Deploy Drift on the stage to explore sample target resolution and OpenAPI workflow excerpts.</p>
       </div>
 
-      <p class="stage-hint">Camera presets: <code>rotateX(54deg) rotateZ(-36deg)</code> exploded · <code>rotateX(0deg)</code> front · <code>rotateX(72deg)</code> overhead. Depth is <code>translateZ(0 / 70 / 140px)</code>, doubled by Explode Z-Layers.</p>
+      <p class="stage-hint">*Closed roots are discoverable only when Navi hooks <code>attachShadow</code> before creation. Change the camera or isolate a layer to explore sample action-map entries; the coordinates and results are illustrative.</p>
     </div>
   </section>`;
 }

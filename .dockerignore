@@ -13,6 +13,7 @@
 !server/index.js
 !server/billing.js
 !server/billing-success.js
+!server/edge-assets.js
 !server/endpoints.js
 !server/http.js
 !server/ingest.js

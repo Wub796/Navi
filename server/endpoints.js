@@ -8,6 +8,19 @@
 /** Cache policy for the distributed scripts; the SRI hash is the ETag. */
 export const SCRIPT_CACHE_CONTROL = 'public, max-age=3600, stale-while-revalidate=86400';
 /**
+ * Cache policy for the edge's metered bundle.
+ *
+ * The self-hosted host serves the bundle `public, max-age=3600` because it does not
+ * bill for it. The hosted edge meters authorized bundle serves and accepted sitemap
+ * writes against one quota. A bundle copy handed out by a shared cache could bypass
+ * that accounting, so every edge request revalidates; a `304` is still charged,
+ * because the page is still using the SDK, and the browser keeps its copy without
+ * re-downloading the bytes.
+ */
+export const METERED_SCRIPT_CACHE_CONTROL = 'private, max-age=0, must-revalidate';
+/** Content type both distributable scripts are served with. */
+export const SCRIPT_CONTENT_TYPE = 'application/javascript; charset=utf-8';
+/**
  * Both scripts are served with `Access-Control-Allow-Origin: *`, because the
  * supported embed uses `crossorigin="anonymous"` plus an `integrity` hash: the
  * browser then fetches the script in CORS mode and verifies it before executing.

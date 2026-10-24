@@ -193,7 +193,7 @@ test('cli scrollTo step brings a below-the-fold target into view', async () => {
   const unreachable = await tempFlow('scroll-missing', { steps: [{ scrollTo: 'does-not-exist' }] });
   const failed = await cli(['run', '--url', demoUrl, '--action-file', unreachable, '--json']);
   expect(failed.code).toBe(1);
-  expect(JSON.parse(failed.stdout).failure.code).toBe('SCROLL_TARGET_UNREACHABLE');
+  expect(JSON.parse(failed.stdout).failure.code).toBe('NOT_FOUND');
 });
 
 test('cli fails the run when an assertion does not match', async () => {

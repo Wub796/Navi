@@ -50,6 +50,7 @@ export const REQUIRED_PACKAGE_FILES = [
   'server/index.js',
   'server/billing.js',
   'server/billing-success.js',
+  'server/edge-assets.js',
   'server/endpoints.js',
   'server/http.js',
   'server/ingest.js',
@@ -118,7 +119,9 @@ export const REQUIRED_MCP_TOOLS = [
 export const EXPECTED_MCP_TOOL_NAMES = [
   'navi_navigate',
   'navi_get_actions',
+  'navi_scroll_to',
   'navi_execute_action',
+  'navi_read_text',
   'navi_assert_state',
   'navi_set_session'
 ];

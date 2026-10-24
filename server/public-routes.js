@@ -10,7 +10,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import {
   AGENT_CAPABILITIES, DISCOVERY_CACHE_CONTROL, MCP_PROTOCOL_REVISION, NAVI_PROTOCOL_VERSION,
-  SCRIPT_CACHE_CONTROL, SCRIPT_CORS, SCRIPT_ENDPOINT_PATH
+  SCRIPT_CACHE_CONTROL, SCRIPT_CONTENT_TYPE, SCRIPT_CORS, SCRIPT_ENDPOINT_PATH
 } from './endpoints.js';
 import { sendError, sendJson, sendMetrics } from './http.js';
 import { LANDING_PAGE_HEADERS, renderLandingPage } from './landing.js';
@@ -125,7 +125,9 @@ export function createPublicRoutes(options) {
 
   /** Headers every distributable script carries; callers add length/cache specifics. @returns {Record<string, string>} */
   const scriptHeaders = () => ({
-    'Content-Type': 'application/javascript; charset=utf-8',
+    // Shared with the edge's `server/edge-assets.js`, so the two servers cannot
+    // disagree about the type a browser is told it is executing.
+    'Content-Type': SCRIPT_CONTENT_TYPE,
     'Cache-Control': SCRIPT_CACHE_CONTROL,
     'X-Content-Type-Options': 'nosniff',
     'Access-Control-Allow-Origin': SCRIPT_CORS,

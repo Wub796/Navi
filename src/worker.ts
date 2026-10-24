@@ -1,10 +1,15 @@
 import { validateCrawlerPayload } from './crawler-payload.js';
 import type { CrawlerPayload } from './dom-crawler.js';
 import { BILLING_PAGE_HEADERS, renderBillingClaimErrorPage, renderBillingSuccessPage } from '../server/billing-success.js';
+import { serveBundle, serveLoader } from '../server/edge-assets.js';
+import { LOADER_ENDPOINT_PATH, SCRIPT_ENDPOINT_PATH } from '../server/endpoints.js';
 import { LANDING_PAGE_HEADERS, renderLandingPage } from '../server/landing.js';
 import { FAVICON_SVG, LOGO_SVG, ROBOTS_TXT, SITEMAP_XML } from '../server/public-routes.js';
 import { compileOpenApi, synthesizeWorkflows } from '../server/sitemap-workflows.js';
 import { resolveQuota } from '../server/pricing.js';
+// Written by `scripts/build.mjs` from the same bytes it measured and hashed, so the
+// edge serves the artifact the suite tested rather than a second copy of it.
+import { bundleIntegrity, bundleSource, loaderSource } from './edge-assets/source.js';
 
 export interface Env {
   SUPABASE_URL: string;
@@ -583,6 +588,26 @@ export default {
         }), { allow: 'GET' });
       }
       return handleBillingSuccess(url, env, url.origin);
+    }
+    // The two scripts the landing page's quickstart tells a customer to load. They
+    // were advertised before they were served: this Worker answered 404 for both,
+    // so a paid tenant's embed fetched nothing and the metered path was unreachable.
+    if (url.pathname === LOADER_ENDPOINT_PATH) return serveLoader(request, loaderSource);
+    if (url.pathname === SCRIPT_ENDPOINT_PATH) {
+      return serveBundle(request, {
+        source: bundleSource,
+        sri: bundleIntegrity,
+        // A metering-only call: no `p_url` and no `p_payload`, so the function
+        // charges the window and stores nothing. The database decides whether the
+        // key exists, the origin is allowed and the ceiling is spent — one
+        // statement, so two isolates cannot both admit the last free load.
+        charge: ({ apiKey, origin, headerOrigin }) => callRpc(env, 'consume_site_quota', {
+          p_api_key: apiKey,
+          p_now_ms: Date.now(),
+          p_origin: origin,
+          p_header_origin: headerOrigin,
+        }),
+      });
     }
     if (url.pathname === '/v1/sitemap/openapi.json') {
       if (request.method !== 'GET') return json(405, { error: 'Method not allowed' }, { allow: 'GET' });

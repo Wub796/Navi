@@ -75,20 +75,20 @@ macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows
 }
 ```
 
-The shipped example is [examples/claude-desktop-config.json](../examples/claude-desktop-config.json), and it points at a checkout rather than a registry because **the npm package is not published yet** (the release workflow deliberately does not publish). Once it is published, the same entry becomes the intended production form:
+The shipped example is [examples/claude-desktop-config.json](../examples/claude-desktop-config.json), and it points at a checkout so a contributor runs the code they are editing. Everyone else runs the published package:
 
 ```json
 {
   "mcpServers": {
     "navi": {
       "command": "npx",
-      "args": ["-y", "-p", "navi-interaction-bridge", "navi-mcp"]
+      "args": ["-y", "-p", "navi-interaction-bridge", "-p", "playwright", "navi-mcp"]
     }
   }
 }
 ```
 
-`-p` is required rather than optional: the package ships two bins (`navi`, `navi-mcp`), so `npx navi-mcp` would look for a package of that name.
+`-p` is required rather than optional: the package ships two bins (`navi`, `navi-mcp`), so `npx navi-mcp` would look for a package of that name, and none exists. Playwright is an optional peer dependency, so it needs its own `-p`, and Chromium needs one `npx playwright install chromium`.
 
 Environment goes in the `env` key of the same entry — that is where `NAVI_MCP_DEBUG=1` (trace every tool call to stderr) and `NAVI_MCP_TOKEN` belong:
 
@@ -241,7 +241,7 @@ Verified by this repository's tests:
 
 - The manifest's exact schema, its caching headers, and the `304` path (`tests/auto-discovery.spec.mjs`), plus both `Link` relations on host responses — `rel="agent-bridge"` and the `rel="source"` offer, asserted on the scripts, on `/healthz`, on a `404`, on a `304` and on the `302` from `/v1/source`, with `NAVI_SOURCE_URL` checked to reach both the redirect target and the manifest's `source` field.
 - The loader's meta marker and its strict byte budget.
-- stdio registration as an MCP client uses it: a real `@modelcontextprotocol/sdk` client spawns `examples/claude-desktop-config.json`'s own entry — command and args, with only the placeholder path substituted — and lists the five tools (`navi_navigate`, `navi_get_actions`, `navi_execute_action`, `navi_assert_state`, `navi_set_session`).
+- stdio registration as an MCP client uses it: a real `@modelcontextprotocol/sdk` client spawns `examples/claude-desktop-config.json`'s own entry — command and args, with only the placeholder path substituted — and lists the seven tools (`navi_navigate`, `navi_get_actions`, `navi_scroll_to`, `navi_execute_action`, `navi_read_text`, `navi_assert_state`, `navi_set_session`).
 - Auto-negotiation itself: an instrumented page is bound to its own runtime, an uninstrumented page warns and still works, and a page reporting a different protocol version is refused rather than driven.
 - The manifest loop (`tests/manifest-loop.spec.mjs`): a declared runtime is fetched, hash-verified and injected instead of the packaged build; an unhashed asset is loaded by the browser as a URL; a rewritten asset is refused; an incompatible or slow or missing or off-origin manifest falls back with the documented code; and an uninstrumented page is not probed at all.
 

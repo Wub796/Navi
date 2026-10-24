@@ -343,7 +343,7 @@ test('the official MCP client drives a hardened server once it presents the toke
 
     await client.connect(new SSEClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
     const listed = await client.listTools();
-    expect(listed.tools.map(tool => tool.name).sort()).toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_set_session']);
+    expect(listed.tools.map(tool => tool.name).sort()).toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_read_text', 'navi_scroll_to', 'navi_set_session']);
 
     const nav = await client.callTool({ name: 'navi_navigate', arguments: { url: `${baseURL}/`, width: 1360, height: 900 } });
     expect(nav.isError).toBeFalsy();

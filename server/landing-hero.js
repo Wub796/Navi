@@ -409,13 +409,13 @@ export function renderHeroMonogram() {
             <span class="slab slab-2">
               <span class="slab-label">
                 <span class="slab-meta">02 · 5.9 kB mesh</span>
-                <span class="slab-spec">&le; 2 ms slice · PII mask</span>
+                <span class="slab-spec">2 ms work target · No input values</span>
               </span>
             </span>
             <span class="slab slab-3">
               <span class="slab-label">
                 <span class="slab-meta">03 · 0.3.0 map</span>
-                <span class="slab-spec">OpenAPI 3.1 · sha384</span>
+                <span class="slab-spec">OpenAPI 3.1 · SHA-384 bundle integrity</span>
               </span>
             </span>
           </div>
@@ -430,14 +430,14 @@ export function renderHeroMonogram() {
       <div class="hero-controls" role="group" aria-label="Hero 3D layer isolation">
         <label class="hero-chip" for="hero-plane-all">All 3 Planes</label>
         <label class="hero-chip" for="hero-plane-1">Plane 01 · Raw DOM &amp; Shadow Root</label>
-        <label class="hero-chip" for="hero-plane-2">Plane 02 · <code>5.9 kB</code> TreeWalker &amp; Redaction Mesh</label>
+        <label class="hero-chip" for="hero-plane-2">Plane 02 · <code>5.9 kB</code> TreeWalker &amp; Action Map</label>
         <label class="hero-chip" for="hero-plane-3">Plane 03 · <code>0.3.0</code> Action Map &amp; OpenAPI <code>3.1</code></label>
       </div>
 
       <div class="hero-hud-bar" aria-live="polite">
         <p class="hero-callout hero-callout-all"><strong>All 3 Planes · preserve-3d stack</strong> — Select any plane above or tilt the sculpture to inspect Z-depth translation from live DOM to typed MCP &amp; OpenAPI 3.1 workflows.</p>
-        <p class="hero-callout hero-callout-1"><strong>Plane 01 · translateZ(0px)</strong> — Hooks <code>Element.prototype.attachShadow</code> at document start and traverses open/closed Shadow DOM plus same-origin iframes.</p>
-        <p class="hero-callout hero-callout-2"><strong>Plane 02 · translateZ(64px)</strong> — <code>5.9 kB</code> gzipped crawler slices traversal into &le; 2 ms frames while redacting sensitive field values before serialization.</p>
+        <p class="hero-callout hero-callout-1"><strong>Plane 01 · translateZ(0px)</strong> — Hooks <code>Element.prototype.attachShadow</code> when Navi loads. Closed roots created before interception and cross-origin frames remain inaccessible.</p>
+        <p class="hero-callout hero-callout-2"><strong>Plane 02 · translateZ(64px)</strong> — <code>5.9 kB</code> gzip SDK targets a 2 ms work slice and omits input values; labels and names may still contain sensitive data.</p>
         <p class="hero-callout hero-callout-3"><strong>Plane 03 · translateZ(128px)</strong> — Emits deterministic <code>0.3.0</code> action maps, self-healing <code>resolveTarget</code> descriptors, and <code>GET /v1/sitemap/openapi.json</code> schemas.</p>
       </div>
     </div>`;

@@ -719,7 +719,7 @@ test('reports health and refuses unknown routes', async () => {
   expect(landingBody).toContain('browser agents');
   expect(landingBody).toContain('type="radio" name="camera-view"');
   expect(landingBody).toContain('type="radio" name="inspect-node"');
-  expect(landingBody).toContain('type="radio" name="calc-volume"');
+  expect(landingBody).toContain('Check the result against your workflow');
   // Hero layer isolation, Z-plane soloing and the deploy-drift simulation are three
   // more pure-CSS state machines on the same document.
   expect(landingBody).toContain('type="radio" name="hero-plane"');
@@ -733,7 +733,7 @@ test('reports health and refuses unknown routes', async () => {
   expect(landingBody.match(/<h1\b/g) ?? []).toHaveLength(1);
   expect((landingBody.match(/<h2\b/g) ?? []).length).toBeGreaterThanOrEqual(8);
   expect((landingBody.match(/<h3\b/g) ?? []).length).toBeGreaterThanOrEqual(8);
-  expect(landingBody).toContain('<meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">');
+  expect(landingBody).toContain('<meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into structured JSON action maps for browser workflow builders.">');
   expect(landingBody).toContain('<link rel="canonical" href="https://navi-edge.sysctl.workers.dev/">');
   expect(landingBody).toContain('<meta property="og:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">');
   expect(landingBody).toContain('<meta property="og:description"');

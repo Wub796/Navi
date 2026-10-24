@@ -169,6 +169,40 @@ test('a window that would delete everything, or overflow the date modifier, is r
   }
 });
 
+test('log compaction preserves the latest maps and quota windows across a restart', async () => {
+  const file = tempFile('log');
+  const quotaWindowStart = Date.now() - 2000;
+  await writeLog([
+    JSON.stringify({ kind: 'navigation_map', site_id: 'tenant-alpha', url: 'https://app.example/old', payload: { url: 'https://app.example/old' }, updated_at: daysAgo(2) }),
+    JSON.stringify({ kind: 'navigation_map', site_id: 'tenant-alpha', url: 'https://app.example/new', payload: { url: 'https://app.example/new' }, updated_at: daysAgo(1) }),
+    JSON.stringify({ kind: 'navigation_map', site_id: 'tenant-alpha', url: 'https://app.example/new', payload: { url: 'https://app.example/new', revision: 2 }, updated_at: daysAgo(0) }),
+    JSON.stringify({ kind: 'tenant_quota', tenant_id: 'tenant-alpha', window_start_ms: quotaWindowStart - 1000, event_count: 1 }),
+    JSON.stringify({ kind: 'tenant_quota', tenant_id: 'tenant-alpha', window_start_ms: quotaWindowStart, event_count: 3 }),
+    JSON.stringify({ kind: 'tenant_quota', tenant_id: 'tenant-beta', window_start_ms: quotaWindowStart + 1000, event_count: 4 }),
+    JSON.stringify({ kind: VIOLATION_KIND, tenant_id: 'tenant-alpha', session_id: null, category: 'private_ipv4', target_url: 'http://10.0.0.1/', resolved_ip: '10.0.0.1', created_at: daysAgo(40) }),
+    JSON.stringify({ kind: VIOLATION_KIND, tenant_id: 'tenant-alpha', session_id: null, category: 'private_ipv4', target_url: 'http://10.0.0.2/', resolved_ip: '10.0.0.2', created_at: daysAgo(1) })
+  ], file);
+  const store = await createStore(file, { mode: 'log' });
+  try {
+    expect(await store.pruneViolations({ max_age_days: 30 })).toEqual({ pruned_count: 1, remaining_count: 1 });
+    await store.close();
+
+    const reopened = await createStore(file, { mode: 'log' });
+    try {
+      expect(await reopened.readNavigationMap('tenant-alpha', 'https://app.example/old')).toMatchObject({ payload: { url: 'https://app.example/old' } });
+      expect(await reopened.readNavigationMap('tenant-alpha', 'https://app.example/new')).toMatchObject({ payload: { revision: 2 } });
+      expect((await reopened.readLatestNavigationMap('tenant-alpha'))?.payload).toMatchObject({ revision: 2 });
+      expect(await reopened.readQuota('tenant-alpha')).toEqual({ tenant_id: 'tenant-alpha', window_start_ms: quotaWindowStart, event_count: 3 });
+      expect(await reopened.readQuota('tenant-beta')).toEqual({ tenant_id: 'tenant-beta', window_start_ms: quotaWindowStart + 1000, event_count: 4 });
+      expect(await reopened.consumeQuota({ tenant_id: 'tenant-alpha', max_events_per_window: 5, window_seconds: 3600 })).toMatchObject({ allowed: true, count: 4 });
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await store.close();
+  }
+});
+
 test('log compaction drops expired violations, keeps aggregates, and does not renumber', async () => {
   const file = tempFile('log');
   await writeLog([

@@ -1,8 +1,8 @@
-// The receipt inspector: its pinned targets and the sheet that dresses them.
+// The illustrative action-map inspector: pinned targets and their styling.
 //
 // Split from `landing-stage.js` so every `server/*.js` stays under the 650-line
 // ceiling the release gate enforces. The four simulated controls the inspector can
-// pin, and the exact JSON the agent reads and the receipt each executes to, are data
+// pin, with illustrative action-map entries and supported tool calls, are data
 // rather than layout — this module holds the table beside the styles that target it
 // and nothing else on the page may class itself `inspect-*`.
 //
@@ -18,29 +18,33 @@ export const INSPECTOR_TARGETS = [
   {
     id: 'inspect-cta',
     panel: 'panel-cta',
-    short: '01 · Checkout CTA',
-    label: 'Primary Checkout CTA',
+    short: '01 · Checkout control',
+    label: 'Illustrative checkout control',
     json: `{
   "target_id": "act_pay_01",
   "role": "button",
   "name": "Complete order",
-  "bbox": [412, 288, 140, 44],
-  "fingerprint": "6b1f9a4c",
-  "state": { "visible": true, "enabled": true, "inViewport": true },
-  "root": "host"
+  "suggested_action": "click",
+  "state": {
+    "is_visible": true,
+    "is_enabled": true,
+    "is_in_viewport": true,
+    "is_occluded": false
+  },
+  "coordinates": {
+    "x": 412,
+    "y": 288,
+    "width": 140,
+    "height": 44
+  }
 }`,
-    call: `navi_act({ target: "act_pay_01" })
-→ { "settled": true, "elapsedMs": 1.7, "sha384": "8f3c…c19a" }`,
-    driftJson: `resolveTarget({ target_id: "act_pay_01", role: "button", name: "Complete order", action: "click" })
-→ {
-  "requested_target_id": "act_pay_01",
-  "resolved_target_id": "act_pay_v2_9f",
-  "healed": true,
-  "confidence": 0.97,
-  "reason": "healed",
-  "weights": { "role": 0.5, "label": 0.3, "action": 0.2, "threshold": ">= 0.85" }
-}`,
-    openapiJson: `GET /v1/sitemap/openapi.json → workflows[]
+    call: `navi_execute_action({ target_id: "act_pay_01", action_type: "click",
+  settle: { wait_for: "mutation_settle", timeout_ms: 3000 } })
+// Check the saved order separately after settlement.`,
+    driftJson: `resolveTarget({ target_id: "act_pay_01", role: "button", name: "Complete order", action: "click" }, updatedSitemap)
+// Server library helper, not an MCP tool.
+// Revalidate the candidate in the live browser before acting.`,
+    openapiJson: `OpenAPI excerpt (illustrative)
 {
   "openapi": "3.1.0",
   "path": "/workflows/checkout_1",
@@ -52,30 +56,34 @@ export const INSPECTOR_TARGETS = [
   {
     id: 'inspect-shadow',
     panel: 'panel-shadow',
-    short: '02 · Shadow Button',
-    label: 'Closed Shadow DOM Button',
+    short: '02 · Captured-root control',
+    label: 'Control in a previously captured closed root',
     json: `{
   "target_id": "act_shadow_02",
   "role": "button",
   "name": "Pay $49.00",
-  "bbox": [286, 340, 120, 38],
-  "fingerprint": "d42e07b1",
-  "root": "#shadow-root (closed)",
-  "pierceDepth": 1,
-  "state": { "visible": true, "enabled": true, "inViewport": true }
+  "suggested_action": "click",
+  "state": {
+    "is_visible": true,
+    "is_enabled": true,
+    "is_in_viewport": true,
+    "is_occluded": false
+  },
+  "coordinates": {
+    "x": 286,
+    "y": 340,
+    "width": 120,
+    "height": 38
+  }
 }`,
-    call: `navi_act({ target: "act_shadow_02" })
-→ { "settled": true, "elapsedMs": 1.9, "sha384": "41ad…7e02" }`,
-    driftJson: `resolveTarget({ target_id: "act_shadow_02", role: "button", name: "Pay $49.00", action: "click" })
-→ {
-  "requested_target_id": "act_shadow_02",
-  "resolved_target_id": "act_shadow_v2_4c",
-  "healed": true,
-  "confidence": 0.95,
-  "reason": "healed",
-  "weights": { "role": 0.5, "label": 0.3, "action": 0.2, "threshold": ">= 0.85" }
-}`,
-    openapiJson: `GET /v1/sitemap/openapi.json → workflows[]
+    call: `navi_execute_action({ target_id: "act_shadow_02", action_type: "click",
+  settle: { wait_for: "navigation", timeout_ms: 3000 } })
+// Closed roots must have been captured before creation.
+// A navigation wait does not verify the business outcome.`,
+    driftJson: `resolveTarget({ target_id: "act_shadow_02", role: "button", name: "Pay $49.00", action: "click" }, updatedSitemap)
+// Server library helper, not an MCP tool.
+// Revalidate the candidate in the live browser before acting.`,
+    openapiJson: `OpenAPI excerpt (illustrative)
 {
   "openapi": "3.1.0",
   "path": "/workflows/checkout_shadow_1",
@@ -86,30 +94,32 @@ export const INSPECTOR_TARGETS = [
   {
     id: 'inspect-pii',
     panel: 'panel-pii',
-    short: '03 · Redacted PII',
-    label: 'Redacted PII Card Input',
+    short: '03 · Input metadata',
+    label: 'Illustrative input metadata (value omitted)',
     json: `{
   "target_id": "act_pii_03",
   "role": "textbox",
   "name": "Card number",
-  "bbox": [188, 214, 320, 36],
-  "fingerprint": "a90c5d33",
-  "value": "[REDACTED]",
-  "redaction": { "rule": "payment-card", "masked": true },
-  "state": { "visible": true, "enabled": true, "inViewport": true }
+  "suggested_action": "type",
+  "state": {
+    "is_visible": true,
+    "is_enabled": true,
+    "is_in_viewport": true,
+    "is_occluded": false
+  },
+  "coordinates": {
+    "x": 188,
+    "y": 214,
+    "width": 320,
+    "height": 36
+  }
 }`,
-    call: `navi_get_actions({ scope: "act_pii_03" })
-→ value is [REDACTED] before it ever leaves the page`,
-    driftJson: `resolveTarget({ target_id: "act_pii_03", role: "textbox", name: "Card number", action: "fill" })
-→ {
-  "requested_target_id": "act_pii_03",
-  "resolved_target_id": "act_pii_v2_8a",
-  "healed": true,
-  "confidence": 0.96,
-  "reason": "healed",
-  "weights": { "role": 0.5, "label": 0.3, "action": 0.2, "threshold": ">= 0.85" }
-}`,
-    openapiJson: `GET /v1/sitemap/openapi.json → workflows[]
+    call: `navi_get_actions({})
+// Input values are omitted. Labels and accessible names may contain sensitive data.`,
+    driftJson: `resolveTarget({ target_id: "act_pii_03", role: "textbox", name: "Card number", action: "type" }, updatedSitemap)
+// Server library helper, not an MCP tool.
+// Revalidate the candidate in the live browser before acting.`,
+    openapiJson: `OpenAPI excerpt (illustrative)
 {
   "openapi": "3.1.0",
   "path": "/workflows/checkout_1",
@@ -120,29 +130,33 @@ export const INSPECTOR_TARGETS = [
   {
     id: 'inspect-pager',
     panel: 'panel-pager',
-    short: '04 · Async Pager',
-    label: 'Async Pagination Trigger',
+    short: '04 · Off-screen target',
+    label: 'Illustrative off-screen target',
     json: `{
   "target_id": "act_pager_04",
   "role": "button",
   "name": "Next",
-  "bbox": [504, 512, 64, 32],
-  "fingerprint": "2f81b6de",
-  "async": { "settle": "mutation", "budgetMs": 2 },
-  "state": { "visible": true, "enabled": true, "inViewport": false }
+  "suggested_action": "click",
+  "state": {
+    "is_visible": true,
+    "is_enabled": true,
+    "is_in_viewport": false,
+    "is_occluded": false
+  },
+  "coordinates": {
+    "x": 504,
+    "y": 1512,
+    "width": 64,
+    "height": 32
+  }
 }`,
-    call: `navi_act({ target: "act_pager_04", wait: "mutation_settle" })
-→ { "settled": true, "mutations": 3, "sha384": "c7be…90f3" }`,
-    driftJson: `resolveTarget({ target_id: "act_pager_04", role: "button", name: "Next", action: "click" })
-→ {
-  "requested_target_id": "act_pager_04",
-  "resolved_target_id": "act_pager_v2_1d",
-  "healed": true,
-  "confidence": 0.92,
-  "reason": "healed",
-  "weights": { "role": 0.5, "label": 0.3, "action": 0.2, "threshold": ">= 0.85" }
-}`,
-    openapiJson: `GET /v1/sitemap/openapi.json → workflows[]
+    call: `navi_scroll_to({ target_id: "act_pager_04" })
+navi_execute_action({ target_id: "act_pager_04", action_type: "click",
+  settle: { wait_for: "mutation_settle", timeout_ms: 3000 } })`,
+    driftJson: `resolveTarget({ target_id: "act_pager_04", role: "button", name: "Next", action: "click" }, updatedSitemap)
+// Server library helper, not an MCP tool.
+// Revalidate the candidate in the live browser before acting.`,
+    openapiJson: `OpenAPI excerpt (illustrative)
 {
   "openapi": "3.1.0",
   "path": "/workflows/navigate_1",
@@ -164,13 +178,13 @@ export function renderInspectorPanels() {
   const pins = INSPECTOR_TARGETS.map(target => `          <span class="pin-chip" data-pin="${target.id}">${target.short}</span>`).join('\n');
   const panels = INSPECTOR_TARGETS.map(target => `        <article class="inspect-panel ${target.panel}">
           <h3 class="inspect-title">${target.label}</h3>
-          <p class="inspect-meta">deterministic fingerprint · sha384 receipt</p>
+          <p class="inspect-meta">Illustrative map entry and tool input · not live output</p>
           <pre class="inspect-json">${target.json}</pre>
           <pre class="inspect-call">${target.call}</pre>
           <div class="inspect-drift">
-            <p class="inspect-drift-head">Self-Healing Drift Recovery (resolveTarget confidence &ge; 0.85 · role 0.5 + label 0.3 + action 0.2)</p>
+            <p class="inspect-drift-head">Illustrative server-side resolution · revalidate a match before acting</p>
             <pre class="inspect-json drift-box">${target.driftJson}</pre>
-            <p class="inspect-drift-head">Synthesized OpenAPI 3.1 Workflow (GET /v1/sitemap/openapi.json · x-navi-risk-level: "read" | "write" | "destructive")</p>
+            <p class="inspect-drift-head">Illustrative OpenAPI 3.1 excerpt · risk level is a heuristic</p>
             <pre class="inspect-call openapi-box">${target.openapiJson}</pre>
           </div>
         </article>`).join('\n');

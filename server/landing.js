@@ -15,7 +15,7 @@
 // sections, and oversized Helvetica display type.
 //
 // The page's interactivity is all browser form state: the 3D camera and target
-// inspector on the stage, the integration tabs, the savings calculator, and the FAQ's
+// inspector on the stage, the integration tabs, and the FAQ's
 // native `<details>` are the only behaviours, and every one of them works with
 // scripts disabled and under `default-src 'none'`.
 //
@@ -23,7 +23,7 @@
 // animates on scroll and on hover without gaining a script or a CSP directive.
 
 import { escapeHtml } from './billing-success.js';
-import { CALCULATOR_STYLE, renderSavingsCalculator } from './landing-calculator.js';
+import { BENCHMARK_STYLE, renderBenchmarkEvidence } from './landing-calculator.js';
 import { renderHeroMonogram } from './landing-hero.js';
 import { INSPECTOR_STYLE } from './landing-inspector.js';
 import { LANDING_MOTION_STYLE } from './landing-motion.js';
@@ -74,25 +74,25 @@ function httpsLink(value) {
 const TIER_FEATURES = Object.freeze({
   community: [
     'Full DOM + closed Shadow DOM action maps',
-    'Local SQLite WAL or JSONL audit store',
-    'Stdio & SSE MCP server (5 agent tools)',
+    'Local SQLite WAL or JSONL storage for audit records and maps',
+    'Stdio & SSE MCP server (7 agent tools)',
     'AGPL-3.0-or-later open-source license',
   ],
   starter: [
-    'Hosted edge loader & sitemap ingestion',
+    'Hosted browser bundle and sitemap publishing, each quota-metered',
     'Per-tenant allowed_origins enforcement',
     'Instant post-checkout API key claim',
-    'Atomic 30-day rolling quota window',
+    'Atomic 30-day quota window',
   ],
   pro: [
-    '5× Starter ingestion capacity (50k/mo)',
+    '50,000 quota units / 30 days (bundle serves or sitemap writes)',
     'Commercial license — AGPL-3.0 exemption',
     'Proprietary & closed-source SaaS embed',
-    'Multi-origin allow-lists & zero-downtime key stability',
+    'Origin allow-lists & persistent tenant config',
   ],
   enterprise: [
-    '250,000 events / 30 days at the edge',
-    'Commercial self-hosted Docker & air-gapped license',
+    '250,000 quota units / 30 days (bundle serves or sitemap writes)',
+    'Commercial self-hosted Docker license',
     'Hardened seccomp + namespace Chromium containers',
     'Prometheus metrics & containment audit trail',
   ],
@@ -113,9 +113,9 @@ const priceLabel = cents => `$${cents / 100}`;
 function renderTier(tier, link) {
   const quota = tier.maxEventsPerWindow === null
     ? 'Unmetered · Self-hosted'
-    : `${tier.maxEventsPerWindow.toLocaleString('en-US')} events / 30 days`;
+    : `${tier.maxEventsPerWindow.toLocaleString('en-US')} quota units / 30 days`;
   const featured = tier.id === 'pro';
-  const ribbon = featured ? '\n      <span class="tier-ribbon">Most popular · AGPL exempt</span>' : '';
+  const ribbon = featured ? '\n      <span class="tier-ribbon">Commercial license</span>' : '';
   const features = (TIER_FEATURES[tier.id] ?? [])
     .map(item => `        <li>${escapeHtml(item)}</li>`)
     .join('\n');
@@ -151,16 +151,16 @@ export function renderLandingPage(input = {}) {
     enterprise: httpsLink(input.paymentLinks?.enterprise),
   });
   const purchasing = Boolean(links.starter || links.pro || links.enterprise);
-  const embed = `<script src="${loader}"\n        data-key="navi_live_YOUR_KEY"><\/script>\n<script defer src="/app.js"><\/script>`;
+  const embed = `<script src="${loader}"\n        data-key="navi_live_YOUR_KEY"\n        data-sri="sha384-YOUR_BUILD_HASH"><\/script>`;
   const publish = `curl -X POST ${sitemap} \\
   -H "Authorization: Bearer $NAVI_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"url":"https://app.example.com","actions":[{"role":"button","name":"Checkout"}]}'`;
-  const mcpSnippet = `# Install the zero-dependency kit & launch stdio or SSE MCP
-npm i navi-interaction-bridge
-npx navi-mcp
-# Or run the hardened self-hosted container with SQLite WAL:
-docker compose -f deploy/docker-compose.prod.yml up -d`;
+  -H "Origin: https://app.example.com" \\
+  -d '{"url":"https://app.example.com","actions":[{"target_id":"checkout-submit","role":"button","name":"Checkout","action":"click","selector":"#checkout-submit","disabled":false}]}'`;
+  const mcpSnippet = `npm i --save-dev navi-interaction-bridge playwright
+npx playwright install chromium
+# Start stdio MCP (normally launched by your MCP client):
+npx -y -p navi-interaction-bridge -p playwright navi-mcp`;
   const openapiSnippet = `curl -sS ${escapeHtml((input.sitemapUrl ?? '/v1/sitemap/update').replace(/\/update$/, '/openapi.json'))} \\
   -H "Authorization: Bearer $NAVI_API_KEY"`;
 
@@ -171,35 +171,45 @@ docker compose -f deploy/docker-compose.prod.yml up -d`;
 // Agent guesses selector ".sc-92x-btn" -> breaks on next deploy`;
 
   const actionMapExample = `{
-  "version": "0.3.0",
-  "url": "https://app.example.com/checkout",
-  "actions": [{
-    "target_id": "checkout-submit",
-    "role": "button",
-    "name": "Complete Order ($107.00)",
-    "action": "click",
-    "visible": true,
-    "enabled": true,
-    "inViewport": true
-  }]
+  "target_id": "checkout-submit",
+  "role": "button",
+  "name": "Complete sandbox checkout",
+  "suggested_action": "click",
+  "state": {
+    "is_visible": true, "is_enabled": true,
+    "is_in_viewport": true, "is_occluded": false
+  },
+  "coordinates": { "x": 412, "y": 288, "width": 140, "height": 44 }
 }`;
 
   const pricing = `  <section id="pricing">
     <h2>06 — Pricing</h2>
-    <p class="section-title">Predictable 30-day quotas. Zero-integration checkout.</p>
-    <p class="section-sub">Pay via Stripe Payment Link, claim your <code>navi_live_…</code> credential on the one-time redirect page, and start indexing immediately.</p>
+    <p class="section-title">Optional hosted plans and commercial licensing</p>
+    <p class="section-sub">${purchasing ? 'Hosted plans meter browser-bundle serves and accepted sitemap writes together. Choose a plan and claim your API key after checkout; local MCP evaluation remains free.' : 'Hosted checkout is not configured on this deployment. Start locally or contact us about hosted access.'}</p>
     <div class="tiers">
 ${TIERS.map(tier => renderTier(tier, links[tier.id] ?? null)).join('\n')}
     </div>
-    <p class="muted">Checkout is hosted by Stripe; the tenant key is shown once on the success page and never again. Every paid plan is metered over a 30-day window.</p>
+    <p class="muted">Checkout is hosted by Stripe; the tenant key is shown once on the success page and never again. Each authorized browser-bundle serve (including a cache revalidation, 304) and each accepted sitemap write consumes one quota unit from the tenant's 30-day window. The quota is shared by those two operations. When the ceiling is reached, further bundle serves and sitemap writes are refused until the window resets or the plan changes; no automatic overage billing is applied.</p>
   </section>`;
 
-  const quickstart = purchasing ? '' : `  <section class="card">
-    <h2>Self-hosted quickstart</h2>
-    <p>This deployment has no Payment Link configured, so there is no self-serve checkout here. Run the same service yourself, or ask the operator for a tenant key.</p>
-    <pre><code>npm i navi-interaction-bridge
-npm run serve -- --port 3000
-navi-mcp --transport sse</code></pre>
+  const quickstart = `  <section id="start" class="card">
+    <h2>Start here — free local evaluation</h2>
+    <p>Use Node 22+ and an MCP-compatible agent. No hosted API key or payment is needed. Community use is covered by the <a href="https://github.com/Wub796/Navi/blob/main/LICENSING.md">AGPL license</a>.</p>
+    <h3>1. Install Chromium</h3>
+    <pre><code>npx playwright install chromium</code></pre>
+    <h3>2. Add Navi to your MCP client configuration</h3>
+    <pre><code>{
+  "mcpServers": {
+    "navi": {
+      "command": "npx",
+      "args": ["-y", "-p", "navi-interaction-bridge", "-p", "playwright", "navi-mcp"]
+    }
+  }
+}</code></pre>
+    <h3>3. Inspect a page</h3>
+    <p>Ask your agent: “Open https://example.com with Navi and list the available actions.” It should call <code>navi_navigate</code>, then <code>navi_get_actions</code>. A page with no interactive controls can correctly return an empty map.</p>
+    <p><a href="https://github.com/Wub796/Navi#run-from-source">Run the sandbox checkout from source &nearr;</a> · <a href="https://github.com/Wub796/Navi/blob/main/docs/AGENT-INTEGRATION.md">Integration guide &nearr;</a></p>
+    <p class="muted">Use your existing browser driver for page reading and keyboard shortcuts. Settlement checks page conditions; verify saved records or completed orders separately.</p>
   </section>`;
 
   return `<!doctype html>
@@ -209,22 +219,22 @@ navi-mcp --transport sse</code></pre>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
-<meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
+<meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into structured JSON action maps for browser workflow builders.">
 <link rel="canonical" href="https://navi-edge.sysctl.workers.dev/">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <meta name="theme-color" content="#0b0b0b">
 <meta property="og:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">
-<meta property="og:description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
+<meta property="og:description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into structured JSON action maps for browser workflow builders.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://navi-edge.sysctl.workers.dev/">
 <meta property="og:site_name" content="Navi Interaction Bridge">
 <meta property="og:image" content="https://navi-edge.sysctl.workers.dev/logo.svg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">
-<meta name="twitter:description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">
+<meta name="twitter:description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into structured JSON action maps for browser workflow builders.">
 <meta name="twitter:image" content="https://navi-edge.sysctl.workers.dev/logo.svg">
 <title>Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge</title>
-<style>${LANDING_STYLE}${STAGE_STYLE}${INSPECTOR_STYLE}${CALCULATOR_STYLE}${LANDING_MOTION_STYLE}</style>
+<style>${LANDING_STYLE}${STAGE_STYLE}${INSPECTOR_STYLE}${BENCHMARK_STYLE}${LANDING_MOTION_STYLE}</style>
 </head>
 <body>
 <main>
@@ -237,24 +247,24 @@ navi-mcp --transport sse</code></pre>
       <a href="#stage">Model</a>
       <a href="#architecture">Architecture</a>
       <a href="#quickstart">Integration</a>
-      <a href="#savings">Economics</a>
+      <a href="#savings">Evidence</a>
       <a href="#pricing">Pricing</a>
       <a href="#api">API</a>
       <a href="#faq">FAQ</a>
       <a href="https://github.com/Wub796/Navi">GitHub</a>
-      <a class="nav-key" href="#pricing">Get key &nearr;</a>
+      <a class="nav-key" href="#start">Try locally &nearr;</a>
     </nav>
   </header>
 
   <section class="hero">
     <div class="hero-copy">
-      <p class="kicker">AI browser agent SDK · protocol 0.3.0</p>
+      <p class="kicker">For teams building browser workflow agents · protocol 0.3.0</p>
       <h1>Navi — Deterministic<br>action maps for<br><em>browser agents.</em></h1>
       <p class="lede">
-        Stop feeding 50,000 tokens of brittle DOM markup into LLM planners. Navi is the Model Context Protocol (MCP) browser bridge that compiles live pages — including closed Shadow DOM and same-origin iframes — into a deterministic DOM to JSON action map for LLM agents, providing a token-efficient alternative to Playwright MCP and screenshot VLMs.
+        Building an agent for browser workflows? Give it named controls, current actionability checks, and optional waits for page changes. Navi adds structured interaction to your existing browser stack, including captured closed Shadow DOM and same-origin frames.
       </p>
       <div class="hero-actions">
-        <a class="cta" href="#pricing">Get an API key &rarr;</a>
+        <a class="cta" href="#start">Try locally — free &rarr;</a>
         <a class="btn-secondary" href="#stage">See the model &darr;</a>
         <a class="btn-secondary" href="https://github.com/Wub796/Navi">Source &amp; benchmarks</a>
       </div>
@@ -271,24 +281,26 @@ ${renderHeroMonogram()}
     <div class="hero-stats" role="region" aria-label="Verified protocol specifications">
       <div class="stat">
         <p class="stat-value">5.9 kB gzip</p>
-        <p class="stat-label">SDK bundle · 14,929 B raw · SHA-384 SRI</p>
+        <p class="stat-label">SDK bundle · 14,929 B raw · SHA-384 digest</p>
       </div>
       <div class="stat">
         <p class="stat-value">689 B</p>
-        <p class="stat-label">Tenant embed loader · auto-discovery</p>
+        <p class="stat-label">Tenant embed loader · built-in discovery</p>
       </div>
       <div class="stat">
-        <p class="stat-value">264 tests</p>
-        <p class="stat-label">Chromium · Postgres · MCP verification</p>
+        <p class="stat-value">Browser suite</p>
+        <p class="stat-label">Chromium · MCP · database checks vary by host</p>
       </div>
       <div class="stat">
-        <p class="stat-value">Sigstore OIDC</p>
-        <p class="stat-label">Provenance · 10 / 10 verified TCR</p>
+        <p class="stat-value">10 paired trials</p>
+        <p class="stat-label">Local checkout fixture · no LLM planner</p>
       </div>
     </div>
   </section>
 
   <div class="shell">
+
+${quickstart}
 
 ${renderLandingStage()}
 
@@ -297,30 +309,29 @@ ${renderLandingStage()}
       <h2>Without Navi · Raw HTML &amp; Screenshot VLMs</h2>
       <span class="pill bad">Without Navi · Raw DOM scraping</span>
       <h3 class="img">Fragile selectors &amp; blind sleeps</h3>
-      <p>Agents burn context windows on obfuscated CSS classes, miss controls inside closed Shadow roots, and click before hydration settles.</p>
+      <p>Raw DOM and screenshot-based approaches can require extra page context and application-specific targeting; Navi offers structured controls when their roots were captured and reports current actionability before dispatch.</p>
       <pre><code>${escapeHtml(rawDomExample)}</code></pre>
     </section>
     <section class="good-card">
       <h2>With Navi · Deterministic Web Agent Automation</h2>
       <span class="pill good">With Navi · Deterministic protocol</span>
-      <h3 class="img">Semantic targets &amp; settlement receipts</h3>
-      <p>Every interactive element is hashed with MurmurHash3, checked for occlusion and viewport presence, and executed with a two-frame settlement guarantee.</p>
+      <h3 class="img">Semantic targets &amp; page-condition waits</h3>
+      <p>Indexed controls get target IDs and live visibility, viewport, and occlusion checks. Optional waits report page conditions such as DOM quiet, navigation, or target disappearance; verify the saved result separately.</p>
       <pre><code>${escapeHtml(actionMapExample)}</code></pre>
     </section>
   </div>
 
-  <section id="architecture">
-    <h2>02 — Architecture: How Navi Converts Live DOM Trees into Deterministic MCP Action Maps</h2>
-    <p class="section-title">From live Browser DOM to MCP Agent in one atomic pipeline</p>
-    <p class="section-sub">Inline SVG and pure CSS <code>@keyframes</code> under <code>default-src 'none'</code> — zero client-side JavaScript.</p>
-    <svg class="pipeline-svg" viewBox="0 0 880 128" role="img" aria-label="Data flow from Browser DOM to Cloudflare Edge, Supabase Atomic RPC, and MCP Agent">
+  <section id="architecture">        <h2>02 — Architecture: How Navi Converts Live DOM Trees into Deterministic MCP Action Maps</h2>
+    <p class="section-title">Start locally; publish maps when you need storage</p>
+    <p class="section-sub">The local MCP server talks directly to your browser. Hosted publishing stores maps in the configured Supabase project and shares its quota with browser-bundle serves; local use needs no hosted account. Navi does not create backups or guarantee replication or point-in-time recovery; configure and verify backups in the storage environment you operate.</p>
+    <svg class="pipeline-svg" viewBox="0 0 880 128" role="img" aria-label="Optional hosted publishing path from Browser DOM through Edge and storage to a consuming agent">
       <line class="flow-line" x1="195" y1="64" x2="245" y2="64" />
       <line class="flow-line" x1="425" y1="64" x2="475" y2="64" />
       <line class="flow-line" x1="655" y1="64" x2="705" y2="64" />
       <rect class="flow-node" x="15" y="22" width="180" height="84" rx="2" />
       <circle class="flow-dot" cx="34" cy="44" r="4.5" />
       <text class="flow-title" x="46" y="48">1. Browser DOM</text>
-      <text class="flow-sub" x="30" y="68">TreeWalker &le; 2 ms slice</text>
+      <text class="flow-sub" x="30" y="68">2 ms traversal work target</text>
       <text class="flow-sub" x="30" y="86">Closed Shadow + iframes</text>
       <rect class="flow-node-accent" x="245" y="22" width="180" height="84" rx="2" />
       <text class="flow-title" x="262" y="48">2. Cloudflare Edge</text>
@@ -339,67 +350,67 @@ ${renderLandingStage()}
     <div class="pillars">
       <section>
         <h2>01 · In-page runtime</h2>
-        <h3>Closed Shadow DOM automation &amp; PII redaction</h3>
-        <p>A sub-millisecond TreeWalker DOM crawler (&le; 2 ms slice) hooks <code>attachShadow</code> before app scripts run and enforces browser PII redaction for AI agents.</p>
+        <h3>Captured closed Shadow DOM and control discovery</h3>
+        <p>A TreeWalker crawler targets a 2 ms work slice and hooks <code>attachShadow</code> when Navi loads. It captures closed roots created afterward; load before application scripts. Input values are omitted from maps, but accessible names may still contain sensitive data.</p>
         <ul class="pillar-list">
-          <li>Zero field values ever serialized into the action map</li>
+          <li>Input values are not included in action maps; other text may be sensitive</li>
           <li>MurmurHash3 target IDs with center-point occlusion checks</li>
         </ul>
       </section>
       <section>
         <h2>02 · Guarded MCP server</h2>
-        <h3>Hosted MCP SSE server &amp; SSRF containment</h3>
-        <p>Ships <code>navi-mcp</code> over stdio and authenticated SSE for deterministic web agent automation with strict network egress controls.</p>
+        <h3>Local MCP server &amp; network destination checks</h3>
+        <p>Ships <code>navi-mcp</code> over stdio and optional bearer-authenticated SSE. URL checks reject loopback, private-network, cloud-metadata destinations, and DNS rebinding; they do not replace deployment egress controls.</p>
         <ul class="pillar-list">
-          <li>5 MCP tools with mutation and navigation settlement receipts</li>
-          <li>Refuses loopback, RFC 1918, cloud metadata IPs, and DNS rebinding</li>
+          <li>7 tools include bounded text reading, top-document scrolling, and page-condition waits</li>
+          <li>Text, accessible names, URLs and tool instructions remain untrusted input</li>
         </ul>
       </section>
       <section>
         <h2>03 · Atomic edge ingestion</h2>
-        <h3>Single-RPC quota &amp; map transactions</h3>
-        <p>Every sitemap write and Stripe webhook executes inside one transactional database RPC — row-locked quota metering and origin allow-lists never drift.</p>
+        <h3>Atomic edge quota and map writes</h3>
+        <p>Each hosted sitemap write combines origin checks, quota charging, and map storage in one Supabase transaction. Stripe webhook verification and tenant updates also use a transactional RPC.</p>
         <ul class="pillar-list">
-          <li>Constant-time HMAC-SHA256 webhook verification (300s window)</li>
-          <li>Dual-backend parity across Cloudflare Edge and SQLite WAL</li>
+          <li>Timestamped HMAC-SHA256 signature verification within a 300-second window</li>
+          <li>Hosted Supabase storage; self-hosted maps and audit records use SQLite WAL or JSONL</li>
         </ul>
       </section>
     </div>
   </section>
 
   <section id="quickstart">
-    <h2>03 — Integration: 689 B Loader, Hosted Edge API &amp; Self-Hosted Docker MCP Server</h2>
+    <h2>03 — Integration: Local MCP, Browser Loader &amp; Hosted API</h2>
     <p class="section-title">Drop-in browser loader, edge ingestion API, or local MCP host</p>
-    <p class="section-sub">Switch tabs below — pure CSS radio state that works with scripts disabled.</p>
+    <p class="section-sub">Start with local MCP. Use the browser loader when you control the page, or the hosted API to store maps for your application.</p>
     <div class="tabs">
       <input class="tab-radio" type="radio" name="integration-tab" id="tab-loader" checked>
       <label class="tab-label" for="tab-loader">1 · Browser Script Loader</label>
       <input class="tab-radio" type="radio" name="integration-tab" id="tab-edge">
       <label class="tab-label" for="tab-edge">2 · Edge API (POST /v1/sitemap/update)</label>
       <input class="tab-radio" type="radio" name="integration-tab" id="tab-mcp">
-      <label class="tab-label" for="tab-mcp">3 · MCP Server &amp; Docker Host</label>
+      <label class="tab-label" for="tab-mcp">3 · Local MCP Server</label>
       <input class="tab-radio" type="radio" name="integration-tab" id="tab-openapi">
       <label class="tab-label" for="tab-openapi">4 · OpenAPI 3.1 &amp; Workflows</label>
 
       <div class="tab-panel" id="panel-loader">
-        <h3>1 · Embed the 689 B Subresource-Integrity Loader</h3>
+        <h3>1 · Embed the 689 B tenant loader</h3>
         <pre><code>${escapeHtml(embed)}</code></pre>
-        <p class="muted">Load before application scripts to capture closed Shadow roots. Injects <code>&lt;meta name="agent-bridge"&gt;</code> for automatic agent discovery and queues <code>window.Navi</code> calls until the 14,929 B bundle executes.</p>
+        <p class="muted">Load before application scripts to capture closed Shadow roots. The 689 B loader reads <code>data-key</code> and loads the metered browser bundle. Replace <code>YOUR_BUILD_HASH</code> with the exact SHA-384 from the build output to enable Subresource Integrity; without it, the browser does not verify the bundle before execution. Injects <code>&lt;meta name="agent-bridge"&gt;</code> for automatic agent discovery and queues <code>window.Navi</code> calls until the 14,929 B bundle executes. Each bundle request uses one unit from the shared hosted quota.</p>
       </div>
       <div class="tab-panel" id="panel-edge">
         <h3>2 · Publish DOM to JSON Action Maps to the Hosted Edge API</h3>
         <pre><code>${escapeHtml(publish)}</code></pre>
-        <p class="muted">Point your crawler at a rendered page and POST the semantic map to the edge. Origin validation, 30-day quota metering, and map persistence commit in one atomic PostgreSQL transaction.</p>
+        <p class="muted">Replace the sample URL and control with your page data. The Origin header and page URL must match an origin allowed for your tenant key. Hosted publishing validates the payload, meters the quota, and stores the map.</p>
       </div>
       <div class="tab-panel" id="panel-mcp">
-        <h3>3 · Run the Self-Hosted Docker MCP Server (Stdio or SSE)</h3>
+        <h3>3 · Run the Local MCP Server</h3>
         <pre><code>${escapeHtml(mcpSnippet)}</code></pre>
-        <p class="muted">Node 22+, zero runtime dependencies. Exposes <code>navi_navigate</code>, <code>navi_get_actions</code>, <code>navi_execute_action</code>, <code>navi_assert_state</code>, and <code>navi_set_session</code>.</p>
+        <p class="muted">Node 22+ and Playwright with Chromium installed. Exposes <code>navi_navigate</code>, <code>navi_get_actions</code>, <code>navi_scroll_to</code>, <code>navi_execute_action</code>, <code>navi_read_text</code>, <code>navi_assert_state</code>, and <code>navi_set_session</code>.</p>
       </div>
       <div class="tab-panel" id="panel-openapi">
         <h3>4 · Synthesize Typed OpenAPI 3.1 Workflows from Stored Sitemaps</h3>
         <pre><code>${openapiSnippet}</code></pre>
-        <p class="muted">Compiles the latest stored map into an OpenAPI <code>3.1.0</code> document with typed <code>enum</code>/<code>format</code> parameters, <code>x-navi-risk-level</code> (<code>"read" | "write" | "destructive"</code>), and deterministic <code>resolveTarget</code> self-healing (confidence &ge; <code>0.85</code>).</p>
+        <p class="muted">Compiles the latest stored map into an OpenAPI <code>3.1.0</code> document with typed <code>enum</code>/<code>format</code> parameters, <code>x-navi-risk-level</code> (<code>"read" | "write" | "destructive"</code>), and server-side <code>resolveTarget</code> matching (confidence &ge; <code>0.85</code>). These are generated schemas; executing their operations requires your own workflow runner and outcome checks.</p>
       </div>
     </div>
   </section>
@@ -407,7 +418,7 @@ ${renderLandingStage()}
   <section>
     <h2>04 — Provisioning</h2>
     <p class="section-title">How self-serve provisioning works</p>
-    <p class="section-sub">3-step instant Stripe Checkout to a one-time API key claim, built for standard Payment Links with zero custom webhook code on your end.</p>
+    <p class="section-sub">3-step Stripe Checkout to a one-time API key claim; availability depends on the deployment's configured Payment Links and webhook.</p>
     <div class="steps-3">
       <div class="step">
         <span class="step-num">Step 1 · Stripe Checkout</span>
@@ -417,7 +428,7 @@ ${renderLandingStage()}
       <div class="step">
         <span class="step-num">Step 2 · /v1/billing/webhook</span>
         <h3>Atomic tenant &amp; quota minting</h3>
-        <p>The edge verifies the HMAC-SHA256 signature within a 300s replay window, derives <code>tenant_cus_…</code>, infers your 30-day quota from billed cents, and mints a 256-bit key in one RPC.</p>
+        <p>The edge verifies the timestamped HMAC-SHA256 signature within a 300-second tolerance, derives <code>tenant_cus_…</code>, infers your 30-day quota from billed cents, and mints a 256-bit key in a database transaction.</p>
       </div>
       <div class="step">
         <span class="step-num">Step 3 · /v1/billing/success</span>
@@ -427,19 +438,20 @@ ${renderLandingStage()}
     </div>
   </section>
 
-${renderSavingsCalculator()}
+${renderBenchmarkEvidence()}
 
 ${pricing}
 
-${quickstart}
 
   <section id="api">
     <h2>07 — API</h2>
-    <p class="section-title">Five public surfaces</p>
+    <p class="section-title">Eight public surfaces</p>
     <table>
       <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
       <tbody>
 ${[
+  row('GET', '/v1/loader.js', 'Anonymous, cacheable tenant embed snippet; reads data-key from its own tag'),
+  row('GET', '/v1/navi.js?key=…', 'Serves the browser bundle after tenant-key and quota checks; each authorized request consumes one unit'),
   row('POST', '/v1/sitemap/update', 'Authenticated sitemap write; verifies origin allow-list and charges the tenant quota window'),
   row('GET', '/v1/sitemap/openapi.json', 'Authenticated OpenAPI 3.1 workflow compiler; groups stored controls with x-navi-risk-level and resolveTarget metadata'),
   row('POST', '/v1/billing/webhook', 'Stripe webhook; verifies HMAC-SHA256 signature, provisions, upgrades and suspends tenants'),
@@ -456,16 +468,28 @@ ${[
     <p class="section-title">Operational FAQ</p>
     <div class="faq">
       <details class="faq-item">
-        <summary>How does client-side PII redaction and closed Shadow DOM piercing work?</summary>
-        <p>The sub-millisecond TreeWalker DOM crawler hooks <code>Element.prototype.attachShadow</code> at document start for closed Shadow DOM automation while pinning native DOM prototypes against tampering. Browser PII redaction for AI agents is enforced structurally: input values, passwords, and payment tokens are never read or serialized into the JSON action map.</p>
+        <summary>What can Navi see, and which data leaves the page?</summary>
+        <p>Load Navi before application scripts to capture closed shadow roots created afterward. Action maps omit input values, but accessible names, labels, URLs, and page text can still contain sensitive information. This is not a general PII scrubber. The local MCP server returns maps to your agent host; hosted publishing additionally sends the submitted map to the configured endpoint.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Are maps backed up, and what does retention cover?</summary>
+        <p>Navi does not create backups or guarantee replication or point-in-time recovery. Hosted maps are stored in the configured Supabase project; self-hosted data lives in the configured SQLite or JSONL store, which must be placed on persistent storage to survive container replacement. Persistent storage is not a backup: configure and verify backups in your own Supabase or hosting environment. The self-hosted <code>NAVI_RETENTION_DAYS</code> setting prunes containment-audit violations only; it does not expire stored maps. Navi does not expose a map backup or expiry control.</p>
+      </details>
+      <details class="faq-item">
+        <summary>How is this different from Playwright MCP, Stagehand or WebMCP?</summary>
+        <p>Navi focuses on structured control discovery and guarded interaction. Evaluate it alongside your existing browser tools using the same workflow and independent outcome check. Keep your browser driver for arbitrary page reading, keyboard shortcuts, screenshots, and scrolling inside frames or shadow roots. The linked evidence is a local fixture, not a head-to-head evaluation of Playwright MCP, Stagehand, or WebMCP.</p>
       </details>
       <details class="faq-item">
         <summary>Why use DOM action maps instead of VLM screenshots or raw HTML scraping?</summary>
-        <p>Navi is a token-efficient alternative to Playwright MCP and screenshot VLMs: instead of sending 45,000 tokens of brittle markup or slow vision frames, agents receive a ~650-token deterministic DOM to JSON action map. Every action returns a cryptographic settlement receipt after verifying visibility, viewport intersection, and center-point hit testing.</p>
+        <p>A structured map gives an agent target IDs, roles, accessible names, coordinates, and actionability state. Differential reads can reduce repeated context on changing pages. Map size depends on the page; our checkout fixture used more tokens than its Playwright baseline. Optional settlement reports a requested page condition, is not cryptographically signed, and does not prove a business transaction succeeded.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Is page text returned by navi_read_text visibly rendered?</summary>
+        <p>The tool reads bounded <code>innerText</code> and reports a visibility flag based on layout, hidden/ARIA-hidden ancestors, and computed display, visibility, and opacity. Hidden elements can still return non-rendered text; the flag is not proof that a human can perceive the content. Treat all returned page text as untrusted.</p>
       </details>
       <details class="faq-item">
         <summary>Why does Pro include a commercial license?</summary>
-        <p>The Community edition is licensed under <code>AGPL-3.0-or-later</code>, which requires network services to offer their Corresponding Source. Active Pro and Enterprise subscriptions grant a commercial exemption for proprietary SaaS and internal deployments.</p>
+        <p>Community uses <code>AGPL-3.0-or-later</code>. Pro and Enterprise add commercial rights under the <a href="https://github.com/Wub796/Navi/blob/main/COMMERCIAL-TERMS.md">commercial terms</a>: you can embed Navi in products you sell and use it to do work for your own customers. What the licence excludes is passing Navi itself on — reselling it as a browser-automation SDK or hosted service, or shipping a competing fork. Evaluating it without a subscription, including a one-workflow pilot, is permitted.</p>
       </details>
       <details class="faq-item">
         <summary>Will upgrading my plan rotate my embedded API key?</summary>
@@ -473,11 +497,11 @@ ${[
       </details>
       <details class="faq-item">
         <summary>What happens when a quota window is exceeded or canceled?</summary>
-        <p>Ingestion responds with <code>HTTP 429 {"error":"Quota exceeded"}</code> plus <code>Retry-After</code> and <code>X-Quota-Limit</code> headers — never <code>401 Unauthorized</code> — so your monitoring can distinguish plan exhaustion from a bad credential.</p>
+        <p>An edge bundle serve or sitemap write past the shared quota window responds with <code>HTTP 429 {"error":"Quota exceeded"}</code> plus <code>Retry-After</code> and <code>X-Quota-Limit</code> headers — never <code>401 Unauthorized</code> — so your monitoring can distinguish plan exhaustion from a bad credential. Canceled or suspended tenants also receive 429; no bundle bytes are returned. The separate self-hosted telemetry endpoint has its own quota configuration.</p>
       </details>
       <details class="faq-item">
         <summary><span>Why does this page ship with <code>default-src 'none'</code>?</span></summary>
-        <p>Every public surface on <code>navi-edge</code> runs zero JavaScript, zero trackers, and zero external fonts. Keeping the root and onboarding pages script-free eliminates XSS exfiltration vectors by construction.</p>
+        <p>This landing page and the onboarding page use no client-side scripts or external fonts. Their Content Security Policy limits resource loading. These choices reduce the attack surface; they do not replace correct escaping, access controls, and security testing.</p>
       </details>
     </div>
   </section>

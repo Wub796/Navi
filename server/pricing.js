@@ -1,4 +1,4 @@
-// Commercial plans and the quota one Stripe event grants.
+// Commercial plans and the hosted-site quota one Stripe event grants.
 //
 // A standard Payment Link is created in Stripe's hosted editor, which exposes no
 // metadata field: `checkout.session.completed` arrives with an empty `metadata` and
@@ -16,6 +16,9 @@ export const NAMED_PLAN_CEILINGS = Object.freeze({ starter: 10000, pro: 50000, e
 /**
  * The four commercial tiers, in display order. `maxEventsPerWindow: null` is the
  * Community plan: self-hosted under AGPL-3.0 with no hosted ceiling.
+ *
+ * Hosted bundle serves and accepted sitemap writes both draw from one quota
+ * window. Self-hosted beacon quotas use separate configuration.
  * @typedef {{id: string, name: string, priceCents: number, maxEventsPerWindow: number | null, summary: string}} Tier
  * @type {readonly Tier[]}
  */
@@ -32,7 +35,7 @@ export const TIERS = Object.freeze([
     name: 'Starter',
     priceCents: 2900,
     maxEventsPerWindow: 10000,
-    summary: 'The hosted loader and sitemap endpoint, metered across a 30-day window.'
+    summary: 'Hosted browser-bundle serves and accepted sitemap writes, sharing a 30-day quota window.'
   },
   {
     id: 'pro',

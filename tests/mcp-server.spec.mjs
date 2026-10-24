@@ -18,7 +18,7 @@ const binPath = join(root, 'bin', 'navi-mcp.js');
 
 /**
  * The JSON body every tool returns inside its text content block.
- * @typedef {{ok?: boolean, error?: {code: string, message: string, guidance?: string}, url?: string, title?: string, status?: number | null, protocolVersion?: string, actions?: import('../types/index.js').NaviAction[], viewportOnly?: boolean, truncated?: boolean, passed?: boolean, dispatched?: boolean, mode?: string, trusted_fallback?: boolean, may_have_applied?: boolean, sdk?: {strategy: string, injected: boolean}, matches?: number, checks?: {label: string, ok: boolean, expected: unknown, observed: unknown}[], observed?: {role: string, name: string, state: {is_enabled: boolean, is_visible: boolean, is_occluded: boolean}} | null}} ToolBody
+ * @typedef {{ok?: boolean, error?: {code: string, message: string, guidance?: string}, url?: string, title?: string, status?: number | null, protocolVersion?: string, actions?: import('../types/index.js').NaviAction[], viewportOnly?: boolean, truncated?: boolean, passed?: boolean, dispatched?: boolean, mode?: string, trusted_fallback?: boolean, may_have_applied?: boolean, settled?: boolean, text?: string, total_chars?: number, content_is_untrusted?: boolean, visible?: boolean, sdk?: {strategy: string, injected: boolean}, matches?: number, checks?: {label: string, ok: boolean, expected: unknown, observed: unknown}[], observed?: {role: string, name: string, state: {is_enabled: boolean, is_visible: boolean, is_occluded: boolean}} | null}} ToolBody
  */
 /** @param {any} result @returns {ToolBody} */
 const envelope = result => JSON.parse(result.content[0].text);
@@ -38,7 +38,7 @@ test('an MCP client drives a multi-step form and receives actionable refusals', 
   await client.connect(transport);
   try {
     const listed = await client.listTools();
-    expect(listed.tools.map(tool => tool.name).sort()).toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_set_session']);
+    expect(listed.tools.map(tool => tool.name).sort()).toEqual(['navi_assert_state', 'navi_execute_action', 'navi_get_actions', 'navi_navigate', 'navi_read_text', 'navi_scroll_to', 'navi_set_session']);
     for (const tool of listed.tools) expect(tool.inputSchema?.type, `${tool.name} schema`).toBe('object');
 
     // No page yet: the envelope names the recovery tool.
@@ -46,6 +46,21 @@ test('an MCP client drives a multi-step form and receives actionable refusals', 
     expect(early.isError).toBe(true);
     expect(envelope(early).error?.code).toBe('NO_PAGE');
     expect(envelope(early).error?.message).toContain('navi_navigate');
+
+    const earlyScroll = await client.callTool({ name: 'navi_scroll_to', arguments: { target_id: 'checkout-submit' } });
+    expect(envelope(earlyScroll).error?.code).toBe('NO_PAGE');
+    const earlyText = await client.callTool({ name: 'navi_read_text', arguments: {} });
+    expect(envelope(earlyText).error?.code).toBe('NO_PAGE');
+    await client.callTool({ name: 'navi_navigate', arguments: { url: baseURL, width: 900, height: 300 } });
+    const offscreen = envelope(await client.callTool({ name: 'navi_assert_state', arguments: { target_id: 'checkout-submit', in_viewport: false } }));
+    expect(offscreen.passed).toBe(true);
+    const scrolled = await client.callTool({ name: 'navi_scroll_to', arguments: { target_id: 'checkout-submit' } });
+    expect(scrolled.isError).toBeFalsy();
+    const inView = envelope(await client.callTool({ name: 'navi_assert_state', arguments: { target_id: 'checkout-submit', in_viewport: true } }));
+    expect(inView.passed).toBe(true);
+    const missingScroll = await client.callTool({ name: 'navi_scroll_to', arguments: { target_id: 'not-a-target' } });
+    expect(missingScroll.isError).toBe(true);
+    expect(envelope(missingScroll).error?.code).toBe('NOT_FOUND');
 
     const nav = await client.callTool({ name: 'navi_navigate', arguments: { url: baseURL, width: 1360, height: 900 } });
     expect(nav.isError).toBeFalsy();
@@ -58,6 +73,28 @@ test('an MCP client drives a multi-step form and receives actionable refusals', 
     expect(navBody.sdk?.injected).toBe(false);
     expect(navBody.actions).toBeGreaterThan(4);
     expect(navBody.title).toContain('Navi');
+
+    const bodyText = envelope(await client.callTool({ name: 'navi_read_text', arguments: {} }));
+    expect(bodyText.text).toContain('Demo checkout');
+    expect(bodyText.content_is_untrusted).toBe(true);
+    expect(bodyText.total_chars).toBeGreaterThan(2000);
+    expect(bodyText.truncated).toBe(true);
+    const statusText = envelope(await client.callTool({ name: 'navi_read_text', arguments: { selector: '#status', max_chars: 12 } }));
+    expect(statusText.text?.length).toBeLessThanOrEqual(12);
+    expect(statusText.truncated).toBe(true);
+    // Hidden elements may contain text, but the result labels it as invisible.
+    const hiddenText = envelope(await client.callTool({ name: 'navi_read_text', arguments: { selector: '#hidden-text' } }));
+    expect(hiddenText.text).toBe('This hidden content is not rendered page text.');
+    expect(hiddenText.visible).toBe(false);
+    expect(envelope(await client.callTool({ name: 'navi_read_text', arguments: { selector: '#hidden-text', max_chars: 12 } })).truncated).toBe(true);
+    for (const [selector, code] of [['[', 'INVALID_SELECTOR'], ['#missing', 'TEXT_TARGET_NOT_FOUND'], ['button', 'TEXT_TARGET_AMBIGUOUS']]) {
+      const failedRead = await client.callTool({ name: 'navi_read_text', arguments: { selector } });
+      expect(failedRead.isError).toBe(true);
+      expect(envelope(failedRead).error?.code).toBe(code);
+    }
+    const badLimit = await client.callTool({ name: 'navi_read_text', arguments: { max_chars: 4001 } });
+    expect(badLimit.isError).toBe(true);
+    expect(envelope(badLimit).error?.code).toBe('INVALID_PAYLOAD');
 
     // Viewport-filtered by default, full map on request.
     const viewportMap = envelope(await client.callTool({ name: 'navi_get_actions', arguments: {} }));
@@ -112,9 +149,13 @@ test('an MCP client drives a multi-step form and receives actionable refusals', 
     expect(envelope(missing).error?.code).toBe('NOT_FOUND');
     expect(envelope(missing).error?.message).toContain('navi_get_actions');
 
-    // The consequential step completes the form.
-    const submit = envelope(await client.callTool({ name: 'navi_execute_action', arguments: { target_id: 'checkout-submit', action_type: 'click' } }));
+    // Settlement only confirms a page condition. Read the rendered result as a
+    // separate signal; it is still not a server-side business assertion.
+    const submit = envelope(await client.callTool({ name: 'navi_execute_action', arguments: { target_id: 'checkout-submit', action_type: 'click', settle: { wait_for: 'mutation_settle', timeout_ms: 3000 } } }));
     expect(submit.dispatched).toBe(true);
+    expect(submit.settled).toBe(true);
+    const outcomeText = envelope(await client.callTool({ name: 'navi_read_text', arguments: { selector: '#status' } }));
+    expect(outcomeText.text).toContain('Sandbox checkout complete — no payment was made.');
 
     // Only credential-free http(s) targets are opened.
     for (const url of ['file:///etc/passwd', 'https://user:pass@example.com/', 'not a url']) {
@@ -261,7 +302,7 @@ test('the server speaks spec-conformant JSON-RPC over stdio', async () => {
     const tools = await nextResponse();
     /** @type {{name: string}[]} */
     const listedTools = tools.result.tools;
-    expect(listedTools).toHaveLength(5);
+    expect(listedTools).toHaveLength(7);
     expect(listedTools.map(tool => tool.name)).toContain('navi_execute_action');
 
     send({ jsonrpc: '2.0', id: 6, method: 'resources/list' });

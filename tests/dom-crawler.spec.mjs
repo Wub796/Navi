@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import worker from '../src/worker.ts';
+import { bundleIntegrity, bundleSource } from '../src/edge-assets/source.js';
 import { NaviPlaywrightAdapter } from '../src/adapter.js';
 import { createNaviHostServer } from '../server/index.js';
 import { LANDING_PAGE_HEADERS } from '../server/landing.js';
@@ -453,6 +454,8 @@ test('Worker renders the one-time onboarding page and refuses a second visit', a
     // browser would have parsed rather than markup injected into the page.
     expect(body).toContain('data-key=&quot;navi_live_page&quot;');
     expect(body).toContain('https://worker.example/v1/loader.js');
+    expect(body).toContain('This basic snippet does not enable Subresource Integrity');
+    expect(body).not.toContain('data-sri=&quot;sha384-…&quot;');
     expect(body).toContain('Authorization: Bearer navi_live_page');
     expect(body).toContain('type="radio" name="onboard-tab"');
     expect(body).toContain('1 · Embed Browser Loader');
@@ -506,26 +509,37 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(root.headers.get('referrer-policy')).toBe('no-referrer');
   expect(root.headers.get('cache-control')).toBe('no-store');
   const body = await root.text();
-  expect(body).toContain('npm i navi-interaction-bridge');
+  expect(body).toContain('npm i --save-dev navi-interaction-bridge playwright');
   // The embed snippet is escaped for display, so what a developer copies is the tag
   // the browser would have parsed.
   expect(body).toContain('data-key=&quot;navi_live_YOUR_KEY&quot;');
   expect(body).toContain('https://worker.example/v1/loader.js');
   expect(body).toContain('https://worker.example/v1/sitemap/update');
-  for (const path of ['/v1/sitemap/update', '/v1/billing/webhook', '/v1/billing/session', '/v1/billing/success', '/healthz']) {
+  for (const path of ['/v1/loader.js', '/v1/navi.js', '/v1/sitemap/update', '/v1/billing/webhook', '/v1/billing/session', '/v1/billing/success', '/healthz']) {
     expect(body, `the endpoint table must list ${path}`).toContain(path);
   }
+  // The public snippet does not claim SRI verification without supplying the bundle hash.
+  expect(body).toContain('&lt;script src=&quot;https://worker.example/v1/loader.js&quot;');
+  expect(body).not.toContain('sha384-…');
   // No Payment Link is configured here: the page shows all four plans so a visitor
-  // can compare them, but no call to action, and the self-hosted quickstart.
-  expect(body).toContain('npm run serve');
+  // can compare them, without subscription links. The free quickstart is always available.
+  expect(body).toContain('No hosted API key or payment is needed');
   expect(body).not.toContain('Subscribe');
   for (const tier of ['Community', 'Starter', 'Pro', 'Enterprise']) {
     expect(body, `the pricing grid must name ${tier}`).toContain(`<h3>${tier}</h3>`);
   }
   for (const price of ['$0', '$29', '$49', '$199']) expect(body).toContain(price);
-  expect(body).toContain('10,000 events / 30 days');
-  expect(body).toContain('50,000 events / 30 days');
-  expect(body).toContain('250,000 events / 30 days');
+  expect(body).toContain('10,000 quota units / 30 days');
+  expect(body).toContain('50,000 quota units / 30 days');
+  expect(body).toContain('250,000 quota units / 30 days');
+  // Hosted bundle serves and accepted sitemap writes share one enforced ceiling.
+  expect(body).toContain('Each authorized browser-bundle serve');
+  expect(body).toContain('each accepted sitemap write consumes one quota unit');
+  expect(body).toContain('no automatic overage billing is applied');
+  expect(body).toContain('The quota is shared by those two operations');
+  expect(body).toContain('Each bundle request uses one unit from the shared hosted quota');
+  // Backup behavior is explicit and does not overstate persistence as protection.
+  expect(body).toContain('Navi does not create backups or guarantee replication or point-in-time recovery');
   // The promo and explanation sections give a visitor the protocol numbers, the
   // before/after DOM comparison, the animated SVG data-flow pipeline, the pure-CSS
   // 3-tab integration guide, the 3-step self-serve billing flow, and the FAQ.
@@ -533,20 +547,23 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     '5.9 kB gzip',
     '14,929 B',
     '689 B',
-    '264 tests',
-    'Sigstore OIDC',
+    'Browser suite',
+    '10 paired trials',
     'Without Navi · Raw DOM scraping',
     'With Navi · Deterministic protocol',
     '<svg class="pipeline-svg"',
     'type="radio" name="integration-tab"',
     '1 · Browser Script Loader',
     '2 · Edge API (POST /v1/sitemap/update)',
-    '3 · MCP Server &amp; Docker Host',
+    '3 · Local MCP Server',
     'Step 1 · Stripe Checkout',
     'Step 2 · /v1/billing/webhook',
     'Step 3 · /v1/billing/success',
     'How self-serve provisioning works',
-    'Most popular · AGPL exempt',
+    'Navi does not create backups or guarantee replication or point-in-time recovery',
+    'Replace <code>YOUR_BUILD_HASH</code> with the exact SHA-384 from the build output',
+    'The self-hosted',
+    'Commercial license',
     'Operational FAQ',
     // The 3D stage: camera presets, depth toggles, the tilt sensor, and the four
     // targets the receipt inspector can pin.
@@ -576,22 +593,23 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     'act_shadow_02',
     'act_pii_03',
     'act_pager_04',
-    'navi_act({ target: "act_pay_01" })',
-    '#shadow-root (closed)',
+    'navi_execute_action({ target_id: "act_pay_01", action_type: "click",',
     'translateZ(70px)',
     'translateZ(140px)',
-    // The token-and-latency calculator is a radio per volume.
-    'type="radio" name="calc-volume"',
-    '1,000 pages/day',
-    '50,000 pages/day',
-    '250,000 pages/day',
-    '~45,000 tokens',
-    '~650 tokens',
-    'Save $3,991.50 / month',
-    'Save $199,575 / month',
-    'Save $997,875 / month',
+    'Check the result against your workflow',
+    '1,025.7',
+    '2,890.2',
+    '1.968 s',
+    '1.772 s',
+    'No LLM planner was used.',
+    'Illustrative map entry and tool input',
+
   ]) {
     expect(body, `landing page must include promo/explanation content "${item}"`).toContain(item);
+  }
+  expect(body.indexOf('id="start"')).toBeLessThan(body.indexOf('id="pricing"'));
+  for (const unsupported of ['sha384 receipt', 'cryptographic settlement receipt', 'The loader\'s generated bundle must pass its SHA-384 integrity check', 'Navi backs up your data', 'automatic backups', 'point-in-time recovery included', '~650 tokens', 'Most popular', 'Save $3,991.50']) {
+    expect(body).not.toContain(unsupported);
   }
   // Every interaction is form state: a document that shipped a script would be
   // blocked by its own policy, so the assertion is that none exists at all.
@@ -600,7 +618,8 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(body.match(/<h1\b/g) ?? []).toHaveLength(1);
   expect((body.match(/<h2\b/g) ?? []).length).toBeGreaterThanOrEqual(8);
   expect((body.match(/<h3\b/g) ?? []).length).toBeGreaterThanOrEqual(8);
-  expect(body).toContain('<meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into token-efficient JSON action maps.">');
+  expect(body).not.toContain('sha384-…');
+  expect(body).toContain('<meta name="description" content="Navi is the AI browser agent SDK and Model Context Protocol (MCP) browser bridge turning live DOM and closed Shadow DOM into structured JSON action maps for browser workflow builders.">');
   expect(body).toContain('<link rel="canonical" href="https://navi-edge.sysctl.workers.dev/">');
   expect(body).toContain('<meta property="og:title" content="Navi — AI Browser Agent SDK &amp; Deterministic MCP Bridge">');
   expect(body).toContain('<meta property="og:description"');
@@ -635,7 +654,7 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(configuredBody).toContain('href="https://buy.stripe.com/test_abc123"');
   expect(configuredBody).toContain('href="https://buy.stripe.com/test_enterprise"');
   expect(configuredBody.match(/Subscribe &rarr;/g) ?? []).toHaveLength(3);
-  expect(configuredBody).not.toContain('npm run serve');
+  expect(configuredBody).toContain('No hosted API key or payment is needed');
 
   // A partial configuration shows only the cards it can actually sell.
   const starterOnly = await workerRequest('https://worker.example/', {}, { ...baseEnv, STRIPE_PAYMENT_LINK_STARTER: 'https://buy.stripe.com/test_starter' });
@@ -655,7 +674,7 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     const fallbackBody = await fallback.text();
     expect(fallbackBody, `STRIPE_PAYMENT_LINK_URL=${paymentLink} must not be rendered`).not.toContain('href="javascript:');
     expect(fallbackBody).not.toContain('Subscribe');
-    expect(fallbackBody).toContain('npm run serve');
+    expect(fallbackBody).toContain('No hosted API key or payment is needed');
   }
 
   // The URL parser normalizes the characters that would close the attribute, so a
@@ -718,6 +737,61 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     const missing = await workerRequest(`https://worker.example${path}`);
     expect(missing.status, `${path} must stay a 404`).toBe(404);
     expect(await missing.json()).toEqual({ error: 'Not found' });
+  }
+});
+
+test('the edge serves the quickstart loader and charges every bundle serve from hosted-site quota', async () => {
+  // The landing page told a customer to embed `/v1/loader.js` on a Worker that
+  // answered 404 for it, so a paying tenant's snippet fetched nothing and the metered
+  // path was unreachable. This drives the real routes end to end: the loader is
+  // anonymous, the bundle is keyed and charged, and a suspended tenant gets bytes
+  // from neither.
+  const originalFetch = globalThis.fetch;
+  const supabase = fakeSupabase({ sites: [{ id: 'site-1', api_key: 'navi_live_edge', max_events_per_window: 2, window_seconds: 60 }] });
+  const site = supabase.site('site-1');
+  if (!site) throw new Error('fixture site missing');
+  globalThis.fetch = supabase.fetch;
+  const bundleUrl = 'https://worker.example/v1/navi.js?key=navi_live_edge';
+  try {
+    const loader = await workerRequest('https://worker.example/v1/loader.js');
+    expect(loader.status).toBe(200);
+    expect(loader.headers.get('access-control-allow-origin')).toBe('*');
+    expect(loader.headers.get('cache-control')).toContain('public');
+    // The snippet is the real 689-byte loader: it resolves the bundle beside itself
+    // and appends the key from its own tag.
+    expect(await loader.text()).toContain('/v1/navi.js');
+    expect(site.event_count, 'the loader carries no key, so it cannot consume the window').toBe(0);
+
+    // No key: refused before the database is asked anything.
+    const anonymous = await workerRequest('https://worker.example/v1/navi.js');
+    expect(anonymous.status).toBe(401);
+    expect(site.event_count).toBe(0);
+
+    const first = await workerRequest(bundleUrl, { headers: { origin: 'https://shop.example' } });
+    expect(first.status).toBe(200);
+    expect(first.headers.get('etag')).toBe(`"${bundleIntegrity}"`);
+    expect(first.headers.get('cache-control')).toBe('private, max-age=0, must-revalidate');
+    expect(first.headers.get('x-quota-remaining')).toBe('1');
+    // The bytes served are the bytes the build measured and hashed, not a copy.
+    expect(await first.text()).toBe(bundleSource);
+    expect(site.event_count, 'one bundle serve consumes one hosted-site quota unit').toBe(1);
+
+    // A revalidation is still a quota unit: the page is using the SDK even though the
+    // bytes come from its own cache.
+    const revalidated = await workerRequest(bundleUrl, { headers: { origin: 'https://shop.example', 'if-none-match': `"${bundleIntegrity}"` } });
+    expect(revalidated.status).toBe(304);
+    expect(await revalidated.text()).toBe('');
+    expect(site.event_count).toBe(2);
+
+    // The ceiling is spent: the third load is refused and, crucially, no bytes are
+    // served, so a suspended tenant cannot obtain the runtime at all.
+    const over = await workerRequest(bundleUrl, { headers: { origin: 'https://shop.example' } });
+    expect(over.status).toBe(429);
+    expect(over.headers.get('x-quota-limit')).toBe('2');
+    expect(await over.text()).not.toContain('Navi');
+    expect(site.event_count).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

@@ -296,6 +296,7 @@ function collectTargets(options = {}) {
   const nodes = [...documentRef.querySelectorAll('button,input:not([type="hidden"]),textarea,select,a[href],[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],[role="switch"],[role="textbox"],[role="searchbox"],[role="combobox"],[contenteditable="true"]')].filter((element) => element instanceof HTMLElement);
   const actions = [];
   const limit = options.limit ?? 5e3;
+  let truncated = false;
   for (const element of nodes) {
     if (!element.isConnected || element.getClientRects().length === 0) continue;
     const style = getComputedStyle(element);
@@ -303,6 +304,10 @@ function collectTargets(options = {}) {
     const rect = element.getBoundingClientRect();
     const inViewport = rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
     if (options.viewportOnly !== false && !inViewport) continue;
+    if (actions.length >= limit) {
+      truncated = true;
+      break;
+    }
     const id = selectorFor(element);
     const inputType = element instanceof HTMLInputElement ? element.type.toLowerCase() : "";
     const explicitRole = element.getAttribute("role");
@@ -331,9 +336,8 @@ function collectTargets(options = {}) {
       coordinates: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
       suggested_action: action
     });
-    if (actions.length >= limit) break;
   }
-  return { version: "zero-config", state_version: 0, reset: true, truncated: nodes.length > actions.length, actions };
+  return { version: "zero-config", state_version: 0, reset: true, truncated, actions };
 }
 function executeTarget(arg) {
   const candidates = [...document.querySelectorAll('button,input:not([type="hidden"]),textarea,select,a[href],[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],[role="switch"],[role="textbox"],[role="searchbox"],[role="combobox"],[contenteditable="true"]')].filter((element2) => element2 instanceof HTMLElement);
@@ -420,6 +424,47 @@ var init_adapter = __esm({
           /** @type {NaviActionMap} */
           resolved
         );
+      }
+      /**
+       * Scroll a unique top-document control into view and return its fresh state.
+       * Shadow-root and frame targets require scrolling their container separately.
+       * @param {string} targetId
+       * @returns {Promise<NaviAction>}
+       */
+      async scrollTo(targetId) {
+        this.checkOrigin();
+        if (this.busy) throw Object.assign(new Error("Adapter execution in flight"), { code: "BUSY" });
+        if (typeof targetId !== "string" || !targetId || targetId.length > 512) {
+          throw Object.assign(new Error("target_id must be a non-empty string of at most 512 characters"), { code: "INVALID_PAYLOAD" });
+        }
+        this.busy = true;
+        try {
+          const before = await this.discover({ viewportOnly: false, limit: 5e3 });
+          const matches = before.actions.filter((action) => action.target_id === targetId);
+          if (matches.length !== 1) {
+            throw Object.assign(new Error("Missing or ambiguous scroll target"), { code: matches.length ? "AMBIGUOUS" : "NOT_FOUND" });
+          }
+          const found = await this.page.evaluate(async (arg) => {
+            const selector = arg.zeroConfig ? arg.targetId : `[data-agent-target="${CSS.escape(arg.targetId)}"]`;
+            const elements = document.querySelectorAll(selector);
+            if (elements.length !== 1) return false;
+            elements[0].scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+            return true;
+          }, { targetId, zeroConfig: before.version === "zero-config" });
+          if (!found) {
+            throw Object.assign(new Error("Target is not uniquely reachable from the top document; scroll its containing frame or element instead"), { code: "SCROLL_TARGET_UNREACHABLE" });
+          }
+          const after = await this.discover({ viewportOnly: false, limit: 5e3 });
+          const visible = after.actions.filter((action) => action.target_id === targetId);
+          if (visible.length !== 1 || !visible[0].state.is_in_viewport) {
+            throw Object.assign(new Error("Target is still not in the viewport after scrolling"), { code: "SCROLL_INCOMPLETE" });
+          }
+          return visible[0];
+        } finally {
+          this.busy = false;
+        }
       }
       /**
        * Execute one target. Returns a structured result instead of throwing for
@@ -830,7 +875,7 @@ async function runFlow({ adapter, page, flow, allowConsequential = false, timeou
         continue;
       }
       if (step.kind === "scrollTo") {
-        await withTimeout(scrollTo(adapter, page, step), timeoutMs, `scrollTo ${step.target}`);
+        await withTimeout(adapter.scrollTo(step.target), timeoutMs, `scrollTo ${step.target}`);
         record(step, index, began, true);
         continue;
       }
@@ -885,29 +930,6 @@ async function waitFor(page, step) {
     if (observed.hit && (!step.urlIncludes || page.url().includes(step.urlIncludes))) return;
     if (Date.now() >= deadline) throw stepError("TIMEOUT", `waitFor on ${step.label} exceeded ${step.timeoutMs}ms`);
     await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
-async function scrollTo(adapter, page, step) {
-  const found = await page.evaluate((arg) => {
-    const escape = (value) => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, "\\$&");
-    const element = document.querySelector(`[data-agent-target="${escape(arg.target)}"]`);
-    if (!element) return false;
-    element.scrollIntoView({ block: "center", inline: "center" });
-    return true;
-  }, { target: step.target });
-  if (!found) {
-    throw stepError("SCROLL_TARGET_UNREACHABLE", `target ${step.target} is not reachable from the top document; scroll its containing frame or element instead`);
-  }
-  await page.evaluate(async () => {
-    await new Promise(requestAnimationFrame);
-    await new Promise(requestAnimationFrame);
-    await /** @type {any} */
-    globalThis.Navi?.ready();
-  });
-  const map = await adapter.discover();
-  const matches = map.actions.filter((action) => action.target_id === step.target);
-  if (matches.length !== 1 || !matches[0].state.is_in_viewport) {
-    throw stepError("SCROLL_INCOMPLETE", `target ${step.target} is still not in the viewport after scrolling`);
   }
 }
 async function observeName(adapter, step) {

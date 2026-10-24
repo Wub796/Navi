@@ -1,18 +1,48 @@
-# Navi Protocol v0.3 · in-page execution infrastructure
+# Navi
 
-Dependency-free browser tools for predictable target discovery and guarded native execution, including captured closed shadow roots and same-origin iframe controls. This is a custom protocol, **not an official WebMCP registration**, authorization boundary, or trusted-input replacement.
+**Structured interaction for teams building browser workflow agents.** Navi maps indexed controls to named targets with live actionability checks, including captured closed shadow roots and same-origin frames. Its adapter dispatches guarded actions and can wait for a requested page condition. Verify the saved record or completed transaction separately.
 
-Questions, feedback, or want help wiring Navi into your agent? Post in [GitHub Discussions](https://github.com/Wub796/Navi/discussions).
+[![npm](https://img.shields.io/npm/v/navi-interaction-bridge)](https://www.npmjs.com/package/navi-interaction-bridge) [![License: AGPL-3.0 + commercial](https://img.shields.io/badge/license-AGPL--3.0%20%2B%20commercial-blue)](LICENSING.md) [![Discussions](https://img.shields.io/github/discussions/Wub796/Navi)](https://github.com/Wub796/Navi/discussions)
 
-## Run
+## Quickstart: try locally for free
+
+Use Node 22+ and install Chromium with `npx playwright install chromium`. No hosted API key or payment is required for local Community evaluation under the [AGPL license](LICENSING.md).
+
+Add this to your MCP client config (Claude Desktop, Cursor, or any MCP host):
+
+```json
+{
+  "mcpServers": {
+    "navi": { "command": "npx", "args": ["-y", "-p", "navi-interaction-bridge", "-p", "playwright", "navi-mcp"] }
+  }
+}
+```
+
+Restart your MCP client, then ask your agent: *"Open https://example.com with Navi and list the actions you can take."* It calls `navi_navigate`, then `navi_get_actions`, and gets back stable target ids such as `learn-more-940adfaa` that `navi_execute_action` accepts.
+
+## Where Navi fits
+
+Use Navi for discovering controls, checking actionability, and executing click/type/select actions. `navi_read_text` provides a bounded read of one top-document element for workflows that need page text. Keep your existing browser driver for screenshots, keyboard shortcuts, and scrolling inside frames or shadow roots. The MCP `navi_scroll_to` tool scrolls top-document controls only.
+
+- **Closed roots:** capture starts when Navi is loaded; inject it before the application's scripts. Already-created closed roots and cross-origin frames are not generally accessible.
+- **Differential reads:** a controlled 100-mutation fixture used 96.9% fewer estimated tokens than repeatedly sending Navi's own full map. This is not a comparison with another agent product. [Raw fixture](reports/differential-mutations.json).
+- **Current checkout result:** both paths completed 10/10 server-verified orders. Navi used 2,890.2 observation tokens/task versus 1,025.7 for Playwright; mean times were 1.772 s and 1.968 s. The baseline included explicit 300 ms waits, and no LLM planner was used. This does not establish general savings or superiority. [Methodology](reports/TCR-BENCHMARK.md).
+- **Outcome checks:** optional settlement waits for DOM quiet, navigation, or target disappearance. `navi_read_text` can read the resulting UI, but neither a settlement nor rendered text proves a server-side transaction completed. Use an independent business assertion before declaring success.
+- **Data handling:** action maps omit input values. Accessible names, labels, URLs, and page text can still contain sensitive information. Review what your agent host and optional hosted publishing endpoint receive.
+
+Evaluate Navi alongside your current browser stack on the same workflows. The [pilot guide](docs/PILOT-GUIDE.md) defines the measurements and a two-week customer validation plan.
+
+Questions or integration feedback: [GitHub Discussions](https://github.com/Wub796/Navi/discussions). Community is AGPL-3.0-or-later; commercial use is governed by the [commercial terms](COMMERCIAL-TERMS.md). Those terms let you embed Navi in products you sell and use it for your own customers, and exclude reselling Navi itself or shipping a competing fork. Evaluation, including a one-workflow pilot, needs no subscription.
+
+## Run from source
 
 Node ≥22 (`engines.node` is `>=22.0.0`; the pinned container runtime is 22.23.3), npm, and Playwright Chromium:
 
 ```sh
+git clone https://github.com/Wub796/Navi.git
+cd Navi
 npm ci --no-audit --no-fund
 npx playwright install chromium
-npm run typecheck
-npm test
 npm run build
 npm run dev -- --host 127.0.0.1 --port 4173
 ```
@@ -114,7 +144,7 @@ Exit codes: `0` success, `1` flow/assertion failure, `2` usage or invalid flow, 
 ```json
 {
   "mcpServers": {
-    "navi": { "command": "npx", "args": ["-y", "navi-mcp"] }
+    "navi": { "command": "npx", "args": ["-y", "-p", "navi-interaction-bridge", "-p", "playwright", "navi-mcp"] }
   }
 }
 ```
@@ -123,7 +153,9 @@ Exit codes: `0` success, `1` flow/assertion failure, `2` usage or invalid flow, 
 |---|---|
 | `navi_navigate` | Open an http(s) URL and wait for Navi initialization. Reports which SDK install strategy was used. |
 | `navi_get_actions` | Return the current action map. Viewport-filtered by default; `all: true` returns the whole document. |
-| `navi_execute_action` | Run `click`/`type`/`select` on a `target_id`. Falls back to trusted native input at live coordinates for `data-navi-trusted="true"` controls. Pass `settle` to wait for the action's effect before the call returns. |
+| `navi_scroll_to` | Scroll a unique top-document `target_id` into view and return fresh state. Use `navi_get_actions({all:true})` to discover off-screen targets first. |
+| `navi_execute_action` | Run `click`/`type`/`select` on a `target_id`. Falls back to trusted native input at live coordinates for `data-navi-trusted="true"` controls. Pass `settle` to wait for a requested page condition before the call returns. |
+| `navi_read_text` | Read normalized, untrusted text from one top-level element, bounded to 2,000 characters by default and 4,000 maximum. |
 | `navi_assert_state` | Check that a target exists, is visible/enabled/in-viewport, and matches an expected accessible name. |
 | `navi_set_session` | Seed cookies and localStorage from an inline payload or a Playwright `storageState.json` path, so `navi_navigate` opens a pre-authenticated page instead of a sign-in screen. |
 
@@ -237,6 +269,8 @@ Or pass `"storage_state": "/path/to/storageState.json"` — the file `npx playwr
 
 ## Script hosting and telemetry ingestion
 
+The edge Worker (`wrangler.toml`, `src/worker.ts`) serves the same two scripts at the same paths, so the embed snippet on its landing page works: `GET /v1/loader.js` is anonymous and cacheable, and `GET /v1/navi.js?key=…` checks the tenant key and charges one unit from the hosted-site quota before returning bytes. A refused or suspended tenant cannot obtain the runtime. The bundle is served `private, max-age=0, must-revalidate`; a `304` also consumes one unit. Accepted writes to `/v1/sitemap/update` consume from the same quota. The self-hosted telemetry host below serves the files unmetered and uses a separate quota configuration for beacon ingestion.
+
 `server/` is a standalone, zero-dependency service that distributes the bundle to registered tenants and collects agent-usage aggregates:
 
 ```sh
@@ -246,8 +280,8 @@ NAVI_TENANTS="live_key_abc:acme" node server/index.js --port 8790 --store server
 
 | Endpoint | Behaviour |
 |---|---|
-| `GET /` | The product landing page — the same document the edge serves, including the pure-CSS 3D stage, the receipt inspector, the integration tabs, the savings calculator and the four-tier pricing grid. `text/html; charset=utf-8`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, and `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self'` (the one image source is the page's own favicon); the page carries no script. Payment Links come from `STRIPE_PAYMENT_LINK_STARTER`, `STRIPE_PAYMENT_LINK_PRO` (or the legacy `STRIPE_PAYMENT_LINK_URL`) and `STRIPE_PAYMENT_LINK_ENTERPRISE`, exactly as on the edge. |
-| `GET /v1/navi.js?key=<tenant_key>` | Serves `dist/navi.min.js` with `Cache-Control: public, max-age=3600, stale-while-revalidate=86400`, an `ETag` equal to the SRI SHA-384, and `304` on `If-None-Match`. `401` without a valid key. |
+| `GET /` | The product landing page — the same document the edge serves, including the pure-CSS 3D stage, the receipt inspector, the integration tabs, the recorded benchmark comparison and the four-tier pricing grid. `text/html; charset=utf-8`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, and `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self'` (the one image source is the page's own favicon); the page carries no script. Payment Links come from `STRIPE_PAYMENT_LINK_STARTER`, `STRIPE_PAYMENT_LINK_PRO` (or the legacy `STRIPE_PAYMENT_LINK_URL`) and `STRIPE_PAYMENT_LINK_ENTERPRISE`, exactly as on the edge. |
+| `GET /v1/navi.js?key=<tenant_key>` | Self-hosted service serves `dist/navi.min.js` unmetered with `Cache-Control: public, max-age=3600, stale-while-revalidate=86400`, an `ETag` equal to the SRI SHA-384, and `304` on `If-None-Match`. `401` without a valid key. |
 | `GET /v1/loader.js` | Serves `dist/loader.min.js`, the tenant embed snippet. Carries no tenant key of its own. |
 | `GET /favicon.svg`, `GET /logo.svg` | The brand assets the landing and onboarding documents link, and the social-card image. Anonymous `image/svg+xml`, cached `public, max-age=86400`, served under `default-src 'none'` and `nosniff` like every other public read. |
 | `GET /robots.txt`, `GET /sitemap.xml` | Crawl policy (`Allow: /`, `Disallow: /v1/billing/`, and the sitemap line) and the canonical root for indexers. Anonymous, `public, max-age=3600`, `text/plain` and `application/xml` respectively. |
@@ -268,12 +302,14 @@ NAVI_TENANTS="live_key_abc:acme" node server/index.js --port 8790 --store server
 
 The hosted edge sells four tiers, and `GET /` renders them as a pricing grid whose paid cards link to the Stripe Payment Links this deployment configured. The self-hosted host serves the same `GET /` document (`server/public-routes.js`), so a local deployment is documented out of the box; its links stay relative because it does not know its own public origin.
 
-| Plan | Price | 30-day ceiling |
+| Plan | Price | 30-day hosted-site quota |
 |---|---|---|
 | Community | $0 | Self-hosted under AGPL-3.0, unmetered |
-| Starter | $29/mo | 10,000 events |
-| Pro | $49/mo | 50,000 events, plus a commercial licence exempting the buyer from AGPL-3.0 |
-| Enterprise | $199/mo | 250,000 events, plus a commercial self-hosted Docker licence |
+| Starter | $29/mo | 10,000 quota units |
+| Pro | $49/mo | 50,000 quota units, plus a commercial licence exempting the buyer from AGPL-3.0 |
+| Enterprise | $199/mo | 250,000 quota units, plus a commercial self-hosted Docker licence |
+
+Each authorized edge serve of `navi.js` (including a `304` revalidation) and each accepted sitemap write consumes one unit from the same 30-day quota window. Quota is enforced: after it is exhausted, both operations return `429` until the window resets or the plan changes. There is no automatic overage billing. The local self-hosted telemetry host has a separate ingest quota configuration; its beacon counts do not feed the hosted-site plan quota.
 
 A Payment Link created in Stripe's hosted editor carries no metadata, so the webhook infers the plan from the amount billed — `amount_subtotal`/`amount_total` on a checkout, the first line item's `price.unit_amount` or `plan.amount` on a subscription — and defaults to Pro when no amount is present. Explicit metadata still wins: `unmetered: "true"` grants no ceiling, `max_events_per_window` (with `window_seconds`) sets one, and `tier`/`plan` of `starter`, `pro` or `enterprise` selects a named plan. Configure the links as Worker secrets:
 
@@ -436,7 +472,7 @@ The benchmark gates raw bytes <15,000, SDK ticks ≤6ms/<16ms and zero observed 
 
 Real React 19 state/sorting/replacement, closed roots, iframe navigation, occlusion and execution regressions are verified with Chromium. Vue-style native listeners are exercised, not a complete Vue app. Puppeteer adapter uses the same evaluate API but is not separately integration-tested. Firefox/Safari and customer frameworks remain rollout work.
 
-No service account, public deployment or hosted environment was created; the ingestion service runs locally over plain HTTP and was never exposed or load-tested. React dependencies are dev-only test fixtures; the production SDK has zero runtime dependencies.
+The edge Worker is deployed and its Payment Links are live; no end-to-end purchase has been exercised in this repository, and the reference host service (`server/`) has never been exposed or load-tested. Its ingestion API is plain HTTP with tenant keys as the only authorization. React dependencies are dev-only test fixtures; the production SDK has zero runtime dependencies.
 
 ## License
 

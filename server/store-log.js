@@ -394,6 +394,11 @@ export function createLogStore(path) {
         let keptForTenant = 0;
         let seen = 0;
         let sequence = 0;
+        // Keep only each map URL's latest payload while removing superseded snapshots.
+        /** @type {Map<string, string>} */
+        const navigationMaps = new Map();
+        /** @type {Map<string, string>} */
+        const quotas = new Map();
         /** @type {Map<string, import('./store-schema.js').TenantDefinitionRecord>} */
         const definitions = new Map();
         /** @type {Map<string, number>} */
@@ -415,7 +420,20 @@ export function createLogStore(path) {
               continue;
             }
             if (!parsed || typeof parsed !== 'object') continue;
-            if (parsed.kind === 'navigation_map' || parsed.kind === 'tenant_quota') continue;
+            if (parsed.kind === 'navigation_map') {
+              if (typeof parsed.site_id === 'string' && typeof parsed.url === 'string') {
+                const key = JSON.stringify([parsed.site_id, parsed.url]);
+                // Map#set retains insertion order for an existing key; move it so
+                // the last map written before compaction remains last afterward.
+                navigationMaps.delete(key);
+                navigationMaps.set(key, line);
+              }
+              continue;
+            }
+            if (parsed.kind === 'tenant_quota') {
+              if (typeof parsed.tenant_id === 'string') quotas.set(parsed.tenant_id, line);
+              continue;
+            }
             if (parsed.kind === WEBHOOK_EVENT_KIND) {
               const id = typeof parsed.event_id === 'string' ? parsed.event_id.trim() : '';
               const receivedAt = asNumber(parsed.received_at_ms);
@@ -478,6 +496,11 @@ export function createLogStore(path) {
             // Aggregates are copied verbatim: compaction prunes violations, not events.
             await write(line);
           }
+          // Rewrite each latest-value store once. These snapshots are durable state,
+          // not disposable telemetry: dropping them during audit retention would erase
+          // the hosted map and reset quota windows on the next restart.
+          for (const row of navigationMaps.values()) await write(row);
+          for (const row of quotas.values()) await write(row);
           // Definitions come before the meta line because that line describes the
           // file: a crash between the two leaves an unmarked but complete set.
           for (const definition of definitions.values()) {

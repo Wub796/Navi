@@ -1,6 +1,6 @@
 # Navi Commercial Terms
 
-Last updated: 22 October 2026
+Last updated: 23 October 2026
 
 These terms govern paid Navi subscriptions (Starter, Pro and Enterprise). You accept them by
 checking the terms box at checkout. "We" means Benjamin Wu, the copyright holder of Navi. "You"
@@ -30,14 +30,20 @@ services.
 2.2 Pro covers your hosted and proprietary SaaS deployments. Enterprise also covers self-hosted
 Docker and air-gapped deployments of the Navi host.
 
-2.3 The licence covers your organisation and any companies it controls. You may not sublicense
-Navi on its own, or offer it as a standalone browser-automation product or hosted service that
-competes with Navi.
+2.3 The licence covers your organisation and any companies it controls. You may embed Navi in
+products you sell, and use it to deliver work to your own customers, under the plan you bought.
+What the licence does not cover is passing Navi itself on: you may not sublicense it, resell access
+to it as a browser-automation SDK or hosted service, or ship a fork of it as one that competes with
+Navi. A product of yours that uses Navi to do a job for its users is not that.
 
-2.4 You get no rights to the Navi name or logo, and no ownership of Navi. We keep all rights we do
+2.4 You may evaluate Navi under the AGPL without a subscription, including a time-limited pilot of
+one workflow on systems you are entitled to automate. Putting Navi in front of third parties as
+part of something you charge for needs Pro or Enterprise.
+
+2.5 You get no rights to the Navi name or logo, and no ownership of Navi. We keep all rights we do
 not expressly grant.
 
-2.5 Starter subscriptions include hosted usage only. Any use of the source code under Starter is
+2.6 Starter subscriptions include hosted usage only. Any use of the source code under Starter is
 under the AGPL.
 
 ## 3. When a subscription ends

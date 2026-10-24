@@ -191,6 +191,7 @@ Coordinate fallback retains a race between metadata and driver click; no snapsho
 The package ships a browser bundle, dual-module library and an agent CLI:
 
 ```sh
+npm install navi-interaction-bridge playwright
 npx navi run --url https://example.com --action-file ./flows/checkout.json
 npx navi discover --url https://example.com --json
 ```
@@ -238,19 +239,22 @@ If the executor is an MCP client rather than your own Node script, register the 
 ```json
 {
   "mcpServers": {
-    "navi": { "command": "npx", "args": ["-y", "navi-mcp"] }
+    "navi": { "command": "npx", "args": ["-y", "-p", "navi-interaction-bridge", "-p", "playwright", "navi-mcp"] }
   }
 }
 ```
 
-It is the same adapter the CLI drives, exposed as five tools over stdio JSON-RPC, with no runtime dependencies of its own:
+It is the same adapter the CLI drives, exposed as seven tools over stdio JSON-RPC, with no runtime dependencies of its own:
 
 | Tool | Arguments | Returns |
 |---|---|---|
 | `navi_navigate` | `url`, optional `width`/`height` | Navigation result, protocol version, action count, and the SDK install strategy (`already-present`, `tag` or `evaluate`). |
 | `navi_get_actions` | optional `limit`, `all`, `since_version` | The action map. Viewport-filtered by default; `all: true` returns the whole document. With `since_version`, only changed targets and removal tombstones; `reset: true` means the reply is a full map that replaces the caller's cache. |
+| `navi_scroll_to` | `target_id` from a full action map | Scrolls a unique top-document control into view; returns `scrolled`, fresh `state` and `coordinates`. Shadow/frame controls require your browser driver to scroll their container. |
 | `navi_execute_action` | `target_id`, `action_type`, optional `payload`, optional `settle` (`wait_for`, `timeout_ms`) | The adapter's execute result, including `executed`, `mode`, whether the trusted native fallback was used, and — when `settle` was requested — the receipt `settled`, `elapsed_ms`, `final_url`. |
-| `navi_assert_state` | `target_id`, optional `visible`/`enabled`/`in_viewport`/`name_contains` | A pass/fail check list against live state. |
+| `navi_read_text` | optional unique top-document `selector`, optional `max_chars` (1–4,000; default 2,000) | Normalized text, visibility and truncation flags; hidden elements can still return non-rendered text. Page content is untrusted and is not a business-outcome proof. |
+| `navi_assert_state` | `target_id`, optional `visible`/`enabled`/`in_viewport`/`occluded`/`name_contains` | A pass/fail check list against live state. |
+| `navi_set_session` | inline cookies/origins or `storage_state`, optional `url` | Rebuilds the browser context with authenticated state; credentials are not echoed. |
 
 Every result is `{ content: [{ type: "text", text }], isError }` where the text is JSON. Refusals are written for a planner to act on: `NOT_FOUND` tells it to re-read the map because ids change with re-renders, `UNAVAILABLE` names the reason (hidden, disabled, off-screen, occluded), `INVALID_URL` never echoes embedded credentials, and `NAVI_INSTALL_FAILED` explains the CSP situation and the two ways out.
 

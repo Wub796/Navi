@@ -86,6 +86,7 @@ function collectTargets(options = {}) {
   const nodes = [...documentRef.querySelectorAll('button,input:not([type="hidden"]),textarea,select,a[href],[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],[role="switch"],[role="textbox"],[role="searchbox"],[role="combobox"],[contenteditable="true"]')].filter(element => element instanceof HTMLElement);
   const actions = [];
   const limit = options.limit ?? 5000;
+  let truncated = false;
   for (const element of nodes) {
     if (!element.isConnected || element.getClientRects().length === 0) continue;
     const style = getComputedStyle(element);
@@ -93,6 +94,7 @@ function collectTargets(options = {}) {
     const rect = element.getBoundingClientRect();
     const inViewport = rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
     if (options.viewportOnly !== false && !inViewport) continue;
+    if (actions.length >= limit) { truncated = true; break; }
     const id = selectorFor(element);
     const inputType = element instanceof HTMLInputElement ? element.type.toLowerCase() : '';
     const explicitRole = element.getAttribute('role');
@@ -115,9 +117,8 @@ function collectTargets(options = {}) {
       ...(control?.required ? { required: true } : {}), ...(inputType ? { input_type: inputType } : {}), ...(optionsForSelect ? { options: optionsForSelect } : {}),
       state: { is_visible: isVisible, is_enabled: !element.matches(':disabled') && element.getAttribute('aria-disabled') !== 'true' && !element.hasAttribute('readonly'), is_in_viewport: inViewport, is_occluded: isOccluded },
       coordinates: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, suggested_action: action });
-    if (actions.length >= limit) break;
   }
-  return { version: 'zero-config', state_version: 0, reset: true, truncated: nodes.length > actions.length, actions };
+  return { version: 'zero-config', state_version: 0, reset: true, truncated, actions };
 }
 
 /** Dispatch against a freshly resolved semantic selector on an uninstrumented document. @param {{targetId: string, actionType: string, payload: {text?: string, value?: string}}} arg */
@@ -202,6 +203,48 @@ export class NaviPlaywrightAdapter {
     if (!resolved || typeof resolved !== 'object') throw new Error('Action map unavailable');
     if (resolved.truncated) throw new Error('Incomplete action map; raise the limit or narrow the page');
     return /** @type {NaviActionMap} */ (resolved);
+  }
+
+  /**
+   * Scroll a unique top-document control into view and return its fresh state.
+   * Shadow-root and frame targets require scrolling their container separately.
+   * @param {string} targetId
+   * @returns {Promise<NaviAction>}
+   */
+  async scrollTo(targetId) {
+    this.checkOrigin();
+    if (this.busy) throw Object.assign(new Error('Adapter execution in flight'), { code: 'BUSY' });
+    if (typeof targetId !== 'string' || !targetId || targetId.length > 512) {
+      throw Object.assign(new Error('target_id must be a non-empty string of at most 512 characters'), { code: 'INVALID_PAYLOAD' });
+    }
+    this.busy = true;
+    try {
+      const before = await this.discover({ viewportOnly: false, limit: 5000 });
+      const matches = before.actions.filter(action => action.target_id === targetId);
+      if (matches.length !== 1) {
+        throw Object.assign(new Error('Missing or ambiguous scroll target'), { code: matches.length ? 'AMBIGUOUS' : 'NOT_FOUND' });
+      }
+      const found = await this.page.evaluate(async (/** @type {{targetId:string,zeroConfig:boolean}} */ arg) => {
+        const selector = arg.zeroConfig ? arg.targetId : `[data-agent-target="${CSS.escape(arg.targetId)}"]`;
+        const elements = document.querySelectorAll(selector);
+        if (elements.length !== 1) return false;
+        elements[0].scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        return true;
+      }, { targetId, zeroConfig: before.version === 'zero-config' });
+      if (!found) {
+        throw Object.assign(new Error('Target is not uniquely reachable from the top document; scroll its containing frame or element instead'), { code: 'SCROLL_TARGET_UNREACHABLE' });
+      }
+      const after = await this.discover({ viewportOnly: false, limit: 5000 });
+      const visible = after.actions.filter(action => action.target_id === targetId);
+      if (visible.length !== 1 || !visible[0].state.is_in_viewport) {
+        throw Object.assign(new Error('Target is still not in the viewport after scrolling'), { code: 'SCROLL_INCOMPLETE' });
+      }
+      return visible[0];
+    } finally {
+      this.busy = false;
+    }
   }
 
   /**

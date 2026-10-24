@@ -228,7 +228,7 @@ export async function runFlow({ adapter, page, flow, allowConsequential = false,
         continue;
       }
       if (step.kind === 'scrollTo') {
-        await withTimeout(scrollTo(adapter, page, step), timeoutMs, `scrollTo ${step.target}`);
+        await withTimeout(adapter.scrollTo(step.target), timeoutMs, `scrollTo ${step.target}`);
         record(step, index, began, true);
         continue;
       }
@@ -278,37 +278,6 @@ async function waitFor(page, step) {
     if (observed.hit && (!step.urlIncludes || page.url().includes(step.urlIncludes))) return;
     if (Date.now() >= deadline) throw stepError('TIMEOUT', `waitFor on ${step.label} exceeded ${step.timeoutMs}ms`);
     await new Promise(resolve => setTimeout(resolve, 50));
-  }
-}
-
-/**
- * Bring a top-document target into view, then prove with the action map that it is
- * reachable. Shadow and frame controls are not addressable here; scroll the frame
- * element itself instead, or size the viewport so the step is on screen.
- * @param {import('./adapter.js').NaviPlaywrightAdapter} adapter
- * @param {import('./adapter.js').NaviPageLike} page
- * @param {ScrollStep} step
- */
-async function scrollTo(adapter, page, step) {
-  const found = await page.evaluate((/** @type {{target:string}} */ arg) => {
-    const escape = (/** @type {string} */ value) => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, '\\$&'));
-    const element = document.querySelector(`[data-agent-target="${escape(arg.target)}"]`);
-    if (!element) return false;
-    element.scrollIntoView({ block: 'center', inline: 'center' });
-    return true;
-  }, { target: step.target });
-  if (!found) {
-    throw stepError('SCROLL_TARGET_UNREACHABLE', `target ${step.target} is not reachable from the top document; scroll its containing frame or element instead`);
-  }
-  await page.evaluate(async () => {
-    await new Promise(requestAnimationFrame);
-    await new Promise(requestAnimationFrame);
-    await /** @type {any} */ (globalThis).Navi?.ready();
-  });
-  const map = await adapter.discover();
-  const matches = map.actions.filter(action => action.target_id === step.target);
-  if (matches.length !== 1 || !matches[0].state.is_in_viewport) {
-    throw stepError('SCROLL_INCOMPLETE', `target ${step.target} is still not in the viewport after scrolling`);
   }
 }
 

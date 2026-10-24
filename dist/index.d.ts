@@ -117,6 +117,8 @@ export declare class NaviPlaywrightAdapter {
   checkOrigin(): void;
   discover(options: { viewportOnly?: boolean; limit?: number; since_version: number }): Promise<NaviDifferentialMap>;
   discover(options?: { viewportOnly?: boolean; limit?: number }): Promise<NaviActionMap>;
+  /** Scroll a unique top-document target into view; returns its fresh state. */
+  scrollTo(targetId: string): Promise<NaviAction>;
   execute(targetId: string, actionType: 'click' | 'type' | 'select' | string, payload?: { text?: string; value?: string }): Promise<AdapterResult>;
 }
 
