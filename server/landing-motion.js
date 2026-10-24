@@ -42,6 +42,15 @@ export const LANDING_MOTION_STYLE = `
       from { opacity: 0; translate: 0 2rem; }
       to { opacity: 1; translate: 0 0; }
     }
+    @keyframes bendIn {
+      0% { opacity: 0; translate: 0 2rem -2rem; rotate: 1 0 0 7deg; scale: .975; }
+      65% { opacity: 1; translate: 0 .25rem -.25rem; rotate: 1 0 0 -1.2deg; scale: .998; }
+      100% { opacity: 1; translate: 0 0 0; rotate: 1 0 0 0deg; scale: 1; }
+    }
+    @keyframes stageGridDrift {
+      from { translate: 0 2.4rem; }
+      to { translate: 0 -2.4rem; }
+    }
     @keyframes ruleIn {
       from { scale: 0 1; }
       to { scale: 1 1; }
@@ -91,17 +100,32 @@ export const LANDING_MOTION_STYLE = `
        element's own entry rather than at an arbitrary depth of the viewport, so a
        block is fully composed by the moment it has finished entering the fold - an
        element the reader can already see is never still half-transparent. */
-    @supports (animation-timeline: view()) {
+    @supports ((animation-timeline: view()) and (animation-range: entry)) {
       @media (prefers-reduced-motion: no-preference) {
+        .compare,
+        .pillars,
+        .steps-3,
+        .tiers { perspective: 1100px; }
+
         /* #api is excluded from the inner reveals below: it is overflow-x: auto,
            which makes it a scroll container of its own, and a view timeline resolves
            against the nearest one. An animated child would be measured against a
            scrollport that never scrolls and would sit frozen mid-animation. The
            section as a block is revealed instead. */
         .shell > section:not(#api) > .section-title,
-        .shell > section:not(#api) > .section-sub,
-        .compare > section { animation: riseIn linear both; animation-timeline: view(); animation-range: entry 0% entry 92%; }
+        .shell > section:not(#api) > .section-sub { animation: riseIn linear both; animation-timeline: view(); animation-range: entry 0% entry 92%; }
         .shell > section:not(#api) > .section-sub { animation-range: entry 0% entry 100%; }
+
+        .compare > section,
+        .pillars > section,
+        .steps-3 > .step,
+        .tiers > section {
+          transform-origin: 50% 100%;
+          animation: bendIn linear both;
+          animation-timeline: view();
+          animation-range: entry 0% entry 100%;
+        }
+        .compare > section:first-child { animation-range: entry 0% entry 92%; }
         .compare > section:last-child { animation-range: entry 4% entry 100%; }
 
         /* The eyebrow rule draws itself out of the left edge. It scales, it does
@@ -120,11 +144,16 @@ export const LANDING_MOTION_STYLE = `
         .stage-shell,
         .tabs,
         .calc,
-        .tiers > section,
         .faq-item { animation: riseIn linear both; animation-timeline: view(); animation-range: entry 0% entry 94%; }
 
-        .pillars > section,
-        .steps-3 > .step { animation: riseIn linear both; animation-timeline: view(); animation-range: entry 0% entry 100%; }
+        /* Named view-timeline on the 3D showcase synchronises the stage floor plane
+           with scroll progress while keeping pointer events pass-through. */
+        .showcase { view-timeline: --stage-view block; }
+        .stage-viewport::before {
+          animation: stageGridDrift linear both;
+          animation-timeline: --stage-view;
+          animation-range: entry 0% exit 100%;
+        }
 
         /* Columns and steps share a row, so they enter together; the later range
            start is what turns four simultaneous reveals into one cascade. */
@@ -146,8 +175,21 @@ export const LANDING_MOTION_STYLE = `
           animation-range: entry 0% entry 100%;
         }
 
-        /* Page-scale cues. The progress hairline is body::after; the topbar gains its
-           rule only once the page has moved, so the fold starts borderless. */
+        /* Page-scale cues. body::before is the fixed pass-through 3D depth plane
+           (z-index: 40, pointer-events: none); body::after is the scroll progress
+           hairline; the topbar gains its rule once the page has moved. */
+        body::before {
+          content: "";
+          position: fixed;
+          inset: 0 0 -7rem;
+          z-index: 40;
+          pointer-events: none;
+          background:
+            repeating-linear-gradient(180deg, rgba(255, 214, 0, .016) 0 1px, transparent 1px 64px),
+            radial-gradient(110% 70% at 50% 0%, transparent 68%, rgba(8, 8, 8, .38) 100%);
+          animation: floorDrift linear both;
+          animation-timeline: scroll(root block);
+        }
         body::after {
           content: "";
           position: fixed;
@@ -242,9 +284,14 @@ export const LANDING_MOTION_STYLE = `
 
     /* A printed page has one viewport and no scroll position, so a scroll-driven
        reveal would freeze below-fold sections in their hidden state on paper. */
-    @media print {
+    @media (prefers-reduced-motion: reduce), print {
       *,
       *::before,
-      *::after { animation: none !important; }
+      *::after {
+        animation: none !important;
+        translate: none !important;
+        rotate: none !important;
+        scale: none !important;
+      }
     }
 `;

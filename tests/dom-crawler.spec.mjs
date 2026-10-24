@@ -665,6 +665,9 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(body).toContain('#cam-front:checked ~ .stage-viewport .stage-3d');
   expect(body).toContain('#toggle-explode:checked ~ .stage-viewport .stage-3d');
   expect(body).toContain(':has(.pad-9:is(:hover, :active)) .stage-tilt');
+  expect(body).toContain('@supports ((animation-timeline: view()) and (animation-range: entry))');
+  expect(body).toContain('@keyframes bendIn');
+  expect(body).toContain('view-timeline: --stage-view block');
   expect(body).toContain('@media (prefers-reduced-motion: reduce)');
 
   // Each tier's own Payment Link becomes that card's call to action. The legacy
