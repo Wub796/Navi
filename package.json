@@ -94,6 +94,7 @@
     "benchmark": "npm run build && node tests/benchmark-comparison.js",
     "benchmark:llm": "npm run build && node tests/llm-agent-benchmark.mjs",
     "benchmark:llm:live": "npm run build && NAVI_LLM_FIXTURE=0 node tests/llm-agent-benchmark.mjs",
+    "benchmark:llm:multi": "npm run build && node scripts/tcr-multimodel.mjs",
     "benchmark:tcr": "npm run build && node node_modules/@playwright/test/cli.js test tests/benchmark-agent-tcr.spec.mjs",
     "test:containers": "node scripts/verify-containers.mjs",
     "dev": "node scripts/dev.mjs",

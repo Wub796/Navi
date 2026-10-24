@@ -86,7 +86,7 @@ const PREFLIGHT_MODELS_TIMEOUT_MS = 5000;
 const PREFLIGHT_PROBE_TIMEOUT_MS = 120000;
 /** The one tool the capability probe offers, so a reply that calls something else is visible. */
 const PROBE_TOOL_NAME = 'navi_preflight_probe';
-/** @typedef {{baseUrl: string, model: string, apiKey?: string, iterations: number, maxTurns: number, inputPrice?: number, outputPrice?: number, fixture?: string, preset?: string, hard?: boolean}} Config */
+/** @typedef {{baseUrl: string, model: string, apiKey?: string, iterations: number, maxTurns: number, inputPrice?: number, outputPrice?: number, fixture?: string, preset?: string, hard?: boolean, label?: string}} Config */
 /** @typedef {{path: string, iteration: number, success: boolean, steps: number, requests: number, inputTokens: number, outputTokens: number, cachedTokens: number, usageComplete: boolean, cachedComplete: boolean, wallMs: number, turnLatenciesMs: number[], failures: {category: string, detail: string, tool?: string, rawArgs?: string}[]}} Trial */
 /** @typedef {{ok: true, endpoint: string, models: string[], probeMs: number} | {ok: false, code: string, detail: string, instructions: string[]}} Preflight */
 /** @param {unknown} condition @param {string} message */
@@ -137,7 +137,7 @@ export function resolveConfig(env = process.env) {
   // a bad iteration count can never be accepted just because no endpoint is set.
   const iterations = Number(env.LLM_ITERATIONS ?? 10);
   const maxTurns = Number(env.LLM_MAX_TURNS ?? 25);
-  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 30) return { error: 'LLM_ITERATIONS must be an integer from 1 to 30.', reason: 'invalid' };
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 200) return { error: 'LLM_ITERATIONS must be an integer from 1 to 200.', reason: 'invalid' };
   if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 50) return { error: 'LLM_MAX_TURNS must be an integer from 1 to 50.', reason: 'invalid' };
   /** @param {string | undefined} value */
   const price = value => (value === undefined || value === '' ? undefined : Number(value));
@@ -544,20 +544,40 @@ async function runTrial(path, iteration, origin, config) {
  * Run the benchmark and write its artifacts. A fixture run writes the deterministic
  * baseline, a live run writes the live pair, and neither can write the other's files.
  * @param {Config} config @param {Preflight | null} [preflight]
+ * @param {((trial: Trial, config: Config) => void) | null} [onTrial] Called after each trial, for a caller that wants progress.
  */
-export async function runBenchmark(config, preflight = null) {
+export async function runBenchmark(config, preflight = null, onTrial = null) {
   // A hard run is a different task, so it gets its own live files (never the fixture's).
+  // A labelled run is one model of a multi-model study, so its files cannot collide
+  // with another model's: the label is restricted to a slug because it becomes a path.
+  if (config.label !== undefined) assert(/^[a-z0-9][a-z0-9-]{0,40}$/.test(config.label), 'Label must be a lowercase slug');
+  const suffix = config.label ? `-${config.label}` : '';
   const artifacts = config.hard
-    ? { report: new URL('../reports/LLM-TCR-BENCHMARK-LIVE-HARD.md', import.meta.url), raw: new URL('../reports/llm-benchmark-live-hard.json', import.meta.url), alias: null }
+    ? { report: new URL(`../reports/LLM-TCR-BENCHMARK-LIVE-HARD${suffix}.md`, import.meta.url), raw: new URL(`../reports/llm-benchmark-live-hard${suffix}.json`, import.meta.url), alias: null }
     : artifactPaths(Boolean(config.fixture));
-  assert(Number.isInteger(config.iterations) && config.iterations >= 1 && config.iterations <= 30, 'Iterations must be 1–30');
+  assert(Number.isInteger(config.iterations) && config.iterations >= 1 && config.iterations <= 200, 'Iterations must be 1–200');
   assert(Number.isInteger(config.maxTurns) && config.maxTurns >= 1 && config.maxTurns <= 50, 'Max turns must be 1–50');
+  // A missing or half-installed browser is setup, not a measurement. Without this
+  // probe a Playwright install that lost its headless shell turns every other trial
+  // into a launch error, which the report would bucket as a harness failure beside
+  // genuine provider errors and count as a model result.
+  try {
+    const probe = await chromium.launch({ headless: true, chromiumSandbox: true });
+    await probe.close();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message.split('\n')[0] : String(error);
+    throw new Error(`Chromium cannot launch (${detail}). Run "npx playwright install chromium" before a benchmark.`);
+  }
   const app = await createTcrApp({ hard: config.hard === true });
   /** @type {Trial[]} */
   const trials = [];
   try {
     for (let i = 1; i <= config.iterations; i++) {
-      for (const path of i % 2 ? ['raw-playwright', 'navi-differential'] : ['navi-differential', 'raw-playwright']) trials.push(await runTrial(path, i, app.origin, config));
+      for (const path of i % 2 ? ['raw-playwright', 'navi-differential'] : ['navi-differential', 'raw-playwright']) {
+        const trial = await runTrial(path, i, app.origin, config);
+        trials.push(trial);
+        if (onTrial) onTrial(trial, config);
+      }
     }
   } finally { await app.close(); }
   const summaries = ['raw-playwright', 'navi-differential'].map(path => {
@@ -581,7 +601,7 @@ export async function runBenchmark(config, preflight = null) {
       costUsd: inputTokens !== null && outputTokens !== null && config.inputPrice !== undefined && config.outputPrice !== undefined ? (inputTokens * config.inputPrice + outputTokens * config.outputPrice) / 1e6 : null };
   });
   const report = {
-    status: config.fixture ? 'fixture-baseline' : 'measured', fixture: config.fixture ?? null, hard: config.hard === true, recordedAt: new Date().toISOString(), model: config.model, node: process.version,
+    status: config.fixture ? 'fixture-baseline' : 'measured', fixture: config.fixture ?? null, hard: config.hard === true, label: config.label ?? null, recordedAt: new Date().toISOString(), model: config.model, node: process.version,
     // Where the numbers came from. Recorded for a live run so the record is
     // self-describing: which endpoint answered, what it said it serves, and how long
     // the capability probe took. Never the API key, which is not passed in here.
@@ -615,7 +635,7 @@ export async function runBenchmark(config, preflight = null) {
 export async function main(env = process.env) {
   const wants = (/** @type {string} */ flag) => process.argv.includes(flag);
   if (wants('--help')) {
-    console.log(`Live model: LLM_ENDPOINT (an OpenAI-compatible base URL, or one of the local daemon names ${Object.keys(LOCAL_INFERENCE_PRESETS).join(', ')}) with LLM_MODEL (tool-calling model); LLM_API_KEY is required for any non-loopback endpoint.\n  A live run is preflighted first: GET /models must serve LLM_MODEL and one probe request must come back as a tool call, or the run exits 2 with setup instructions and writes nothing.\n  Live results: reports/LLM-TCR-BENCHMARK-LIVE.md + reports/llm-benchmark-live.json. The fixture baseline in reports/LLM-TCR-BENCHMARK.md is never written by a live run.\n  NAVI_LLM_HARD=1 runs the harder checkout (delayed shipping quote, first order submission refused) into reports/LLM-TCR-BENCHMARK-LIVE-HARD.md + reports/llm-benchmark-live-hard.json.\n  --preflight runs only that check and exits (0 reachable and tool-capable, 2 not).\nFixture: leave LLM_ENDPOINT/LLM_MODEL unset and the local mock in tests/fixtures/mock-llm-server.mjs runs instead, which needs no key and measures the harness rather than a model; NAVI_LLM_FIXTURE=0 turns that off and exits 2. LLM_ENDPOINT=mock asks for that fixture explicitly, which is the only way to get it while an endpoint variable is set at all.\nOptional: LLM_ITERATIONS=10, LLM_MAX_TURNS=25, LLM_INPUT_USD_PER_MILLION, LLM_OUTPUT_USD_PER_MILLION, MOCK_LLM_PORT (the fixture binds an ephemeral loopback port by default).`);
+    console.log(`Live model: LLM_ENDPOINT (an OpenAI-compatible base URL, or one of the local daemon names ${Object.keys(LOCAL_INFERENCE_PRESETS).join(', ')}) with LLM_MODEL (tool-calling model); LLM_API_KEY is required for any non-loopback endpoint.\n  A live run is preflighted first: GET /models must serve LLM_MODEL and one probe request must come back as a tool call, or the run exits 2 with setup instructions and writes nothing.\n  Live results: reports/LLM-TCR-BENCHMARK-LIVE.md + reports/llm-benchmark-live.json. The fixture baseline in reports/LLM-TCR-BENCHMARK.md is never written by a live run.\n  NAVI_LLM_HARD=1 runs the harder checkout (delayed shipping quote, first order submission refused) into reports/LLM-TCR-BENCHMARK-LIVE-HARD.md + reports/llm-benchmark-live-hard.json.\n  --preflight runs only that check and exits (0 reachable and tool-capable, 2 not).\nFixture: leave LLM_ENDPOINT/LLM_MODEL unset and the local mock in tests/fixtures/mock-llm-server.mjs runs instead, which needs no key and measures the harness rather than a model; NAVI_LLM_FIXTURE=0 turns that off and exits 2. LLM_ENDPOINT=mock asks for that fixture explicitly, which is the only way to get it while an endpoint variable is set at all.\nOptional: LLM_ITERATIONS=10 (1–200), LLM_MAX_TURNS=25, LLM_INPUT_USD_PER_MILLION, LLM_OUTPUT_USD_PER_MILLION, MOCK_LLM_PORT (the fixture binds an ephemeral loopback port by default).\n  Multi-model hard study: npm run benchmark:llm:multi -- --models <a>,<b>,<c> [--iterations 80].`);
     return 0;
   }
   // Fail fast on configuration, before any browser or network work. A partial or

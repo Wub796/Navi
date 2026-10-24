@@ -110,7 +110,9 @@ test('live model configuration is read from the environment only and a partial s
   expect(local).not.toHaveProperty('error');
   expect(local.config.model).toBe('qwen-tools');
   expect(local.config.apiKey).toBeUndefined();
-  expect(resolveConfig({ LLM_ENDPOINT: 'http://127.0.0.1:11434/v1', LLM_MODEL: 'm', LLM_ITERATIONS: '99' })).toHaveProperty('error');
+  expect(resolveConfig({ LLM_ENDPOINT: 'http://127.0.0.1:11434/v1', LLM_MODEL: 'm', LLM_ITERATIONS: '201' })).toHaveProperty('error');
+  // The upper bound is the study size: 200 matched pairs is accepted, one more is not.
+  expect(resolveConfig({ LLM_ENDPOINT: 'http://127.0.0.1:11434/v1', LLM_MODEL: 'm', LLM_ITERATIONS: '200' })).toHaveProperty('config');
   expect(resolveConfig({ LLM_ENDPOINT: 'not-a-url', LLM_MODEL: 'm' })).toHaveProperty('error');
 });
 
@@ -123,7 +125,7 @@ test('an unconfigured run is distinguishable from a half-configured one', () => 
   expect(resolveConfig({ LLM_MODEL: 'llama-tools' })).toMatchObject({ reason: 'invalid' });
   // The knobs are validated in fixture mode too, so a bad iteration count cannot
   // be accepted merely because no endpoint was named.
-  expect(resolveConfig({ LLM_ITERATIONS: '99' })).toMatchObject({ reason: 'invalid' });
+  expect(resolveConfig({ LLM_ITERATIONS: '201' })).toMatchObject({ reason: 'invalid' });
   expect(resolveConfig({ LLM_MAX_TURNS: '0' })).toMatchObject({ reason: 'invalid' });
   // The fixture can also be requested by name, which is the only way to reach it while
   // an endpoint variable is set at all. Any casing counts, and LLM_MODEL is ignored
@@ -132,7 +134,7 @@ test('an unconfigured run is distinguishable from a half-configured one', () => 
   expect(resolveConfig({ LLM_ENDPOINT: 'MOCK' })).toMatchObject({ reason: 'mock' });
   expect(resolveConfig({ LLM_ENDPOINT: 'mock', LLM_MODEL: 'ignored' })).toMatchObject({ reason: 'mock' });
   // Naming the fixture by hand is not a way to skip the knobs: a bad count still fails.
-  expect(resolveConfig({ LLM_ENDPOINT: 'mock', LLM_ITERATIONS: '99' })).toMatchObject({ reason: 'invalid' });
+  expect(resolveConfig({ LLM_ENDPOINT: 'mock', LLM_ITERATIONS: '201' })).toMatchObject({ reason: 'invalid' });
   // Asking for the fixture while forbidding it is a contradiction, and the fail-closed
   // flag wins: a caller who required a live model never gets a fixture baseline.
   expect(resolveConfig({ LLM_ENDPOINT: 'mock', NAVI_LLM_FIXTURE: '0' })).toMatchObject({ reason: 'invalid' });

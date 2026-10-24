@@ -1,0 +1,3576 @@
+{
+  "status": "measured",
+  "fixture": null,
+  "hard": true,
+  "label": "beam-cloud",
+  "recordedAt": "2026-10-24T23:10:49.334Z",
+  "model": "beam:cloud",
+  "node": "v22.23.3",
+  "endpoint": "http://127.0.0.1:11434/v1",
+  "endpointPreset": "ollama",
+  "preflight": {
+    "models": [
+      "gpt-oss:120b-cloud",
+      "gpt-oss:20b-cloud",
+      "beam:cloud",
+      "gemma4:31b-cloud",
+      "qwen2.5:7b",
+      "llama3.2:3b",
+      "qwen2.5-coder:7b"
+    ],
+    "modelCount": 7,
+    "probeMs": 840.6322079999999
+  },
+  "pricing": {
+    "inputPerMillion": null,
+    "outputPerMillion": null
+  },
+  "summaries": [
+    {
+      "path": "raw-playwright",
+      "successes": 33,
+      "trials": 40,
+      "meanSteps": 19.475,
+      "inputTokens": 1745844,
+      "outputTokens": 75147,
+      "failureBuckets": {
+        "SELECTOR_HALLUCINATION": 25,
+        "SCHEMA_VIOLATION": 1,
+        "UNCLASSIFIED": 11,
+        "PLANNER_STOPPED": 3,
+        "TASK_INCOMPLETE": 7
+      },
+      "cachedInputTokens": 1451648,
+      "cachedTokenRatio": 0.8315,
+      "latency": {
+        "turns": 775,
+        "meanTurnMs": 1173.9867929174181,
+        "p50TurnMs": 936.9996670000255,
+        "p95TurnMs": 2640.226541000011,
+        "slowestTurnMs": 12647.101917000022
+      },
+      "costUsd": null
+    },
+    {
+      "path": "navi-differential",
+      "successes": 23,
+      "trials": 40,
+      "meanSteps": 15.725,
+      "inputTokens": 2008206,
+      "outputTokens": 102881,
+      "failureBuckets": {
+        "SELECTOR_HALLUCINATION": 13,
+        "TIMEOUT_UNSETTLED": 39,
+        "SCHEMA_VIOLATION": 4,
+        "PLANNER_STOPPED": 17,
+        "TASK_INCOMPLETE": 17
+      },
+      "cachedInputTokens": 1691456,
+      "cachedTokenRatio": 0.8423,
+      "latency": {
+        "turns": 644,
+        "meanTurnMs": 1525.6399778012458,
+        "p50TurnMs": 1117.5994159998372,
+        "p95TurnMs": 4770.195499999914,
+        "slowestTurnMs": 13253.630624999758
+      },
+      "costUsd": null
+    }
+  ],
+  "trials": [
+    {
+      "path": "raw-playwright",
+      "iteration": 1,
+      "success": true,
+      "steps": 20,
+      "requests": 20,
+      "inputTokens": 44980,
+      "outputTokens": 1593,
+      "cachedTokens": 36800,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 28100.572083,
+      "turnLatenciesMs": [
+        1153.7191249999998,
+        1339.163083,
+        1342.2545410000002,
+        2519.0791249999993,
+        885.9707500000004,
+        1570.6239999999998,
+        1222.2912500000002,
+        1301.2786250000008,
+        775.0103749999998,
+        1685.261833999999,
+        946.1736659999988,
+        1201.3238329999986,
+        926.0796669999982,
+        2039.5216660000006,
+        575.8151249999974,
+        743.6646669999973,
+        453.8590000000004,
+        2531.1009169999998,
+        1083.7277499999982,
+        810.7313749999994
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[aria-label=\\\"Quantity\\\"], combobox[aria-label=\\\"Quantity\\\"]\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 1,
+      "success": false,
+      "steps": 19,
+      "requests": 20,
+      "inputTokens": 87242,
+      "outputTokens": 4805,
+      "cachedTokens": 71360,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 51062.575749999996,
+      "turnLatenciesMs": [
+        977.5018750000017,
+        1445.7187909999993,
+        1428.992083000001,
+        2558.3310829999973,
+        2572.3127499999973,
+        4591.876708000003,
+        507.9780000000028,
+        5517.679041999996,
+        900.1442089999982,
+        2046.8187499999985,
+        1330.794624999995,
+        789.5708330000052,
+        895.1541670000006,
+        900.6756670000032,
+        1623.4158749999988,
+        1108.2987079999948,
+        875.5494160000017,
+        2024.5497499999983,
+        1524.456416999994,
+        12985.051082999998
+      ],
+      "failures": [
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 2,
+      "success": false,
+      "steps": 17,
+      "requests": 18,
+      "inputTokens": 56407,
+      "outputTokens": 2711,
+      "cachedTokens": 48896,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 35305.78629100001,
+      "turnLatenciesMs": [
+        1307.8918749999866,
+        1431.5780830000003,
+        1307.6287080000038,
+        1430.6652079999913,
+        440.28666599999997,
+        407.62774999999965,
+        601.172166999997,
+        1479.471875000003,
+        990.0048749999987,
+        1357.8007499999949,
+        865.8229580000043,
+        1170.5764170000039,
+        2236.0702089999977,
+        850.5774169999931,
+        2506.925707999995,
+        1208.3216249999969,
+        729.1465000000026,
+        7563.409583000001
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"select\",\"payload\":{\"value\":\"express\"},\"settle\":{\"timeout_ms\":1000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"shipping\"}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 2,
+      "success": true,
+      "steps": 20,
+      "requests": 20,
+      "inputTokens": 49159,
+      "outputTokens": 1992,
+      "cachedTokens": 40832,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 35527.82670799999,
+      "turnLatenciesMs": [
+        933.8919580000074,
+        1712.1135420000064,
+        500.11962500000664,
+        1626.9830409999995,
+        508.27583300000697,
+        711.1148329999996,
+        8614.103416000013,
+        1431.0646669999987,
+        1171.135500000004,
+        842.5473340000026,
+        1479.0541250000242,
+        1022.3305830000027,
+        776.8556669999962,
+        963.2780409999832,
+        1831.5773749999935,
+        1472.9079590000038,
+        862.7455420000188,
+        4026.3185419999936,
+        968.195000000007,
+        1129.055250000005
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 3,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 39806,
+      "outputTokens": 1850,
+      "cachedTokens": 34816,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 26672.699792,
+      "turnLatenciesMs": [
+        724.4382079999777,
+        1173.4890409999934,
+        822.2641669999866,
+        1092.8101669999887,
+        1258.580667000002,
+        713.3048750000016,
+        509.29716699998244,
+        498.2265829999815,
+        814.3373330000031,
+        551.484832999995,
+        548.0071660000249,
+        476.47079099999974,
+        892.7340830000176,
+        1364.2819580000069,
+        1286.4600419999915,
+        933.46875,
+        8391.504874999984,
+        503.75745899998583,
+        1207.2550829999964
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 3,
+      "success": true,
+      "steps": 20,
+      "requests": 20,
+      "inputTokens": 68355,
+      "outputTokens": 2458,
+      "cachedTokens": 58880,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 37364.54249999998,
+      "turnLatenciesMs": [
+        860.3829589999805,
+        1120.816583000007,
+        996.0896669999929,
+        1868.2790830000013,
+        1196.07241600001,
+        1185.3280420000083,
+        673.8012079999899,
+        410.179375000007,
+        714.677874999994,
+        1217.3917500000098,
+        517.4791669999831,
+        734.0887079999957,
+        552.749542000005,
+        2724.7790830000013,
+        1171.5795000000217,
+        4319.232791000017,
+        2178.1521249999932,
+        1651.5728329999838,
+        1327.4361659999995,
+        2340.557792000007
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"target_id\":\"place\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"}}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 4,
+      "success": false,
+      "steps": 13,
+      "requests": 14,
+      "inputTokens": 34828,
+      "outputTokens": 2037,
+      "cachedTokens": 30080,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 35363.827667000005,
+      "turnLatenciesMs": [
+        3412.665208999999,
+        1630.4967909999832,
+        1277.7732909999904,
+        1481.8273340000014,
+        1223.812957999995,
+        1203.273583000002,
+        1429.8548329999903,
+        2683.5638749999925,
+        1622.8072920000122,
+        1926.6859160000167,
+        990.728334000014,
+        2001.1360830000194,
+        506.6960839999956,
+        5116.457208000007
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"select\",\"payload\":{\"value\":\"express\"},\"settle\":{\"timeout_ms\":2000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"shipping\"}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 4,
+      "success": true,
+      "steps": 20,
+      "requests": 20,
+      "inputTokens": 44884,
+      "outputTokens": 1925,
+      "cachedTokens": 38528,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 28636.396666999994,
+      "turnLatenciesMs": [
+        721.1026659999916,
+        1721.0620000000054,
+        564.3225000000093,
+        1302.8205000000016,
+        892.0198340000061,
+        1665.048375000013,
+        916.6634169999743,
+        1421.7466249999998,
+        768.4263329999812,
+        1367.6820829999633,
+        1287.779291999992,
+        1348.508124999993,
+        889.2907079999568,
+        1154.4509580000304,
+        1867.545625000028,
+        2640.226541000011,
+        860.079832999967,
+        2963.9934580000117,
+        549.1205410000402,
+        424.57233399996767
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 5,
+      "success": true,
+      "steps": 23,
+      "requests": 23,
+      "inputTokens": 64048,
+      "outputTokens": 2522,
+      "cachedTokens": 53248,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 33105.731875,
+      "turnLatenciesMs": [
+        940.5290420000092,
+        1516.1827090000152,
+        795.3687499999651,
+        1121.1405839999788,
+        410.8088329999591,
+        1385.5520830000169,
+        859.0748329999624,
+        1520.2154169999994,
+        471.6469170000055,
+        1960.0046250000014,
+        1132.681458999985,
+        1184.9866659999825,
+        915.4613749999553,
+        1227.0944169999566,
+        512.1257500000065,
+        608.3517920000013,
+        652.2454170000274,
+        1795.8317079999833,
+        2255.8584169999813,
+        898.5071669999743,
+        6042.757416000008,
+        895.8480420000269,
+        664.6629579999717
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 5,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 46356,
+      "outputTokens": 2356,
+      "cachedTokens": 39040,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 32443.706082999997,
+      "turnLatenciesMs": [
+        1084.9349999999977,
+        1389.2467080000206,
+        961.607874999987,
+        1941.483292000019,
+        961.3658749999595,
+        1004.2551250000251,
+        1225.6162499999627,
+        424.21295899996767,
+        591.7887079999782,
+        756.2386249999981,
+        633.3326249999809,
+        1038.592874999973,
+        1646.021000000008,
+        2967.6657090000226,
+        1072.2107079999987,
+        5422.003415999992
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"type\",\"payload\":{\"text\":\"Trail backpack\"},\"settle\":{\"timeout_ms\":2000,\"wait_for\":\"target_hidden\"},\"target_id\":\"search\"}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"select\",\"payload\":{\"value\":\"express\"},\"settle\":{\"timeout_ms\":2000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"shipping\"}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 6,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 47629,
+      "outputTokens": 1896,
+      "cachedTokens": 40256,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 32031.171333000006,
+      "turnLatenciesMs": [
+        630.7930829999968,
+        1221.789916000038,
+        1057.54925000004,
+        1529.774000000034,
+        1737.2606660000165,
+        899.9714580000145,
+        1282.5091660000035,
+        961.8297909999965,
+        1638.0004590000026,
+        1431.1327920000185,
+        1052.6864159999532,
+        718.2470839999733,
+        974.5728750000126,
+        4196.011916999996,
+        1082.1131249999744,
+        1925.7909579999978
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 6,
+      "success": true,
+      "steps": 21,
+      "requests": 21,
+      "inputTokens": 51955,
+      "outputTokens": 2524,
+      "cachedTokens": 41792,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 28379.515749999962,
+      "turnLatenciesMs": [
+        1367.9479170000413,
+        1307.2507079999777,
+        825.5800410000375,
+        597.8392080000485,
+        416.9714999999851,
+        1117.3556250000256,
+        809.5198749999981,
+        721.1708750000107,
+        599.7079170000507,
+        379.1869580000057,
+        780.282750000013,
+        715.1861250000075,
+        514.2062080000178,
+        599.5760419999715,
+        1030.0162919999566,
+        1942.9371669999673,
+        1840.4282080000266,
+        755.9159579999978,
+        6718.567666000046,
+        942.2437919999938,
+        1232.9867920000106
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 7,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 29523,
+      "outputTokens": 1085,
+      "cachedTokens": 24640,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 22016.391082999995,
+      "turnLatenciesMs": [
+        832.7019159999909,
+        2252.5950000000303,
+        913.355916999979,
+        1841.5937080000294,
+        817.5097499999683,
+        1206.4466660000035,
+        1737.5754590000142,
+        600.277584000025,
+        905.0854580000159,
+        924.8479999999981,
+        732.4823750000214,
+        1822.2628339999937,
+        911.1606660000398,
+        1529.7407090000343,
+        1216.4801669999724,
+        901.9179590000422
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 7,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 47943,
+      "outputTokens": 1489,
+      "cachedTokens": 43328,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 26916.300749999995,
+      "turnLatenciesMs": [
+        544.4146670000046,
+        1511.7431670000078,
+        880.4211249999935,
+        2062.7918749999953,
+        1096.2194170000148,
+        1104.6524169999757,
+        1427.9459589999751,
+        610.403416999965,
+        649.7930420000339,
+        434.21891599998344,
+        495.96558299998287,
+        931.0101670000004,
+        1093.9830829999992,
+        2366.3899170000223,
+        472.623041999992,
+        1671.1982500000158
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 8,
+      "success": false,
+      "steps": 6,
+      "requests": 7,
+      "inputTokens": 14585,
+      "outputTokens": 3186,
+      "cachedTokens": 11072,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 23180.646666000015,
+      "turnLatenciesMs": [
+        682.5,
+        2649.0795829999843,
+        906.2499580000294,
+        2524.236291999987,
+        5959.750042000029,
+        665.7012920000125,
+        5308.957541999989
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"target_id\":\"Search products\",\"action_type\":\"type\",\"payload\":{\"text\":\"\\n\"},\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"navigation\"}}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 8,
+      "success": false,
+      "steps": 17,
+      "requests": 16,
+      "inputTokens": 26548,
+      "outputTokens": 1239,
+      "cachedTokens": 23168,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 20736.704333,
+      "turnLatenciesMs": [
+        538.7892079999438,
+        1373.1644579999847,
+        1220.048208000022,
+        945.1697910000221,
+        1052.216541999951,
+        915.9176250000019,
+        1062.8528749999823,
+        815.1547080000164,
+        1391.0880420000176,
+        1203.1610840000212,
+        824.2101660000044,
+        831.2499580000294,
+        1201.401708999998,
+        1221.441792000027,
+        1951.629666999972,
+        1691.0369170000195
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 9,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 40052,
+      "outputTokens": 1489,
+      "cachedTokens": 33792,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 24605.240333000023,
+      "turnLatenciesMs": [
+        768.1935829999857,
+        1704.4557920000516,
+        513.9889160000021,
+        922.1756249999744,
+        451.19550000003073,
+        616.5509589999565,
+        1421.163583000016,
+        1174.632666999998,
+        1413.9388749999925,
+        1118.2942079999484,
+        1826.4202919999952,
+        756.7833329999703,
+        841.3554160000058,
+        1549.8452499999548,
+        2149.6286669999827,
+        504.0549159999937,
+        2253.114916999999,
+        486.8748749999795,
+        857.6205000000191
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 9,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 47468,
+      "outputTokens": 1891,
+      "cachedTokens": 33472,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 29095.650250000064,
+      "turnLatenciesMs": [
+        1437.4427500000456,
+        715.3580409999704,
+        416.24666699999943,
+        784.5881250000093,
+        779.8822909999872,
+        780.5193750000326,
+        581.6207500000019,
+        1439.4163329999428,
+        919.2225829999661,
+        902.2909999999683,
+        455.85424999997485,
+        1798.4487909999443,
+        1059.7974580000155,
+        7475.951750000007,
+        1070.85616700002,
+        919.4004169999389
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"target_id\":\"place\",\"settle\":{\"wait_for\":\"navigation\"}}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 10,
+      "success": true,
+      "steps": 17,
+      "requests": 17,
+      "inputTokens": 55554,
+      "outputTokens": 2438,
+      "cachedTokens": 44928,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 33162.72200000007,
+      "turnLatenciesMs": [
+        740.3006659999955,
+        1130.1585419999901,
+        479.7393330000341,
+        655.8021250000456,
+        426.05233400000725,
+        1075.9858330000425,
+        1327.2387499999022,
+        419.9858330000425,
+        807.7555000000866,
+        527.6662080000388,
+        644.6750420000171,
+        1323.7255000000587,
+        1326.9914160000626,
+        4517.258958000108,
+        515.2110000000102,
+        1751.579207999981,
+        517.6017500000307
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"target_id\":\"place\",\"settle\":{\"timeout_ms\":10000,\"wait_for\":\"navigation\"}}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 10,
+      "success": true,
+      "steps": 22,
+      "requests": 22,
+      "inputTokens": 50909,
+      "outputTokens": 1291,
+      "cachedTokens": 44096,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 26024.456875000033,
+      "turnLatenciesMs": [
+        1413.8453750000335,
+        1364.3900410000933,
+        1238.6151250000112,
+        1348.1297499999637,
+        830.156874999986,
+        1197.2143329998944,
+        1615.1363750000019,
+        680.8239169999724,
+        983.7984169999836,
+        763.6587920000311,
+        848.4552499999991,
+        802.2798330000369,
+        1416.5118750000838,
+        837.4593330000062,
+        925.7416669999948,
+        1212.2880839999998,
+        870.9776659999043,
+        1562.2181669999845,
+        802.4587920000777,
+        1125.6789169999538,
+        457.001125000068,
+        440.06154100003187
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[aria-label=\\\"Quantity\\\"], [role=\\\"combobox\\\"][name*=\\\"Quantity\\\"]\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 11,
+      "success": true,
+      "steps": 18,
+      "requests": 18,
+      "inputTokens": 35648,
+      "outputTokens": 1297,
+      "cachedTokens": 28224,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 27391.240624999977,
+      "turnLatenciesMs": [
+        1237.0410409999313,
+        543.2381250000326,
+        1051.1923749999842,
+        1735.2823330000974,
+        1246.825375000015,
+        799.2920409999788,
+        495.37695900001563,
+        1480.3837500000373,
+        951.4136670000153,
+        1403.6177920000628,
+        771.8179579999996,
+        1224.081041000085,
+        1291.531207999913,
+        2148.7984170001,
+        1138.1158329999307,
+        1156.8944590000901,
+        542.0552919999463,
+        1016.1555000001099
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[aria-label=\\\"Quantity\\\"]\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 11,
+      "success": false,
+      "steps": 13,
+      "requests": 14,
+      "inputTokens": 37068,
+      "outputTokens": 2274,
+      "cachedTokens": 32896,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 25193.338833000045,
+      "turnLatenciesMs": [
+        957.468916999991,
+        985.2767499999609,
+        990.1356249999953,
+        1364.5085419999668,
+        1274.2154579999624,
+        730.7121670000488,
+        1325.0224579999922,
+        831.9105409999611,
+        1374.5100830000592,
+        1415.7399170000572,
+        530.0523340000072,
+        1127.608917000005,
+        1260.3088330000173,
+        6451.209666999988
+      ],
+      "failures": [
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 12,
+      "success": false,
+      "steps": 13,
+      "requests": 14,
+      "inputTokens": 38237,
+      "outputTokens": 2475,
+      "cachedTokens": 32192,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 32634.45854100003,
+      "turnLatenciesMs": [
+        1386.890124999918,
+        1741.3748749999795,
+        3421.2467500000494,
+        1216.2415839999449,
+        1364.4068330000155,
+        1365.3384579999838,
+        1437.6834589999635,
+        1243.2917910000542,
+        2432.075957999914,
+        1288.9153749999823,
+        450.35270799999125,
+        2470.4991250000894,
+        662.8902499999385,
+        5015.065082999994
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 12,
+      "success": false,
+      "steps": 25,
+      "requests": 25,
+      "inputTokens": 55470,
+      "outputTokens": 1403,
+      "cachedTokens": 47040,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 29671.301708000014,
+      "turnLatenciesMs": [
+        401.8575829999754,
+        1216.2038750000065,
+        535.1640830000397,
+        2270.1000830000266,
+        892.0013749999925,
+        1543.0865419999463,
+        1319.7867499999702,
+        1326.5896250000224,
+        1172.7007500000764,
+        1388.7075409999816,
+        509.6781249999767,
+        925.9100420000032,
+        778.780999999959,
+        1174.4004999999888,
+        1213.672666999977,
+        839.5277920000954,
+        595.8478750000941,
+        2734.0410410000477,
+        1321.6994580000173,
+        831.3236249999609,
+        900.5219170000637,
+        581.6887080000015,
+        445.13141699996777,
+        1239.325124999974,
+        711.7917919999454
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Review checkout\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Email address\",\"value\":\"agent@example.test\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 13,
+      "success": false,
+      "steps": 17,
+      "requests": 17,
+      "inputTokens": 31407,
+      "outputTokens": 1360,
+      "cachedTokens": 25216,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 29008.910999999964,
+      "turnLatenciesMs": [
+        362.9147090000333,
+        536.6829579999903,
+        539.8956669999752,
+        1295.7056660000235,
+        3598.2285830000183,
+        1152.9453330000397,
+        1012.7955000000075,
+        836.3843750000233,
+        1493.9367090000305,
+        504.66941700002644,
+        1173.1930419999408,
+        1189.3648750000866,
+        1388.123666999978,
+        541.4626250000438,
+        4120.338457999984,
+        1010.2407080000266,
+        576.7615000000224
+      ],
+      "failures": [
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 13,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 63929,
+      "outputTokens": 2605,
+      "cachedTokens": 55040,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 30988.591417000047,
+      "turnLatenciesMs": [
+        494.8821250000037,
+        652.4102919999277,
+        512.3498749999562,
+        1314.7487919999985,
+        1009.9959159999853,
+        435.1178749999963,
+        1122.3944170000032,
+        1318.9792080000043,
+        1263.3818749999627,
+        1283.905792000005,
+        621.6257500000065,
+        882.7438750000438,
+        638.2503750000615,
+        829.484415999963,
+        3486.5155420000665,
+        2018.8006249999162,
+        2878.910416999948,
+        1110.5867909999797,
+        1199.7810829998925
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Card number\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"target_id\":\"Card number\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 14,
+      "success": false,
+      "steps": 13,
+      "requests": 14,
+      "inputTokens": 35856,
+      "outputTokens": 1990,
+      "cachedTokens": 28928,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 40154.08670799993,
+      "turnLatenciesMs": [
+        973.2745410000207,
+        1368.4787919999799,
+        477.02120900002774,
+        1503.298499999917,
+        1310.4067499999655,
+        828.2292090000119,
+        1321.893834000104,
+        1389.791709000012,
+        1443.0740829999559,
+        1315.424541000044,
+        10374.52258400002,
+        974.6427499999991,
+        1038.3957919999957,
+        6446.917832999956
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 14,
+      "success": true,
+      "steps": 25,
+      "requests": 25,
+      "inputTokens": 64047,
+      "outputTokens": 2041,
+      "cachedTokens": 54464,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 32115.88520899997,
+      "turnLatenciesMs": [
+        841.5182499999646,
+        1580.6781250000931,
+        795.3733750000829,
+        1390.8137080000015,
+        882.3092920000199,
+        1672.1040839999914,
+        1406.1613750000251,
+        852.9827079999959,
+        1810.2834999999031,
+        1126.0807499999646,
+        483.3359169999603,
+        731.251500000013,
+        506.31229099992197,
+        818.7300420000684,
+        395.93774999992456,
+        634.9441670000087,
+        811.0529999999562,
+        1311.903917000047,
+        1000.5827500000596,
+        1344.4442920000292,
+        1719.4258329999866,
+        1301.3217909999657,
+        2311.6530419999035,
+        1585.3622079999186,
+        1602.996541999979
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Review checkout\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"selector\":\"button\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 15,
+      "success": true,
+      "steps": 19,
+      "requests": 18,
+      "inputTokens": 39442,
+      "outputTokens": 1737,
+      "cachedTokens": 31424,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 25740.34308400005,
+      "turnLatenciesMs": [
+        836.5909579999279,
+        1607.9283329999307,
+        1218.4913330000127,
+        1172.920458999928,
+        973.1597919999622,
+        499.6015830000397,
+        506.40937499993015,
+        583.3404579999624,
+        494.374124999973,
+        928.2759170000209,
+        792.6193749998929,
+        636.0856249999488,
+        1326.8409580000443,
+        511.29333400004543,
+        658.7175419999985,
+        3248.8277920000255,
+        921.3458749999991,
+        1240.176165999961
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Review checkout\",\"role\":\"button\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 15,
+      "success": false,
+      "steps": 14,
+      "requests": 15,
+      "inputTokens": 41588,
+      "outputTokens": 2977,
+      "cachedTokens": 34624,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 29816.82029199996,
+      "turnLatenciesMs": [
+        515.1012089999858,
+        1007.2959580000024,
+        1253.233125000028,
+        918.8429580000229,
+        403.7630000000354,
+        481.56354200001806,
+        403.6396249999525,
+        491.1907089999877,
+        1519.5592500000494,
+        945.546417000005,
+        531.8958329999587,
+        1587.9942080000183,
+        1583.4175830000313,
+        5516.245790999965,
+        7196.103166999994
+      ],
+      "failures": [
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 16,
+      "success": true,
+      "steps": 17,
+      "requests": 17,
+      "inputTokens": 52879,
+      "outputTokens": 1907,
+      "cachedTokens": 45056,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 33956.51800000004,
+      "turnLatenciesMs": [
+        1653.6359170000069,
+        665.060792000033,
+        1276.0210000000661,
+        1514.8930829999736,
+        1444.831750000012,
+        1164.3769999999786,
+        478.6492919999873,
+        523.3649999999907,
+        640.9208750000689,
+        617.2232089999598,
+        840.7706250000047,
+        1500.594625000027,
+        964.3536249999888,
+        2110.4138750000857,
+        993.0047919999342,
+        1737.7719169999473,
+        4093.841541999951
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 16,
+      "success": true,
+      "steps": 20,
+      "requests": 19,
+      "inputTokens": 47340,
+      "outputTokens": 2288,
+      "cachedTokens": 38912,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 30162.905625000014,
+      "turnLatenciesMs": [
+        807.7378749999916,
+        1741.9046249999665,
+        397.32500000006985,
+        2898.8695420000004,
+        481.82600000000093,
+        710.4395409999415,
+        386.7018339999486,
+        626.0597500000149,
+        1025.8402500000084,
+        878.953084000037,
+        1110.6842919999035,
+        947.0587500000838,
+        1101.9710419999901,
+        1307.205249999999,
+        1440.5820419999072,
+        2426.109334000037,
+        1611.6057080000173,
+        1694.7724999999627,
+        1086.7812080000294
+      ],
+      "failures": [
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Edit quantity\",\"role\":\"button\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 17,
+      "success": true,
+      "steps": 17,
+      "requests": 16,
+      "inputTokens": 28385,
+      "outputTokens": 1181,
+      "cachedTokens": 24320,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 19891.661250000005,
+      "turnLatenciesMs": [
+        858.409500000067,
+        1324.4201669999165,
+        1874.0292500000214,
+        444.3999170000898,
+        1285.550540999975,
+        884.3838329999708,
+        1283.8410830000648,
+        765.4301250000717,
+        803.8822919999948,
+        1344.5712500000373,
+        916.266042000032,
+        1742.0430419999175,
+        646.8321670000441,
+        668.0350409999955,
+        446.9338749999879,
+        838.2430419999873
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 17,
+      "success": false,
+      "steps": 14,
+      "requests": 15,
+      "inputTokens": 40656,
+      "outputTokens": 2474,
+      "cachedTokens": 34048,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 32293.06904199999,
+      "turnLatenciesMs": [
+        940.0342079999391,
+        1664.6124169999966,
+        1221.0064590000547,
+        576.6498750000028,
+        1423.9667080000509,
+        907.5499579999596,
+        1058.1632499999832,
+        1573.2741669999668,
+        1189.1856659998884,
+        1428.6237499999115,
+        1220.4970000000903,
+        1055.482958000037,
+        2327.318665999919,
+        755.0960840000771,
+        5785.403916000039
+      ],
+      "failures": [
+        {
+          "category": "SCHEMA_VIOLATION",
+          "detail": "INVALID_PAYLOAD: Invalid adapter command The payload does not match the action. \"type\" takes {text}, \"select\" takes {value}, \"click\" takes no payload.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"type\",\"parameters\":\"{\\\"text\\\":\\\"Trail backpack\\\"}\",\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"search\"}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"select\",\"payload\":{\"value\":\"express\"},\"settle\":{\"timeout_ms\":2000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"shipping\"}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 18,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 48573,
+      "outputTokens": 1956,
+      "cachedTokens": 40064,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 35377.48991700006,
+      "turnLatenciesMs": [
+        997.1519170000684,
+        1027.922208999982,
+        818.7313749999739,
+        1845.9099169999827,
+        1168.5561250000028,
+        1366.4929590000538,
+        1027.5213340000482,
+        1472.8703749999404,
+        1472.858792000101,
+        1073.1867910000728,
+        968.051041000057,
+        1413.3974999999627,
+        3907.5641670001205,
+        3774.4467910001986,
+        1544.4943750000093,
+        2071.3406670000404
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 18,
+      "success": true,
+      "steps": 22,
+      "requests": 22,
+      "inputTokens": 57963,
+      "outputTokens": 2294,
+      "cachedTokens": 49344,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 29255.22745799995,
+      "turnLatenciesMs": [
+        941.046166999964,
+        490.88679099990986,
+        1210.7667919998057,
+        1633.287750000134,
+        819.9846660001203,
+        981.9987909998745,
+        952.2140409999993,
+        437.47145800013095,
+        2839.072832999984,
+        1223.3669169999193,
+        1700.6905829999596,
+        428.88199999998324,
+        597.7973340000026,
+        436.0838750000112,
+        565.7623750001658,
+        769.3914580000564,
+        2007.9104170000646,
+        1688.3697089999914,
+        1062.3774999999441,
+        3169.2744169998914,
+        935.3672090000473,
+        1512.9638340000529
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 19,
+      "success": true,
+      "steps": 20,
+      "requests": 19,
+      "inputTokens": 41961,
+      "outputTokens": 1454,
+      "cachedTokens": 34048,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 23092.86170800007,
+      "turnLatenciesMs": [
+        1135.9910420000087,
+        1202.3582500000484,
+        826.6804589999374,
+        1308.4963330000173,
+        1147.6845829999074,
+        811.8176659999881,
+        805.3083750000224,
+        757.2203339999542,
+        1326.2984170001,
+        449.75854100007564,
+        389.4650000000838,
+        546.2767920000479,
+        713.2180000001099,
+        1936.5370829999447,
+        1525.8769590000156,
+        580.2898329999298,
+        2685.430041000014,
+        915.904457999859,
+        895.6539589997847
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 19,
+      "success": true,
+      "steps": 18,
+      "requests": 17,
+      "inputTokens": 54059,
+      "outputTokens": 2862,
+      "cachedTokens": 47296,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 38598.62983300001,
+      "turnLatenciesMs": [
+        1336.8360419999808,
+        1483.4291659998707,
+        1205.966791999992,
+        1536.1055829999968,
+        1277.646583000198,
+        1779.1938750001136,
+        987.8604999999516,
+        1266.8327920001466,
+        1823.782250000164,
+        915.5519169999752,
+        735.9048339999281,
+        720.0791249999311,
+        986.3173330000136,
+        4904.498792000115,
+        2877.4874159998726,
+        1429.044666999951,
+        2854.381165999919
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Payment\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"target_id\":\"Payment\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 20,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 62741,
+      "outputTokens": 2696,
+      "cachedTokens": 55168,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 33224.5536669998,
+      "turnLatenciesMs": [
+        515.4838339998387,
+        650.1075000001583,
+        790.033250000095,
+        506.52658300008625,
+        777.3844169999938,
+        842.1685840000864,
+        907.7249590000138,
+        1197.4790419999044,
+        1895.0152089998592,
+        840.0492499999236,
+        767.6046249999199,
+        1445.291709000012,
+        2359.447832999984,
+        470.61704199993983,
+        1947.3536670000758,
+        1699.220207999926,
+        3517.244207999902,
+        1354.9359590001404,
+        1586.4620000000577
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 20,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 43438,
+      "outputTokens": 2146,
+      "cachedTokens": 37632,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 30384.60233299993,
+      "turnLatenciesMs": [
+        570.4147499999963,
+        1431.6764579999726,
+        793.2102500000037,
+        1224.8553329999559,
+        765.5492500001565,
+        1418.4218340001535,
+        1154.1092910000589,
+        681.9084169999696,
+        1286.8901659999974,
+        349.34354199981317,
+        515.7143330001272,
+        397.63549999985844,
+        850.612417000113,
+        1960.9469580000732,
+        1274.3489589998499,
+        481.64033299987204,
+        3891.6241249998566,
+        1937.2859999998473,
+        918.1131249999162
+      ],
+      "failures": [
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 21,
+      "success": true,
+      "steps": 18,
+      "requests": 18,
+      "inputTokens": 37232,
+      "outputTokens": 1598,
+      "cachedTokens": 30592,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 24872.84887499991,
+      "turnLatenciesMs": [
+        372.1645000001881,
+        1406.9888750000391,
+        1345.0640410000924,
+        1265.454374999972,
+        1571.501208000118,
+        409.07445900002494,
+        401.20900000003166,
+        1100.6650420001242,
+        897.6949159998912,
+        1233.6397920001764,
+        587.5754170001019,
+        2044.9663750000764,
+        1505.358332999982,
+        1762.4100839998573,
+        1224.4679590000305,
+        2322.7486250000075,
+        1156.6542909999844,
+        1172.0366250001825
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"selector\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 21,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 48018,
+      "outputTokens": 1864,
+      "cachedTokens": 40320,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 30193.690375000006,
+      "turnLatenciesMs": [
+        518.3310000000056,
+        1250.2898340001702,
+        798.1175420000218,
+        1458.7262919999193,
+        1387.3775830001105,
+        1479.040374999866,
+        1329.672167000128,
+        1250.0110840001144,
+        1563.8559999999125,
+        459.7847499998752,
+        471.10079099982977,
+        967.734832999995,
+        558.4643749999814,
+        3063.9807080000173,
+        1110.5453329999,
+        2096.132457999978
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 22,
+      "success": false,
+      "steps": 14,
+      "requests": 15,
+      "inputTokens": 53590,
+      "outputTokens": 5228,
+      "cachedTokens": 40256,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 40729.435624999925,
+      "turnLatenciesMs": [
+        537.2616670001298,
+        1612.4469580000732,
+        1128.5001250000205,
+        4464.078791999957,
+        1992.108332999982,
+        884.6556669999845,
+        3331.69391599996,
+        1087.5617909999564,
+        3144.485624999972,
+        5761.570166000165,
+        1242.840749999974,
+        1325.1575829999056,
+        2345.426582999993,
+        1525.1652500000782,
+        6136.35170800006
+      ],
+      "failures": [
+        {
+          "category": "SCHEMA_VIOLATION",
+          "detail": "INVALID_ACTION: Use the control-specific action The action type is not valid for this element. Use the suggested_action from navi_get_actions.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"target_id\":\"search\",\"action_type\":\"click\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Trail Backpack\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"Trail Backpack\",\"action_type\":\"click\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Home\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"navigation\"},\"target_id\":\"Home\",\"action_type\":\"click\"}"
+        },
+        {
+          "category": "SCHEMA_VIOLATION",
+          "detail": "INVALID_ACTION: Use the control-specific action The action type is not valid for this element. Use the suggested_action from navi_get_actions.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"Search\",\"action_type\":\"click\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Cart\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"settle\":{\"timeout_ms\":2000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"Cart\",\"action_type\":\"click\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 22,
+      "success": false,
+      "steps": 25,
+      "requests": 25,
+      "inputTokens": 70635,
+      "outputTokens": 3151,
+      "cachedTokens": 55168,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 33761.87325000018,
+      "turnLatenciesMs": [
+        1740.7014580001123,
+        892.2720419999678,
+        1155.1747500000056,
+        1276.1470419999678,
+        1080.6446670000441,
+        715.093584000133,
+        500.5366249999497,
+        449.49004200007766,
+        1192.778083999874,
+        607.6864580002148,
+        1098.2935419999994,
+        585.3080829998944,
+        518.0352089998778,
+        472.06804100004956,
+        1046.6205420000479,
+        551.5825420001056,
+        1667.264124999987,
+        936.9996670000255,
+        1732.361625000136,
+        2146.8974580001086,
+        1698.9695409999695,
+        738.8867500000633,
+        2793.429625000106,
+        3218.1442080000415,
+        833.3502090000547
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"selector\":\"select[aria-label='Quantity']\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 23,
+      "success": true,
+      "steps": 20,
+      "requests": 20,
+      "inputTokens": 47695,
+      "outputTokens": 2265,
+      "cachedTokens": 42176,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 27325.97641699994,
+      "turnLatenciesMs": [
+        820.035916000139,
+        1517.9078750000335,
+        496.0161659999285,
+        960.1805410000961,
+        921.4878340000287,
+        1039.7867089998908,
+        1268.262582999887,
+        1399.0870000000577,
+        501.90037499996834,
+        1225.299125000136,
+        970.2449169999454,
+        860.7000410000328,
+        557.4260419998318,
+        1513.223708000034,
+        1883.4553749999031,
+        1762.3026250000112,
+        941.1573330000974,
+        3706.571916999994,
+        721.6062499999534,
+        900.8109160000458
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 23,
+      "success": false,
+      "steps": 10,
+      "requests": 11,
+      "inputTokens": 28047,
+      "outputTokens": 4091,
+      "cachedTokens": 23936,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 33811.06816700008,
+      "turnLatenciesMs": [
+        773.5660830000415,
+        1453.6149590001442,
+        666.5244580002036,
+        1195.09208400012,
+        2829.574583000038,
+        418.0368339999113,
+        4673.714458000148,
+        1012.0323749999516,
+        6551.461457999889,
+        960.5701249998529,
+        6540.158749999944
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Add to cart\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"target_id\":\"Add to cart\",\"action_type\":\"click\",\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"mutation_settle\"}}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"target_id\":\"Search products\",\"action_type\":\"type\",\"payload\":{\"text\":\"\\n\"},\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"}}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 24,
+      "success": true,
+      "steps": 24,
+      "requests": 24,
+      "inputTokens": 104503,
+      "outputTokens": 3318,
+      "cachedTokens": 94016,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 37894.59525000001,
+      "turnLatenciesMs": [
+        941.1633750000037,
+        1084.5387090002187,
+        1019.9620000000577,
+        945.2754160000477,
+        585.247583999997,
+        441.46441600006074,
+        557.0690419999883,
+        1031.5227500000037,
+        623.6655409999657,
+        1135.1437920001335,
+        634.4939999999478,
+        2652.370415999787,
+        1459.047917000018,
+        4237.98145800014,
+        1189.9790420001373,
+        618.8703330000862,
+        1743.9457080001011,
+        784.5419169999659,
+        1224.3082079999149,
+        618.9304579999298,
+        976.9454580000602,
+        1289.5893749999814,
+        1927.0523749999702,
+        2151.6995000001043
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"select\",\"payload\":{\"value\":\"express\"},\"settle\":{\"timeout_ms\":2000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"shipping\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 24,
+      "success": true,
+      "steps": 22,
+      "requests": 22,
+      "inputTokens": 62597,
+      "outputTokens": 2286,
+      "cachedTokens": 54592,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 34254.93700000015,
+      "turnLatenciesMs": [
+        441.388459000038,
+        1359.1228750001173,
+        411.57708300021477,
+        2746.68349999981,
+        1524.1008750000037,
+        1269.9071669999976,
+        1384.3238340001553,
+        1795.3954590000212,
+        4697.886124999961,
+        636.5011250001844,
+        1025.2429579999298,
+        945.2987500000745,
+        485.9998749999795,
+        682.047583000036,
+        1005.9679580000229,
+        1830.985875000013,
+        1366.4810000001453,
+        598.5330419999082,
+        1970.0816669999622,
+        2541.3882919999305,
+        969.2947499998845,
+        1338.874291999964
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 25,
+      "success": true,
+      "steps": 17,
+      "requests": 17,
+      "inputTokens": 35639,
+      "outputTokens": 1595,
+      "cachedTokens": 28224,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 27910.599833999993,
+      "turnLatenciesMs": [
+        953.4153750000987,
+        1552.3168750000186,
+        829.4043330000713,
+        742.4562919999007,
+        5994.590749999974,
+        2264.8796669999138,
+        2607.140291000018,
+        861.6523749998305,
+        1357.1565829999745,
+        570.0427500000224,
+        848.1786670000292,
+        1426.0552089998964,
+        1118.7014999999665,
+        904.2755829999223,
+        2119.1964999998454,
+        517.1634169998579,
+        419.85275000007823
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 25,
+      "success": true,
+      "steps": 17,
+      "requests": 17,
+      "inputTokens": 54175,
+      "outputTokens": 2627,
+      "cachedTokens": 48256,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 37750.19187500002,
+      "turnLatenciesMs": [
+        493.39308299985714,
+        1331.7449580000248,
+        451.3824579999782,
+        1458.0666659998242,
+        1038.4746250000317,
+        755.7672080001794,
+        1398.8538329999428,
+        881.8735000002198,
+        1177.3828749998938,
+        1006.2844160001259,
+        553.4191670001019,
+        1015.424917000113,
+        748.6888339999132,
+        2350.160208000103,
+        5221.542208999861,
+        6454.067958999891,
+        1265.8323749999981
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Card number\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"target_id\":\"Card number\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 26,
+      "success": false,
+      "steps": 13,
+      "requests": 14,
+      "inputTokens": 38086,
+      "outputTokens": 2405,
+      "cachedTokens": 30400,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 21274.21862499998,
+      "turnLatenciesMs": [
+        887.8184169998858,
+        1414.3782919999212,
+        378.72349999984726,
+        553.1600829998497,
+        1095.1191249999683,
+        764.7763340000529,
+        894.9054159999359,
+        1175.6720420001075,
+        1117.5994159998372,
+        868.3223749999888,
+        440.9787910000887,
+        1105.0477919999976,
+        1168.1730840001255,
+        4770.195499999914
+      ],
+      "failures": [
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 26,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 36910,
+      "outputTokens": 1513,
+      "cachedTokens": 31872,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 20915.24370799982,
+      "turnLatenciesMs": [
+        357.470750000095,
+        535.6185000000987,
+        1267.595207999926,
+        415.9575840001926,
+        854.1183329999913,
+        1379.3056659998838,
+        1083.1919589999598,
+        391.98849999997765,
+        1104.2314999999944,
+        907.6650419998914,
+        1284.407292000018,
+        726.9898329998832,
+        1850.1564169998746,
+        1323.7498749999795,
+        535.9425000001211,
+        370.95583300013095,
+        2248.704832999967,
+        452.1414169999771,
+        805.3484999998473
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"type\",\"name\":\"Search products\",\"selector\":\"textbox[name='Search products']\",\"value\":\"Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 27,
+      "success": true,
+      "steps": 17,
+      "requests": 17,
+      "inputTokens": 32895,
+      "outputTokens": 1386,
+      "cachedTokens": 26048,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 21317.645374999847,
+      "turnLatenciesMs": [
+        345.59291699994355,
+        529.8274580000434,
+        435.0058329999447,
+        542.1337919998914,
+        429.63408400001936,
+        839.888666999992,
+        1296.8275840000715,
+        1913.9510409999639,
+        903.2808750001714,
+        1022.8661670000292,
+        916.1865419999231,
+        2245.6923330000136,
+        1124.2002499999944,
+        831.5086250000168,
+        3544.0540000000037,
+        911.0867920001037,
+        823.9474170000758
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 27,
+      "success": false,
+      "steps": 14,
+      "requests": 15,
+      "inputTokens": 41351,
+      "outputTokens": 2602,
+      "cachedTokens": 32896,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 28169.950124999974,
+      "turnLatenciesMs": [
+        734.8304999999236,
+        1276.799541000044,
+        880.5880829999223,
+        1047.8850419998635,
+        1292.8957500001416,
+        434.2399999999907,
+        510.6224579999689,
+        656.7227909998037,
+        646.8179169998039,
+        557.3504169997759,
+        450.29904199996963,
+        1515.8437080001459,
+        2298.6767499998678,
+        874.5441660000943,
+        6967.2947499998845
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"select\",\"payload\":{\"value\":\"express\"},\"settle\":{\"timeout_ms\":1000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"shipping\"}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 28,
+      "success": false,
+      "steps": 13,
+      "requests": 14,
+      "inputTokens": 35317,
+      "outputTokens": 2004,
+      "cachedTokens": 29056,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 31822.658999999985,
+      "turnLatenciesMs": [
+        474.0632499998901,
+        8213.31558299996,
+        574.2672500000335,
+        1080.5221669999883,
+        438.52879199991,
+        1305.9046249999665,
+        510.60416700015776,
+        1426.7280419999734,
+        842.3204169999808,
+        531.8406249999534,
+        900.0269579999149,
+        1118.5934170000255,
+        1612.4723330000415,
+        5128.939333999995
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 28,
+      "success": true,
+      "steps": 20,
+      "requests": 20,
+      "inputTokens": 48059,
+      "outputTokens": 2156,
+      "cachedTokens": 42432,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 28301.6792919999,
+      "turnLatenciesMs": [
+        904.0442920001224,
+        478.406665999908,
+        827.6872080001049,
+        1395.637874999782,
+        703.939207999967,
+        1452.0782910000999,
+        940.171667000046,
+        557.630916000111,
+        574.744291999843,
+        368.62229199986905,
+        551.0362080000341,
+        954.0373750000726,
+        790.1365000000224,
+        383.5522499999497,
+        1091.8611669999082,
+        1118.0753330001608,
+        2681.31479199999,
+        3246.7567920000292,
+        865.2271249999758,
+        804.8932919998188
+      ],
+      "failures": [
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 29,
+      "success": true,
+      "steps": 20,
+      "requests": 20,
+      "inputTokens": 49595,
+      "outputTokens": 2229,
+      "cachedTokens": 40960,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 26524.530374999857,
+      "turnLatenciesMs": [
+        919.7334159999155,
+        1647.3194999999832,
+        748.3972920000087,
+        1156.6162079998758,
+        1293.361417000182,
+        952.1427080000285,
+        812.8328329999931,
+        391.77966700005345,
+        1116.6740419999696,
+        1626.2732500000857,
+        1366.638917000033,
+        867.5076669999398,
+        863.7877090000547,
+        919.6928339998703,
+        1946.2296250001527,
+        1467.0737080001272,
+        385.60158399981447,
+        3675.4240000001155,
+        897.0579170000274,
+        835.2194999998901
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 29,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 48946,
+      "outputTokens": 2368,
+      "cachedTokens": 41216,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 30238.31162500009,
+      "turnLatenciesMs": [
+        742.326624999987,
+        2772.902084000176,
+        487.89395800000057,
+        1046.6284169999417,
+        727.8552500000224,
+        984.3742499998771,
+        936.4985409998335,
+        1111.243083000183,
+        1311.1145419999957,
+        881.5053750001825,
+        728.9295840000268,
+        1872.2675420001615,
+        657.0895830001682,
+        3935.686166000087,
+        1272.3042500000447,
+        1150.6535829999484
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"select\",\"payload\":{\"value\":\"express\"},\"settle\":{\"timeout_ms\":2000,\"wait_for\":\"mutation_settle\"},\"target_id\":\"shipping\"}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 30,
+      "success": true,
+      "steps": 17,
+      "requests": 17,
+      "inputTokens": 54746,
+      "outputTokens": 2423,
+      "cachedTokens": 45056,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 45854.08625000017,
+      "turnLatenciesMs": [
+        564.3502090000547,
+        619.8509579999372,
+        811.083833000157,
+        1410.9812499999534,
+        901.2407500001136,
+        467.43887499999255,
+        5528.203125,
+        1047.936708000023,
+        1110.1424169999082,
+        912.419458999997,
+        483.7155420000199,
+        1469.4420829999726,
+        506.7769579999149,
+        2575.1942920000292,
+        8175.279208000051,
+        1974.0626250000205,
+        2079.6453340000007
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":10000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 30,
+      "success": true,
+      "steps": 17,
+      "requests": 17,
+      "inputTokens": 35452,
+      "outputTokens": 2111,
+      "cachedTokens": 28416,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 25330.419999999925,
+      "turnLatenciesMs": [
+        742.4627499999478,
+        603.128292000154,
+        492.58962500002235,
+        790.3342500000726,
+        702.4768330000807,
+        758.3168340001721,
+        1472.0126659998205,
+        1224.4152500000782,
+        1679.3203330000397,
+        997.1011250000447,
+        779.7835419999901,
+        1743.4690419998951,
+        1618.3068750000093,
+        911.8489580000751,
+        6137.77820800012,
+        1377.8943749999162,
+        594.1529580000788
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 31,
+      "success": false,
+      "steps": 14,
+      "requests": 15,
+      "inputTokens": 25571,
+      "outputTokens": 2383,
+      "cachedTokens": 19584,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 30281.757624999853,
+      "turnLatenciesMs": [
+        1135.2768749999814,
+        1453.4846659998875,
+        901.1668339997996,
+        1068.0723330001347,
+        910.6507089999504,
+        1081.4783330000937,
+        978.3310829999391,
+        814.170124999946,
+        3143.8367500000168,
+        430.71308299992234,
+        889.9179999998305,
+        1315.6441669999622,
+        3081.480833000038,
+        562.8112089999486,
+        4711.640125000151
+      ],
+      "failures": [
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 31,
+      "success": false,
+      "steps": 13,
+      "requests": 14,
+      "inputTokens": 36678,
+      "outputTokens": 2253,
+      "cachedTokens": 32640,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 23007.54341699998,
+      "turnLatenciesMs": [
+        875.8228750000708,
+        986.6991250000428,
+        420.2571250000037,
+        520.1122080001514,
+        933.3213750000577,
+        986.6479580001906,
+        478.71274999994785,
+        548.4290420000907,
+        1258.8515419999603,
+        919.394083000021,
+        470.8533340001013,
+        1590.4090830001514,
+        1554.3030000000726,
+        6001.1544170000125
+      ],
+      "failures": [
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 32,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 45900,
+      "outputTokens": 1764,
+      "cachedTokens": 41216,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 27762.319958999986,
+      "turnLatenciesMs": [
+        1426.4968749999534,
+        972.5089160001371,
+        473.1759580001235,
+        1452.6913749999367,
+        1133.3702920000069,
+        512.456375000067,
+        1240.641917000059,
+        1229.562042000005,
+        1394.9617910000961,
+        798.3204159999732,
+        855.3570420001633,
+        613.9994169999845,
+        729.5844580000266,
+        2292.328625000082,
+        1377.3197500000242,
+        3050.4691250000615
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 32,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 43328,
+      "outputTokens": 1790,
+      "cachedTokens": 35072,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 31891.234457999934,
+      "turnLatenciesMs": [
+        861.9561250000261,
+        1412.1003749999218,
+        895.5748339998536,
+        1176.3671249998733,
+        2113.9512499999255,
+        545.0162090000231,
+        862.1004580000881,
+        1615.6875839999411,
+        1108.0056669998448,
+        1193.0578330000862,
+        1010.685915999813,
+        431.3610000000335,
+        1417.1574169998057,
+        2033.404583999887,
+        1881.9753330000676,
+        790.7641660000663,
+        2747.40379199991,
+        971.5986659999471,
+        1140.2392500001006
+      ],
+      "failures": [
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 33,
+      "success": false,
+      "steps": 19,
+      "requests": 20,
+      "inputTokens": 44979,
+      "outputTokens": 2476,
+      "cachedTokens": 39744,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 30748.768958,
+      "turnLatenciesMs": [
+        942.1375000001863,
+        1062.3497079999652,
+        403.2105000000447,
+        1039.363125000149,
+        815.7088750000112,
+        1338.4756249999627,
+        688.4185419999994,
+        456.54866599990055,
+        454.51216699997894,
+        709.53370800009,
+        396.4610419999808,
+        789.3612920001615,
+        508.9370409999974,
+        1241.1691670001019,
+        439.04470799979754,
+        1504.7347499998286,
+        861.2313750002068,
+        766.3066249999683,
+        1117.312792000128,
+        12647.101917000022
+      ],
+      "failures": [
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 33,
+      "success": true,
+      "steps": 24,
+      "requests": 24,
+      "inputTokens": 94733,
+      "outputTokens": 3013,
+      "cachedTokens": 82624,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 43774.337165999925,
+      "turnLatenciesMs": [
+        1098.965291999979,
+        1299.3737910001073,
+        621.4736669999547,
+        1636.8151249999646,
+        1740.7186660000589,
+        1945.0286250000354,
+        3269.6102499999106,
+        1174.9584590001032,
+        751.139332999941,
+        421.04004200012423,
+        401.46120800008066,
+        587.6562090001535,
+        1165.8149170000106,
+        1000.2262500000652,
+        871.4395830000285,
+        1323.578082999913,
+        1861.6497919999529,
+        656.1299999998882,
+        2273.3102090000175,
+        1146.1900829998776,
+        3123.8814170002006,
+        2032.2825829999056,
+        1368.067208000226,
+        1963.5279580000788
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"target_id\":\"shipping\",\"action_type\":\"select\",\"payload\":{\"value\":\"express\"},\"settle\":{\"timeout_ms\":2000,\"wait_for\":\"mutation_settle\"}}"
+        },
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"target_id\":\"place\",\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"}}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Card number\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"target_id\":\"Card number\",\"action_type\":\"type\",\"payload\":{\"text\":\"4242424242424242\"},\"settle\":{\"timeout_ms\":2000,\"wait_for\":\"mutation_settle\"}}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 34,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 49406,
+      "outputTokens": 1848,
+      "cachedTokens": 38592,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 28537.525249999948,
+      "turnLatenciesMs": [
+        963.5076249998529,
+        1052.8989999999758,
+        426.2752920000348,
+        1855.4322500000708,
+        885.6738749998622,
+        996.0094169999938,
+        1370.187415999826,
+        1303.7144579999149,
+        2792.547917000018,
+        1323.4104589999188,
+        482.7889580000192,
+        1417.360417000018,
+        880.7015410000458,
+        4026.720583999995,
+        900.4502499999944,
+        1730.7241249999497
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 34,
+      "success": false,
+      "steps": 16,
+      "requests": 17,
+      "inputTokens": 30272,
+      "outputTokens": 2159,
+      "cachedTokens": 24640,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 24600.694125000155,
+      "turnLatenciesMs": [
+        704.2065420001745,
+        1240.3517909999937,
+        784.6283749998547,
+        1807.3178750001825,
+        807.3000420001335,
+        1321.0217919999268,
+        890.3108749999665,
+        876.857624999946,
+        1308.5054589998908,
+        850.2609579998534,
+        1306.6001669999678,
+        453.75674999994226,
+        1077.2942919998895,
+        1326.1529580000788,
+        1557.1518749999814,
+        819.3654589999933,
+        4817.055208999896
+      ],
+      "failures": [
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 35,
+      "success": true,
+      "steps": 20,
+      "requests": 19,
+      "inputTokens": 42794,
+      "outputTokens": 3353,
+      "cachedTokens": 35136,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 39959.460375000024,
+      "turnLatenciesMs": [
+        862.2785000000149,
+        1395.841957999859,
+        764.9728339998983,
+        549.354958999902,
+        4724.785458000144,
+        1511.692500000121,
+        1081.646041000029,
+        762.6641250001267,
+        954.2864580000751,
+        1257.3539579999633,
+        873.90625,
+        986.4723329998087,
+        1424.258208999876,
+        1512.329374999972,
+        1498.0507499999367,
+        5161.089459000155,
+        4980.356500000227,
+        601.4600829998963,
+        1676.7962919999845
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Add Trail backpack\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Email address\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"role\":\"button\",\"action\":\"click\",\"name\":\"Place sandbox order\",\"wait_for\":\"navigation\"}"
+        },
+        {
+          "category": "SCHEMA_VIOLATION",
+          "detail": "UNKNOWN_TOOL: Unknown tool assistant",
+          "tool": "assistant",
+          "rawArgs": "{}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 35,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 46296,
+      "outputTokens": 1494,
+      "cachedTokens": 40448,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 27806.27266700007,
+      "turnLatenciesMs": [
+        446.4596670004539,
+        1563.4962089997716,
+        2516.643415999599,
+        1326.2756250002421,
+        821.0120419999585,
+        583.1834170003422,
+        643.6660839999095,
+        526.0446250000969,
+        610.636708999984,
+        712.637124999892,
+        625.9487499999814,
+        935.4708750001155,
+        958.0445409999229,
+        2632.910707999952,
+        1246.591957999859,
+        1332.7808329998516
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":5000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 36,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 66064,
+      "outputTokens": 2562,
+      "cachedTokens": 56768,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 33315.90854199976,
+      "turnLatenciesMs": [
+        617.7310000001453,
+        1159.4084579995833,
+        374.0920000001788,
+        1667.7134589999914,
+        2555.9103749999776,
+        537.8332090000622,
+        2217.0101670003496,
+        810.8069580001757,
+        477.7098340000957,
+        1257.6324579999782,
+        757.579917000141,
+        1164.0748750003986,
+        924.3567500002682,
+        886.3656250000931,
+        2568.951541000046,
+        3045.109083000105,
+        3363.04441699991,
+        1262.1579169998877,
+        1499.2712499997579
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 36,
+      "success": true,
+      "steps": 17,
+      "requests": 17,
+      "inputTokens": 32603,
+      "outputTokens": 1345,
+      "cachedTokens": 25792,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 20772.609290999826,
+      "turnLatenciesMs": [
+        336.4087499999441,
+        1505.3322079996578,
+        1006.7579580000602,
+        890.2880409997888,
+        825.6909170001745,
+        832.5065419999883,
+        1506.126250000205,
+        414.1895419997163,
+        474.43520799977705,
+        443.7274589999579,
+        457.890374999959,
+        2759.687957999762,
+        1835.7099999999627,
+        413.6517079998739,
+        2717.7069580000825,
+        945.9320840002038,
+        496.71675000013784
+      ],
+      "failures": []
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 37,
+      "success": true,
+      "steps": 19,
+      "requests": 19,
+      "inputTokens": 44726,
+      "outputTokens": 2566,
+      "cachedTokens": 36032,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 26520.081999999937,
+      "turnLatenciesMs": [
+        799.5509999999776,
+        1226.0259169996716,
+        769.9962920001708,
+        1668.9248339999467,
+        840.8454160001129,
+        880.6314159999602,
+        1029.7688329997472,
+        1324.9782920000143,
+        1747.2422500001267,
+        955.3566250000149,
+        556.103166999761,
+        610.6766250003129,
+        409.3212089999579,
+        1952.9266249998473,
+        2299.816750000231,
+        817.808915999718,
+        4529.751125000417,
+        981.39770900039,
+        462.9760420001112
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 37,
+      "success": false,
+      "steps": 13,
+      "requests": 13,
+      "inputTokens": 34597,
+      "outputTokens": 2205,
+      "cachedTokens": 30848,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 27435.79166600015,
+      "turnLatenciesMs": [
+        1178.1973339999095,
+        789.8449590001255,
+        832.3312079999596,
+        1410.7895829998888,
+        1308.77724999981,
+        1005.3505000001751,
+        2157.601082999725,
+        841.316250000149,
+        883.8951659998856,
+        845.326832999941,
+        1235.841707999818,
+        922.0053330003284,
+        4901.193124999758
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"target_id\":\"place\",\"settle\":{\"timeout_ms\":3000,\"wait_for\":\"navigation\"}}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 38,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 46582,
+      "outputTokens": 1946,
+      "cachedTokens": 37376,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 45545.413375000004,
+      "turnLatenciesMs": [
+        582.8584159999155,
+        810.7357920003124,
+        413.5065000001341,
+        989.578540999908,
+        1246.5600840002298,
+        866.6498330002651,
+        895.0547079998069,
+        973.6801669998094,
+        13253.630624999758,
+        893.5380420000292,
+        514.9429999999702,
+        1227.3581659998745,
+        693.6987919998355,
+        3634.167667000089,
+        1299.2277919999324,
+        1839.179083999712
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":10000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 38,
+      "success": true,
+      "steps": 22,
+      "requests": 22,
+      "inputTokens": 53448,
+      "outputTokens": 1567,
+      "cachedTokens": 44032,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 21177.3017500001,
+      "turnLatenciesMs": [
+        523.438000000082,
+        1009.0737919998355,
+        428.24020900018513,
+        666.1125419996679,
+        526.8774159997702,
+        427.06758399959654,
+        706.2672920003533,
+        495.64741700002924,
+        442.5456670001149,
+        401.4327499996871,
+        531.673833000008,
+        416.51229199999943,
+        494.5476249996573,
+        511.38241699989885,
+        505.97108299983665,
+        867.6597499996424,
+        612.6886669998057,
+        1073.3285000002943,
+        614.6601670002565,
+        1538.313291999977,
+        535.093249999918,
+        613.3304580003023
+      ],
+      "failures": [
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "SELECTOR_RESOLUTION: selector/name is missing or ambiguous",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"select\",\"name\":\"Quantity\",\"value\":\"2\",\"wait_for\":\"mutation_settle\"}"
+        },
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 39,
+      "success": true,
+      "steps": 17,
+      "requests": 16,
+      "inputTokens": 30393,
+      "outputTokens": 1018,
+      "cachedTokens": 24064,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 14078.783292000182,
+      "turnLatenciesMs": [
+        474.81066600000486,
+        497.93141700001433,
+        586.3154590004124,
+        493.74379099998623,
+        415.00466600013897,
+        477.42033400014043,
+        880.2545830002055,
+        585.0400829999708,
+        611.3589169997722,
+        983.2129170000553,
+        1361.4405839997344,
+        504.69383300002664,
+        591.011874999851,
+        1123.7907079998404,
+        609.0439160000533,
+        467.61987499985844
+      ],
+      "failures": []
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 39,
+      "success": true,
+      "steps": 16,
+      "requests": 16,
+      "inputTokens": 47699,
+      "outputTokens": 1668,
+      "cachedTokens": 38592,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 27603.011625000276,
+      "turnLatenciesMs": [
+        485.8584170001559,
+        775.4591250000522,
+        614.3590830001049,
+        659.4542910000309,
+        564.8077079998329,
+        468.92700000014156,
+        608.5167910000309,
+        415.83091600006446,
+        628.1459589996375,
+        523.8010419998318,
+        674.4562079999596,
+        1070.2161670001224,
+        467.3580419998616,
+        1343.4561660001054,
+        1400.5673750001006,
+        1324.5571670001373
+      ],
+      "failures": [
+        {
+          "category": "TIMEOUT_UNSETTLED",
+          "detail": "UNSETTLED: timeout",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"timeout_ms\":10000,\"wait_for\":\"navigation\"},\"target_id\":\"place\"}"
+        }
+      ]
+    },
+    {
+      "path": "navi-differential",
+      "iteration": 40,
+      "success": false,
+      "steps": 14,
+      "requests": 15,
+      "inputTokens": 51519,
+      "outputTokens": 5715,
+      "cachedTokens": 40320,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 36432.91812500032,
+      "turnLatenciesMs": [
+        748.0325829996727,
+        608.9631250002421,
+        652.2421670001931,
+        911.8357919999398,
+        5219.899332999717,
+        905.3482920001261,
+        1467.7928329999559,
+        1018.9414590001106,
+        3235.8056249995716,
+        1280.9518750002608,
+        1608.3746250001714,
+        3624.1662499997765,
+        1067.113040999975,
+        4762.5953750000335,
+        6236.030999999959
+      ],
+      "failures": [
+        {
+          "category": "SCHEMA_VIOLATION",
+          "detail": "INVALID_ACTION: Use the control-specific action The action type is not valid for this element. Use the suggested_action from navi_get_actions.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"wait_for\":\"mutation_settle\"},\"target_id\":\"Search\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Home\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"wait_for\":\"mutation_settle\"},\"target_id\":\"Home\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Add to cart\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"wait_for\":\"mutation_settle\"},\"target_id\":\"Add to cart\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Trail backpack\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"wait_for\":\"mutation_settle\"},\"target_id\":\"Trail backpack\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Place order\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"pay...\":\"{\\\"value\\\": \\\"express\\\"}\",\"target_id\":\"Place order\"}"
+        },
+        {
+          "category": "SELECTOR_HALLUCINATION",
+          "detail": "NOT_FOUND: No control is named \"Cart\". candidates lists the nearest current controls; act on one of their target_ids instead of repeating this handle. The handle is neither a current target_id nor an unambiguous control name. It is resolved against accessible names first, so pass the label you can read (\"Place order\") or a target_id from navi_get_actions; the candidates field lists the nearest current controls. Ids and labels both change when the page re-renders.",
+          "tool": "navi_execute_action",
+          "rawArgs": "{\"action_type\":\"click\",\"settle\":{\"wait_for\":\"mutation_settle\"},\"target_id\":\"Cart\"}"
+        },
+        {
+          "category": "PLANNER_STOPPED",
+          "detail": "Model returned no tool call before finish_task"
+        },
+        {
+          "category": "TASK_INCOMPLETE",
+          "detail": "Independent order oracle did not confirm the requested transaction"
+        }
+      ]
+    },
+    {
+      "path": "raw-playwright",
+      "iteration": 40,
+      "success": true,
+      "steps": 22,
+      "requests": 22,
+      "inputTokens": 54056,
+      "outputTokens": 1489,
+      "cachedTokens": 44736,
+      "usageComplete": true,
+      "cachedComplete": true,
+      "wallMs": 20489.870250000153,
+      "turnLatenciesMs": [
+        498.91600000020117,
+        958.2995829996653,
+        426.53041699994355,
+        483.4004580001347,
+        509.1023329999298,
+        480.0881249997765,
+        565.0537919998169,
+        458.66862499993294,
+        456.83308400027454,
+        480.2758329999633,
+        390.2815419998951,
+        599.1479160003364,
+        485.69879100006074,
+        818.762374999933,
+        608.347250000108,
+        504.3723329999484,
+        582.1819170000963,
+        591.4642920000479,
+        781.6194169996306,
+        1302.9260420002975,
+        627.8234999999404,
+        433.94029199983925
+      ],
+      "failures": [
+        {
+          "category": "UNCLASSIFIED",
+          "detail": "page.waitForURL: Timeout 5000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================",
+          "tool": "browser_action",
+          "rawArgs": "{\"action\":\"click\",\"name\":\"Place sandbox order\",\"role\":\"button\",\"wait_for\":\"navigation\"}"
+        }
+      ]
+    }
+  ]
+}

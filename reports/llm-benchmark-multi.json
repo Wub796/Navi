@@ -1,0 +1,185 @@
+{
+  "status": "measured",
+  "recordedAt": "2026-10-24T23:15:04.444Z",
+  "node": "v22.23.3",
+  "endpoint": "http://127.0.0.1:11434/v1",
+  "iterations": 40,
+  "concurrency": null,
+  "models": [
+    {
+      "model": "beam:cloud",
+      "label": "beam-cloud",
+      "wallMs": 0,
+      "preflight": {
+        "models": [
+          "gpt-oss:120b-cloud",
+          "gpt-oss:20b-cloud",
+          "beam:cloud",
+          "gemma4:31b-cloud",
+          "qwen2.5:7b",
+          "llama3.2:3b",
+          "qwen2.5-coder:7b"
+        ],
+        "modelCount": 7,
+        "probeMs": 840.6322079999999
+      },
+      "report": "LLM-TCR-BENCHMARK-LIVE-HARD-beam-cloud.md",
+      "raw": "llm-benchmark-live-hard-beam-cloud.json",
+      "iterationPairs": 40,
+      "paths": {
+        "raw-playwright": {
+          "successes": 33,
+          "trials": 40,
+          "rate": 0.825,
+          "ci": [
+            0.6805000966821229,
+            0.9125458625396408
+          ],
+          "meanSteps": 19.475
+        },
+        "navi-differential": {
+          "successes": 23,
+          "trials": 40,
+          "rate": 0.575,
+          "ci": [
+            0.42195068541991065,
+            0.7149060744004962
+          ],
+          "meanSteps": 15.725
+        }
+      },
+      "cells": {
+        "both": 20,
+        "naviOnly": 3,
+        "rawOnly": 13,
+        "neither": 4
+      },
+      "difference": {
+        "observed": -0.25,
+        "low": -0.425,
+        "high": -0.075,
+        "resamples": 20000,
+        "level": 0.95
+      },
+      "pValue": 0.021270751953125003,
+      "verdict": "worse than baseline"
+    },
+    {
+      "model": "gemma4:31b-cloud",
+      "label": "gemma4-31b-cloud",
+      "wallMs": 0,
+      "preflight": {
+        "models": [
+          "gpt-oss:120b-cloud",
+          "gpt-oss:20b-cloud",
+          "beam:cloud",
+          "gemma4:31b-cloud",
+          "qwen2.5:7b",
+          "llama3.2:3b",
+          "qwen2.5-coder:7b"
+        ],
+        "modelCount": 7,
+        "probeMs": 444.68487500000003
+      },
+      "report": "LLM-TCR-BENCHMARK-LIVE-HARD-gemma4-31b-cloud.md",
+      "raw": "llm-benchmark-live-hard-gemma4-31b-cloud.json",
+      "iterationPairs": 40,
+      "paths": {
+        "raw-playwright": {
+          "successes": 38,
+          "trials": 40,
+          "rate": 0.95,
+          "ci": [
+            0.8349612263085903,
+            0.9861793326138516
+          ],
+          "meanSteps": 18.2
+        },
+        "navi-differential": {
+          "successes": 40,
+          "trials": 40,
+          "rate": 1,
+          "ci": [
+            0.9123783988027135,
+            1
+          ],
+          "meanSteps": 14.9
+        }
+      },
+      "cells": {
+        "both": 38,
+        "naviOnly": 2,
+        "rawOnly": 0,
+        "neither": 0
+      },
+      "difference": {
+        "observed": 0.05,
+        "low": 0,
+        "high": 0.125,
+        "resamples": 20000,
+        "level": 0.95
+      },
+      "pValue": 0.5,
+      "verdict": "not worse than baseline (within 10 points)"
+    },
+    {
+      "model": "qwen2.5:7b",
+      "label": "qwen2-5-7b",
+      "wallMs": 0,
+      "preflight": {
+        "models": [
+          "gpt-oss:120b-cloud",
+          "gpt-oss:20b-cloud",
+          "beam:cloud",
+          "gemma4:31b-cloud",
+          "qwen2.5:7b",
+          "llama3.2:3b",
+          "qwen2.5-coder:7b"
+        ],
+        "modelCount": 7,
+        "probeMs": 606.7916250000001
+      },
+      "report": "LLM-TCR-BENCHMARK-LIVE-HARD-qwen2-5-7b.md",
+      "raw": "llm-benchmark-live-hard-qwen2-5-7b.json",
+      "iterationPairs": 40,
+      "paths": {
+        "raw-playwright": {
+          "successes": 0,
+          "trials": 40,
+          "rate": 0,
+          "ci": [
+            0,
+            0.08762160119728664
+          ],
+          "meanSteps": 12.625
+        },
+        "navi-differential": {
+          "successes": 0,
+          "trials": 40,
+          "rate": 0,
+          "ci": [
+            0,
+            0.08762160119728664
+          ],
+          "meanSteps": 11.65
+        }
+      },
+      "cells": {
+        "both": 0,
+        "naviOnly": 0,
+        "rawOnly": 0,
+        "neither": 40
+      },
+      "difference": {
+        "observed": 0,
+        "low": 0,
+        "high": 0,
+        "resamples": 20000,
+        "level": 0.95
+      },
+      "pValue": 1,
+      "verdict": "inconclusive (both paths failed every trial)"
+    }
+  ],
+  "skipped": []
+}
