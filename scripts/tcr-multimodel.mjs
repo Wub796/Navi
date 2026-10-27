@@ -47,7 +47,8 @@ export function parseArgs(argv) {
     if (flag === '--models') {
       const value = argv[++i];
       if (!value) throw new Error('--models needs a comma-separated list');
-      options.models = value.split(',').map(model => model.trim()).filter(Boolean);
+      options.models = value.split(',').map(model => model.trim());
+      if (options.models.some(model => !model)) throw new Error('--models must contain non-empty model names');
     } else if (flag === '--iterations') options.iterations = number(argv[++i]);
     else if (flag === '--max-turns') options.maxTurns = number(argv[++i]);
     else if (flag === '--endpoint') options.endpoint = argv[++i] ?? options.endpoint;
@@ -57,7 +58,8 @@ export function parseArgs(argv) {
     else throw new Error(`Unknown argument ${flag}`);
   }
   if (new Set(options.models).size !== options.models.length) throw new Error('--models must not repeat a model');
-  if (options.help || options.reportOnly) return options;
+  if (options.help) return options;
+  if (options.reportOnly) return options;
   if (!options.models.length) throw new Error('--models is required');
   if (options.iterations < 1 || options.iterations > 200) throw new Error('--iterations must be 1–200');
   if (options.maxTurns < 1 || options.maxTurns > 50) throw new Error('--max-turns must be 1–50');
@@ -73,7 +75,8 @@ export function parseArgs(argv) {
  */
 async function runModel(job) {
   const label = slugFor(job.model);
-  const config = { baseUrl: job.baseUrl, model: job.model, iterations: job.iterations, maxTurns: job.maxTurns, hard: true, label, ...(job.preset ? { preset: job.preset } : {}) };
+  const apiKey = (process.env.LLM_API_KEY || '').trim() || undefined;
+  const config = { baseUrl: job.baseUrl, model: job.model, iterations: job.iterations, maxTurns: job.maxTurns, hard: true, label, ...(apiKey ? { apiKey } : {}), ...(job.preset ? { preset: job.preset } : {}) };
   const started = Date.now();
   /** @type {{ok: true, endpoint: string, models: string[], probeMs: number} | {ok: false, code: string, detail: string, instructions: string[]}} */
   let preflight;
@@ -110,7 +113,8 @@ function analyseRun(result) {
     preflight: result.preflight, report: 'LLM-TCR-BENCHMARK-LIVE-HARD-' + result.label + '.md',
     raw: 'llm-benchmark-live-hard-' + result.label + '.json',
     iterationPairs: analysis.iterationPairs,
-    paths: analysis.paths, cells: analysis.cells, difference: analysis.difference, pValue: analysis.pValue, verdict: analysis.verdict
+    paths: analysis.paths, cells: analysis.cells, difference: analysis.difference, pValue: analysis.pValue, verdict: analysis.verdict,
+    failureBuckets: Object.fromEntries((/** @type {any} */ (result.report).summaries ?? []).map((/** @type {{path: string, failureBuckets: Record<string, number>}} */ summary) => [summary.path, summary.failureBuckets]))
   };
 }
 
@@ -141,7 +145,7 @@ function renderReport(results, options) {
 
 The outcome is paired completion of the same local sandbox checkout: the same fixture, the same seed schedule, the same system prompt and the same two tool surfaces, alternating which path runs first. A pair is matched by iteration, so a model that failed the task failed it on both paths unless the paths differ.
 
-The decision rule was fixed before the run. A model is **not worse** when the paired 95% interval's lower bound is above −${(NON_INFERIORITY_MARGIN * 100).toFixed(0)} points; it is **superior** only when the exact McNemar test on the discordant pairs is below 0.05 in Navi's favour. Anything else is reported as inconclusive rather than rounded into a win. The interval's width is the study's resolution: a true difference inside it cannot be distinguished from zero here, and its lower bound is the number the non-inferiority rule reads. Completion counts are unaffected by wall-clock contention, but per-turn latency is not a controlled comparison and is not used here.
+The decision rule was fixed before the run. A model is **not worse** when the paired 95% interval's lower bound is above −${(NON_INFERIORITY_MARGIN * 100).toFixed(0)} points; it is **superior** or **worse than baseline** only when the exact McNemar test on discordant pairs is below 0.05 in that path's favour. An observed difference without directional evidence is not described as an established win or regression. The interval's width is the study's resolution: a true difference inside it cannot be distinguished from zero here, and its lower bound is the number the non-inferiority rule reads. Completion counts are unaffected by wall-clock contention, but per-turn latency is not a controlled comparison and is not used here.
 
 This is one fixture, one machine, and ${completed.length} ${modelNoun}. It says how these models did on this task. It is not a claim about model capability, real websites, logins, uploads or multi-tab flows.
 
@@ -154,7 +158,7 @@ This is one fixture, one machine, and ${completed.length} ${modelNoun}. It says 
     if (!analysis) return '';
     const navi = analysis.paths['navi-differential'];
     const raw = analysis.paths['raw-playwright'];
-    return `| ${analysis.model} | ${navi.successes}/${navi.trials} (${pct(navi.rate)}) | ${raw.successes}/${raw.trials} (${pct(raw.rate)}) | ${((analysis.difference?.observed ?? 0) * 100).toFixed(1)} | ${points(analysis.difference)} | ${analysis.cells.naviOnly} / ${analysis.cells.rawOnly} | ${analysis.pValue === null ? 'n/a' : analysis.pValue.toFixed(3)} | ${analysis.verdict} |`;
+    return `| ${analysis.model} | ${navi.successes}/${navi.trials} (${pct(navi.rate)}) | ${raw.successes}/${raw.trials} (${pct(raw.rate)}) | ${((analysis.difference?.observed ?? 0) * 100).toFixed(1)} | ${points(analysis.difference)} | ${analysis.cells.naviOnly} / ${analysis.cells.rawOnly} | ${analysis.pValue === null ? 'n/a' : analysis.pValue.toPrecision(3)} | ${analysis.verdict} |`;
   }).join('\n');
   const skipped = results.filter(result => !result.report);
   const skippedBlock = skipped.length
@@ -172,9 +176,11 @@ This is one fixture, one machine, and ${completed.length} ${modelNoun}. It says 
 ## Method
 
 - ${size} matched iterations per model; the iteration number is the fixture seed and is shared by both paths, so every pair ran the same task schedule.
-- Each model was preflighted with a real tool-calling request before any task started.
+- Each model was preflighted with a real tool-calling request before any task started. Each turn had a 4096-token output budget so a thinking model could finish reasoning and still emit its tool call; with the earlier 1200-token cap, one model repeatedly returned empty turns with no tool call, and raising the budget removed them, so the runs that used the cap were discarded rather than counted as model failures.
+- One gpt-oss:20b Playwright trial failed before making progress with HTTP 500 from the model endpoint; it remains in the 40-pair raw data, marked as a provider/harness error rather than hidden or replaced.
 - The hard variant answers the shipping quote after a 2.5s delay and refuses the first order submission with a validation message while committing nothing.
 - Both paths are driven from the same event loop and the same browser; the raw path uses Playwright role locators and the Navi path uses discovery plus guarded execution.
+- A settlement that did not confirm keeps its full receipt, with its page messages, navigated flag and settle hint, and also carries the failure marker the planner acts on; it is not replaced by an opaque error. The Navi action-map cursor is then reset so the next read is a full snapshot instead of an empty delta. Both paths are given the same chance to read the page and recover. A recovered timeout is still recorded in the failure buckets, so a bucket counts events rather than failed trials; completion is the independent order oracle alone.
 - All trials are retained, including failures. Raw records:
 
 ${links}
@@ -190,9 +196,19 @@ Provider tokens, cached prompt tokens and per-turn latency are in each per-model
  * a run without repeating the model calls, and a model can be added later without
  * re-running the others.
  */
-async function reportFromRecords() {
+async function reportFromRecords(modelNames = /** @type {string[]} */ ([])) {
   const directory = new URL('../reports/', import.meta.url);
-  const names = (await readdir(directory)).filter(name => /^llm-benchmark-live-hard-[a-z0-9-]+\.json$/.test(name)).sort();
+  const selectedLabels = new Set();
+  for (const model of modelNames) {
+    const label = slugFor(model);
+    const existing = selectedLabels.has(label);
+    if (existing) throw new Error(`--models contains duplicate labels after normalization: ${model}`);
+    selectedLabels.add(label);
+  }
+  const names = (await readdir(directory))
+    .filter(name => /^llm-benchmark-live-hard-[a-z0-9-]+\.json$/.test(name))
+    .filter(name => !selectedLabels.size || selectedLabels.has(name.slice('llm-benchmark-live-hard-'.length, -'.json'.length)))
+    .sort();
   /** @type {Awaited<ReturnType<typeof runModel>>[]} */
   const results = [];
   for (const name of names) {
@@ -206,9 +222,10 @@ async function reportFromRecords() {
   }
   const iterations = Math.max(...results.map(result => Math.floor(/** @type {any} */ (result.report).trials.length / 2)));
   await writeFile(REPORT, renderReport(results, { iterations, concurrency: 0 }));
+  const endpoints = [...new Set(results.map(result => /** @type {any} */ (result.report).endpoint ?? null))];
   const summary = {
     status: 'measured', recordedAt: new Date().toISOString(), node: process.version,
-    endpoint: /** @type {any} */ (results[0].report).endpoint ?? null, iterations, concurrency: null,
+    endpoint: endpoints.length === 1 ? endpoints[0] : null, iterations, concurrency: null,
     models: results.map(analyseRun).filter(Boolean), skipped: []
   };
   await writeFile(SUMMARY, JSON.stringify(summary, null, 2) + '\n');
@@ -226,10 +243,10 @@ export async function main(argv) {
     return 2;
   }
   if (options.help) {
-    console.log('Usage: node scripts/tcr-multimodel.mjs --models <model>[,<model>...] [--iterations 80] [--max-turns 25] [--endpoint ollama|URL] [--concurrency 3]\n       node scripts/tcr-multimodel.mjs --report-only   # rebuild the combined report from the labelled raw records');
+    console.log('Usage: node scripts/tcr-multimodel.mjs --models <model>[,<model>...] [--iterations 80] [--max-turns 25] [--endpoint ollama|URL] [--concurrency 3]\n       node scripts/tcr-multimodel.mjs --report-only [--models <model>[,<model>...]]   # rebuild from all records, or only named records');
     return 0;
   }
-  if (options.reportOnly) return reportFromRecords();
+  if (options.reportOnly) return reportFromRecords(options.models);
   const presetName = Object.keys(LOCAL_INFERENCE_PRESETS).find(name => name === options.endpoint.toLowerCase());
   const preset = presetName ? LOCAL_INFERENCE_PRESETS[presetName] : undefined;
   const baseUrl = preset ? preset.baseUrl : options.endpoint;

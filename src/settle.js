@@ -42,7 +42,16 @@ const NAVIGATION_POLL_MS = 50;
 /** @typedef {'mutation_settle'|'navigation'|'target_hidden'} SettleMode */
 /** @typedef {{waitFor: SettleMode, timeoutMs: number, quietMs: number}} SettlePlan */
 /** @typedef {{token: string | null, beforeUrl: string | null, armed: boolean}} SettlePreparation */
-/** @typedef {{settled: boolean, elapsedMs: number, reason?: string}} SettleOutcome */
+/**
+ * @typedef {object} SettleOutcome
+ * @property {boolean} settled Whether the requested condition held.
+ * @property {number} elapsedMs Time from dispatch to the receipt.
+ * @property {string} [reason] Why the condition held or did not.
+ * @property {boolean} [navigated] Whether the top-level URL changed or the document
+ *   reloaded while the wait was armed. Absent for modes that do not capture a
+ *   starting URL. This is what lets a caller tell "the submit navigated" apart from
+ *   "the click applied and the page handled it in place" when both settle.
+ */
 
 /**
  * Structural subset of a Playwright page used by the settle waits. Typed
@@ -201,28 +210,28 @@ export async function completeSettle(page, plan, targetId, prepared) {
   try {
     if (plan.waitFor === 'navigation') {
       if (!prepared.armed || !prepared.token) return { settled: false, elapsedMs: 0, reason: 'arm_failed' };
-      if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: 0 };
+      if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: 0, navigated: true };
       const started = Date.now();
       // Polled from the driver rather than through the page, because the page is
       // exactly what a navigation takes away: `waitForFunction` rejects with
       // "execution context was destroyed" at the moment the wait should succeed.
       while (Date.now() - started < plan.timeoutMs) {
         await new Promise(resolve => setTimeout(resolve, NAVIGATION_POLL_MS));
-        if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: Date.now() - started };
+        if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: Date.now() - started, navigated: true };
         try {
           const token = await page.evaluate(() => /** @type {any} */ (globalThis).__naviSettleToken);
           // A reload of the same URL brings a fresh document, so the marker is gone.
-          if (token !== prepared.token) return { settled: true, elapsedMs: Date.now() - started };
+          if (token !== prepared.token) return { settled: true, elapsedMs: Date.now() - started, navigated: true };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           // A destroyed context can precede commit: page.url() may still be the
           // old URL. Keep polling until an observed URL/document change proves
           // navigation, rather than returning a premature final_url receipt.
           if (/execution context was destroyed|navigat/i.test(message)) continue;
-          return { settled: false, elapsedMs: Date.now() - started, reason: 'settle_failed' };
+          return { settled: false, elapsedMs: Date.now() - started, reason: 'settle_failed', navigated: false };
         }
       }
-      return { settled: false, elapsedMs: Date.now() - started, reason: 'timeout' };
+      return { settled: false, elapsedMs: Date.now() - started, reason: 'timeout', navigated: false };
     }
 
     if (plan.waitFor === 'mutation_settle') {
@@ -240,8 +249,8 @@ export async function completeSettle(page, plan, targetId, prepared) {
           try {
             for (;;) {
               const now = performance.now();
-              if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start };
-              if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: 'timeout' };
+              if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start, navigated: false };
+              if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: 'timeout', navigated: false };
               await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - now))));
             }
           } finally {
@@ -254,7 +263,17 @@ export async function completeSettle(page, plan, targetId, prepared) {
         // the page reports that as a settled:false `not_armed`. That is the same
         // replacement a destroyed context reports, so it is reconciled below rather than
         // returned as an unsettled wait the caller cannot act on.
-        if (outcome.settled || outcome.reason !== 'not_armed') return outcome;
+        if (outcome.settled) {
+          let navigated = prepared.beforeUrl !== null && page.url() !== prepared.beforeUrl;
+          if (!navigated) {
+            try {
+              const token = await page.evaluate(() => /** @type {any} */ (globalThis).__naviSettleToken);
+              navigated = token !== prepared.token;
+            } catch { /* an unreadable page is not affirmative navigation evidence */ }
+          }
+          return { ...outcome, navigated };
+        }
+        if (outcome.reason !== 'not_armed') return outcome;
         failed = outcome;
       } catch (error) {
         // A context that died mid-wait reports the same replacement less politely: the
@@ -264,7 +283,7 @@ export async function completeSettle(page, plan, targetId, prepared) {
       const elapsedMs = Date.now() - started;
       // Either way, the wait is settled only by a replacement it can actually observe.
       if (await documentReplaced(page, prepared, plan.timeoutMs - elapsedMs)) {
-        return { settled: true, elapsedMs, reason: 'document_replaced' };
+        return { settled: true, elapsedMs, reason: 'document_replaced', navigated: true };
       }
       return { ...failed, elapsedMs };
     }

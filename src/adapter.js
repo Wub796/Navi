@@ -25,7 +25,8 @@ import { completeSettle, normalizeSettle, prepareSettle } from './settle.js';
  * @property {AdapterMode} [mode]
  * @property {string} [resolved_from] The handle that was resolved to a target id, when it was not one.
  * @property {string[]} [page_messages] Live-region text the action made the page say, when it said anything new.
- * @property {{mode:string,settled:boolean,elapsed_ms:number,final_url:string,reason?:string}} [settle] Present only when the caller requested settlement.
+ * @property {{available:boolean,reason?:string,before_state_version?:number,target?:{target_id:string,role:string,name:string,state:NaviAction['state']}|null,after?:{state_version:number,reset:boolean,targets:{target_id:string,role:string,name:string,state:NaviAction['state'],suggested_action:string}[],removed:string[],total:number,truncated:boolean}}} [action_trace] Optional pre-action target and post-action action-map changes; DOM evidence only.
+ * @property {{mode:string,settled:boolean,elapsed_ms:number,final_url:string,navigated?:boolean,reason?:string}} [settle] Present only when the caller requested settlement.
  */
 /**
  * Optional post-action settlement, forwarded from the caller. "mutation_settle"
@@ -33,6 +34,7 @@ import { completeSettle, normalizeSettle, prepareSettle } from './settle.js';
  * change or document reload, "target_hidden" waits for the dispatched target to
  * leave the action map or be reported invisible/occluded.
  * @typedef {{timeout_ms?:number,wait_for?:'mutation_settle'|'navigation'|'target_hidden'}} SettleRequest
+ * @typedef {{captureChanges?:boolean}} AdapterExecuteOptions
  */
 /**
  * Structural subset of a Playwright page used by the adapter.
@@ -380,9 +382,10 @@ export class NaviPlaywrightAdapter {
    * @param {'click'|'type'|'select'|string} actionType
    * @param {{text?: string, value?: string}} [payload]
    * @param {unknown} [settle] Optional settlement request, validated by src/settle.js.
+   * @param {AdapterExecuteOptions} [options] Opt-in capture of bounded before/after map evidence.
    * @returns {Promise<AdapterResult>}
    */
-  async execute(targetId, actionType, payload = {}, settle) {
+  async execute(targetId, actionType, payload = {}, settle, options = {}) {
     this.checkOrigin();
     if (this.busy) return { ok: false, error: { code: 'BUSY', message: 'Adapter execution in flight' } };
     if (!targetId || typeof targetId !== 'string' || targetId.length > 512 || !ACTIONS.includes(actionType) ||
@@ -390,6 +393,11 @@ export class NaviPlaywrightAdapter {
       Object.keys(payload).some(key => key !== (actionType === 'type' ? 'text' : actionType === 'select' ? 'value' : '')) ||
       (actionType === 'type' && (typeof payload.text !== 'string' || payload.text.length > MAX_TEXT))) {
       return { ok: false, error: { code: 'INVALID_PAYLOAD', message: 'Invalid adapter command' } };
+    }
+    if (!options || typeof options !== 'object' || Array.isArray(options) ||
+      Object.keys(options).some(key => key !== 'captureChanges') ||
+      (options.captureChanges !== undefined && typeof options.captureChanges !== 'boolean')) {
+      return { ok: false, error: { code: 'INVALID_PAYLOAD', message: 'Invalid adapter execution options' } };
     }
     let plan = null;
     if (settle !== undefined) {
@@ -399,6 +407,14 @@ export class NaviPlaywrightAdapter {
     }
     this.busy = true;
     try {
+      // Capture is opt-in because a full pre-action map adds work to every call.
+      // Failure to collect optional evidence must never block the requested action.
+      /** @type {NaviActionMap | null} */
+      let beforeMap = null;
+      if (options.captureChanges) {
+        try { beforeMap = /** @type {NaviActionMap} */ (await this.discover({ viewportOnly: false, limit: 5000 })); }
+        catch { /* execute without optional trace evidence */ }
+      }
       // Read before arming, so a message the action itself produces is new rather
       // than part of the baseline.
       const before = await this.pageMessages();
@@ -410,9 +426,61 @@ export class NaviPlaywrightAdapter {
       // Read after settlement, from whichever document is there now: a replaced
       // document is read, not reported as absent.
       const messages = addedMessages(before, await this.pageMessages());
-      return messages.length ? { ...outcome, page_messages: messages } : outcome;
+      const withMessages = messages.length ? { ...outcome, page_messages: messages } : outcome;
+      if (!options.captureChanges) return withMessages;
+      return { ...withMessages, action_trace: await this.#captureActionTrace(beforeMap, targetId, outcome) };
     } finally {
       this.busy = false;
+    }
+  }
+
+  /**
+   * Capture a bounded before/after semantic record. A reset after navigation is
+   * reported as a full snapshot, not mislabeled as a delta. The record is browser
+   * evidence only; callers still need an independent business-state assertion.
+   * @param {NaviActionMap | null} before
+   * @param {string} requestedTarget
+   * @param {AdapterResult} outcome
+   */
+  async #captureActionTrace(before, requestedTarget, outcome) {
+    if (!outcome.ok || outcome.result?.dispatched !== true) return { available: false, reason: 'action_not_dispatched' };
+    if (!before) return { available: false, reason: 'pre_action_map_unavailable' };
+    try {
+      const after = /** @type {NaviActionMap | NaviDifferentialMap} */ (await this.discover({
+        viewportOnly: false, limit: 5000, since_version: before.state_version
+      }));
+      const targetId = outcome.result?.target_id ?? requestedTarget;
+      const target = before.actions.find(action => action.target_id === targetId);
+      const actions = after.actions;
+      const changes = actions.slice(0, 12);
+      /** @type {{target_id:string,role:string,name:string,state:NaviAction['state'],suggested_action:string}[]} */
+      const targets = [];
+      for (const action of changes) {
+        if ('removed' in action) continue;
+        targets.push({
+          target_id: action.target_id,
+          role: action.role,
+          name: action.name,
+          state: action.state,
+          suggested_action: action.suggested_action
+        });
+      }
+      const removed = changes.filter(action => 'removed' in action).map(action => action.target_id);
+      return {
+        available: true,
+        before_state_version: before.state_version,
+        target: target ? { target_id: target.target_id, role: target.role, name: target.name, state: target.state } : null,
+        after: {
+          state_version: after.state_version,
+          reset: after.reset,
+          targets,
+          removed,
+          total: actions.length,
+          truncated: actions.length > 12
+        }
+      };
+    } catch {
+      return { available: false, reason: 'post_action_map_unavailable' };
     }
   }
 
@@ -481,6 +549,7 @@ export class NaviPlaywrightAdapter {
       result: { target_id: id, action: actionType, dispatched: true },
       mode: 'synthetic',
       settle: { mode: plan ? plan.waitFor : 'mutation_settle', settled: true, elapsed_ms: Date.now() - dispatchedAt, final_url: this.page.url(),
+        ...(receipt.navigated !== undefined ? { navigated: receipt.navigated } : {}),
         ...(receipt.reason ? { reason: receipt.reason } : {}) }
     });
 
@@ -575,6 +644,7 @@ export class NaviPlaywrightAdapter {
         settled: receipt.settled,
         elapsed_ms: Date.now() - dispatchedAt,
         final_url: this.page.url(),
+        ...(receipt.navigated !== undefined ? { navigated: receipt.navigated } : {}),
         ...(receipt.reason ? { reason: receipt.reason } : {})
       }
     };

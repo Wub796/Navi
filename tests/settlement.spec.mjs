@@ -95,12 +95,19 @@ test.describe('settlement receipts from the adapter', () => {
   test('mutation_settle waits for the DOM insert an action makes', async ({ page, baseURL }) => {
     await page.goto(`${baseURL}/settlement.html`);
     const adapter = new NaviPlaywrightAdapter(page);
-    const result = await adapter.execute('open-modal', 'click', {}, { wait_for: 'mutation_settle', timeout_ms: 3000 });
+    const result = await adapter.execute('open-modal', 'click', {}, { wait_for: 'mutation_settle', timeout_ms: 3000 }, { captureChanges: true });
     expect(result.ok, JSON.stringify(result)).toBe(true);
     expect(result.settle?.mode).toBe('mutation_settle');
     expect(result.settle?.settled).toBe(true);
     expect(result.settle?.elapsed_ms).toBeGreaterThan(0);
     expect(result.settle?.final_url).toContain('/settlement.html');
+    // Opt-in trace captures the target before dispatch and the inserted control afterward.
+    expect(result.action_trace?.available).toBe(true);
+    expect(result.action_trace?.target).toMatchObject({ target_id: 'open-modal', role: 'button', name: 'Open the offer' });
+    expect(result.action_trace?.after?.state_version).toEqual(expect.any(Number));
+    expect(result.action_trace?.after?.reset).toBe(false);
+    expect(result.action_trace?.after?.targets.map(action => action.target_id)).toContain('close-modal');
+    expect(result.action_trace?.after?.removed).toEqual([]);
     // The wait is load-bearing: the control the click inserted is discoverable.
     const map = await adapter.discover({ limit: 5000 });
     expect(map.actions.map(action => action.target_id)).toContain('close-modal');
@@ -147,6 +154,26 @@ test.describe('settlement receipts from the adapter', () => {
     expect(result.settle?.elapsed_ms).toBeGreaterThanOrEqual(400);
   });
 
+  test('a same-URL reload is an observed navigation', async ({ page, baseURL }) => {
+    await page.goto(`${baseURL}/settlement.html`);
+    const adapter = new NaviPlaywrightAdapter(page);
+    await page.evaluate(() => {
+      const button = document.createElement('button');
+      button.id = 'reload-same-url';
+      button.textContent = 'Reload this page';
+      button.addEventListener('click', () => location.reload());
+      document.body.append(button);
+    });
+    const map = await adapter.discover({ limit: 5000 });
+    const reload = map.actions.find(action => action.name === 'Reload this page');
+    expect(reload).toBeTruthy();
+    const result = await adapter.execute(reload?.target_id ?? '', 'click', {}, { wait_for: 'navigation', timeout_ms: 5000 });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    expect(result.settle?.settled).toBe(true);
+    expect(result.settle?.navigated).toBe(true);
+    expect(result.settle?.final_url).toContain('/settlement.html');
+  });
+
   test('navigation waits for the URL change even when the context dies mid-dispatch', async ({ page, baseURL }) => {
     await page.goto(`${baseURL}/settlement.html`);
     const adapter = new NaviPlaywrightAdapter(page);
@@ -157,8 +184,38 @@ test.describe('settlement receipts from the adapter', () => {
     expect(result.result?.dispatched).toBe(true);
     expect(result.settle?.mode).toBe('navigation');
     expect(result.settle?.settled).toBe(true);
+    expect(result.settle?.navigated).toBe(true);
     expect(result.settle?.final_url).toContain('step=2');
     expect(page.url()).toContain('step=2');
+  });
+
+  test('a navigation wait on a click that stays on the page reports navigated:false and keeps the action', async ({ page, baseURL }) => {
+    await page.goto(`${baseURL}/settlement.html`);
+    const adapter = new NaviPlaywrightAdapter(page);
+    // The submit-shaped case from the benchmark: the caller expected a navigation,
+    // the page handled the click in place. The timeout is a receipt, not a failed
+    // action, and `navigated:false` is what lets a planner tell the two apart.
+    const result = await adapter.execute('inert', 'click', {}, { wait_for: 'navigation', timeout_ms: 400 });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    expect(result.result?.dispatched).toBe(true);
+    expect(result.settle?.settled).toBe(false);
+    expect(result.settle?.reason).toBe('timeout');
+    expect(result.settle?.navigated).toBe(false);
+    expect(result.settle?.final_url).toContain('/settlement.html');
+  });
+
+  test('mutation_settle reports whether the document was replaced', async ({ page, baseURL }) => {
+    await page.goto(`${baseURL}/settlement.html`);
+    const adapter = new NaviPlaywrightAdapter(page);
+    expect((await adapter.execute('inert', 'click', {}, { wait_for: 'mutation_settle', timeout_ms: 1000 })).settle?.navigated).toBe(false);
+    const inPlace = await adapter.execute('open-modal', 'click', {}, { wait_for: 'mutation_settle', timeout_ms: 3000 });
+    expect(inPlace.settle?.settled, JSON.stringify(inPlace)).toBe(true);
+    expect(inPlace.settle?.navigated).toBe(false);
+
+    await page.goto(`${baseURL}/settlement.html`);
+    const navigating = await adapter.execute('go-step', 'click', {}, { wait_for: 'mutation_settle', timeout_ms: 5000 });
+    expect(navigating.settle?.settled, JSON.stringify(navigating)).toBe(true);
+    expect(navigating.settle?.navigated).toBe(true);
   });
 
   test('the same navigating click settles a mutation wait instead of failing it', async ({ page, baseURL }) => {
@@ -215,13 +272,14 @@ test('navi_execute_action returns the settlement receipt in its envelope', async
     const tool = listed.tools.find(candidate => candidate.name === 'navi_execute_action');
     expect(tool, 'navi_execute_action must be advertised').toBeTruthy();
     expect(Object.keys(tool?.inputSchema?.properties ?? {})).toContain('settle');
+    expect(Object.keys(tool?.inputSchema?.properties ?? {})).toContain('capture_changes');
 
     const nav = await client.callTool({ name: 'navi_navigate', arguments: { url: `${baseURL}/settlement.html` } });
     expect(envelope(nav).ok).toBe(true);
 
     const settled = await client.callTool({
       name: 'navi_execute_action',
-      arguments: { target_id: 'open-modal', action_type: 'click', settle: { wait_for: 'mutation_settle', timeout_ms: 3000 } }
+      arguments: { target_id: 'open-modal', action_type: 'click', settle: { wait_for: 'mutation_settle', timeout_ms: 3000 }, capture_changes: true }
     });
     const body = envelope(settled);
     expect(settled.isError, JSON.stringify(body)).toBeFalsy();
@@ -231,6 +289,10 @@ test('navi_execute_action returns the settlement receipt in its envelope', async
     expect(typeof body.elapsed_ms).toBe('number');
     expect(body.final_url).toContain('/settlement.html');
     expect(body.settle).toBe('mutation_settle');
+    expect(body.action_trace?.available).toBe(true);
+    expect(body.action_trace?.target).toMatchObject({ target_id: 'open-modal', role: 'button', name: 'Open the offer' });
+    expect(body.action_trace?.after?.targets.map((/** @type {{target_id:string}} */ action) => action.target_id)).toContain('close-modal');
+    expect(body.action_trace?.after?.reset).toBe(false);
 
     // A refused request is a tool error with actionable guidance, and the action
     // is not dispatched.
@@ -246,6 +308,35 @@ test('navi_execute_action returns the settlement receipt in its envelope', async
     const plain = envelope(await client.callTool({ name: 'navi_execute_action', arguments: { target_id: 'inert', action_type: 'click' } }));
     expect(plain.executed).toBe(true);
     expect(plain.settled).toBeUndefined();
+
+    // An unsettled navigation is reported with the evidence a caller needs to
+    // recover: the action was dispatched, no navigation happened, and the page is
+    // where the answer is. It is not a failed execution.
+    const stayed = envelope(await client.callTool({
+      name: 'navi_execute_action',
+      arguments: { target_id: 'inert', action_type: 'click', settle: { wait_for: 'navigation', timeout_ms: 400 } }
+    }));
+    expect(stayed.executed).toBe(true);
+    expect(stayed.dispatched).toBe(true);
+    expect(stayed.settled).toBe(false);
+    expect(stayed.settle).toBe('navigation');
+    expect(stayed.navigated).toBe(false);
+    expect(stayed.settle_hint).toContain('no URL change');
+    expect(stayed.settle_hint).toContain('before deciding whether the page accepted the action');
+    expect(envelope(await client.callTool({
+      name: 'navi_execute_action',
+      arguments: { target_id: 'inert', action_type: 'click', capture_changes: 'yes' }
+    })).error?.code).toBe('INVALID_PAYLOAD');
+
+    // A navigation that happened reports it, and offers no recovery hint.
+    const navigated = envelope(await client.callTool({
+      name: 'navi_execute_action',
+      arguments: { target_id: 'go-step', action_type: 'click', settle: { wait_for: 'navigation', timeout_ms: 5000 } }
+    }));
+    expect(navigated.executed, JSON.stringify(navigated)).toBe(true);
+    expect(navigated.settled).toBe(true);
+    expect(navigated.navigated).toBe(true);
+    expect(navigated.settle_hint).toBeUndefined();
   } finally {
     await client.close();
   }

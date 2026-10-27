@@ -143,24 +143,24 @@ async function completeSettle(page, plan, targetId, prepared) {
   try {
     if (plan.waitFor === "navigation") {
       if (!prepared.armed || !prepared.token) return { settled: false, elapsedMs: 0, reason: "arm_failed" };
-      if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: 0 };
+      if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: 0, navigated: true };
       const started = Date.now();
       while (Date.now() - started < plan.timeoutMs) {
         await new Promise((resolve3) => setTimeout(resolve3, NAVIGATION_POLL_MS));
-        if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: Date.now() - started };
+        if (page.url() !== prepared.beforeUrl) return { settled: true, elapsedMs: Date.now() - started, navigated: true };
         try {
           const token = await page.evaluate(() => (
             /** @type {any} */
             globalThis.__naviSettleToken
           ));
-          if (token !== prepared.token) return { settled: true, elapsedMs: Date.now() - started };
+          if (token !== prepared.token) return { settled: true, elapsedMs: Date.now() - started, navigated: true };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (/execution context was destroyed|navigat/i.test(message)) continue;
-          return { settled: false, elapsedMs: Date.now() - started, reason: "settle_failed" };
+          return { settled: false, elapsedMs: Date.now() - started, reason: "settle_failed", navigated: false };
         }
       }
-      return { settled: false, elapsedMs: Date.now() - started, reason: "timeout" };
+      return { settled: false, elapsedMs: Date.now() - started, reason: "timeout", navigated: false };
     }
     if (plan.waitFor === "mutation_settle") {
       if (!prepared.armed) return { settled: false, elapsedMs: 0, reason: "arm_failed" };
@@ -181,8 +181,8 @@ async function completeSettle(page, plan, targetId, prepared) {
             try {
               for (; ; ) {
                 const now = performance.now();
-                if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start };
-                if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: "timeout" };
+                if (now - state.last >= state.quietMs) return { settled: true, elapsedMs: now - start, navigated: false };
+                if (now >= deadline) return { settled: false, elapsedMs: now - start, reason: "timeout", navigated: false };
                 await new Promise((resolve3) => setTimeout(resolve3, Math.min(50, Math.max(1, deadline - now))));
               }
             } finally {
@@ -191,14 +191,28 @@ async function completeSettle(page, plan, targetId, prepared) {
             }
           }, { timeoutMs: plan.timeoutMs })
         );
-        if (outcome2.settled || outcome2.reason !== "not_armed") return outcome2;
+        if (outcome2.settled) {
+          let navigated = prepared.beforeUrl !== null && page.url() !== prepared.beforeUrl;
+          if (!navigated) {
+            try {
+              const token = await page.evaluate(() => (
+                /** @type {any} */
+                globalThis.__naviSettleToken
+              ));
+              navigated = token !== prepared.token;
+            } catch {
+            }
+          }
+          return { ...outcome2, navigated };
+        }
+        if (outcome2.reason !== "not_armed") return outcome2;
         failed = outcome2;
       } catch (error) {
         failed = { settled: false, elapsedMs: 0, reason: `settle_failed: ${error instanceof Error ? error.message : String(error)}` };
       }
       const elapsedMs = Date.now() - started;
       if (await documentReplaced(page, prepared, plan.timeoutMs - elapsedMs)) {
-        return { settled: true, elapsedMs, reason: "document_replaced" };
+        return { settled: true, elapsedMs, reason: "document_replaced", navigated: true };
       }
       return { ...failed, elapsedMs };
     }
@@ -559,13 +573,17 @@ var NaviPlaywrightAdapter = class {
    * @param {'click'|'type'|'select'|string} actionType
    * @param {{text?: string, value?: string}} [payload]
    * @param {unknown} [settle] Optional settlement request, validated by src/settle.js.
+   * @param {AdapterExecuteOptions} [options] Opt-in capture of bounded before/after map evidence.
    * @returns {Promise<AdapterResult>}
    */
-  async execute(targetId, actionType, payload = {}, settle) {
+  async execute(targetId, actionType, payload = {}, settle, options = {}) {
     this.checkOrigin();
     if (this.busy) return { ok: false, error: { code: "BUSY", message: "Adapter execution in flight" } };
     if (!targetId || typeof targetId !== "string" || targetId.length > 512 || !ACTIONS.includes(actionType) || !payload || typeof payload !== "object" || Object.keys(payload).some((key) => key !== (actionType === "type" ? "text" : actionType === "select" ? "value" : "")) || actionType === "type" && (typeof payload.text !== "string" || payload.text.length > MAX_TEXT)) {
       return { ok: false, error: { code: "INVALID_PAYLOAD", message: "Invalid adapter command" } };
+    }
+    if (!options || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some((key) => key !== "captureChanges") || options.captureChanges !== void 0 && typeof options.captureChanges !== "boolean") {
+      return { ok: false, error: { code: "INVALID_PAYLOAD", message: "Invalid adapter execution options" } };
     }
     let plan = null;
     if (settle !== void 0) {
@@ -575,14 +593,77 @@ var NaviPlaywrightAdapter = class {
     }
     this.busy = true;
     try {
+      let beforeMap = null;
+      if (options.captureChanges) {
+        try {
+          beforeMap = /** @type {NaviActionMap} */
+          await this.discover({ viewportOnly: false, limit: 5e3 });
+        } catch {
+        }
+      }
       const before = await this.pageMessages();
       const prepared = plan ? await prepareSettle(this.page, plan) : null;
       const dispatchedAt = Date.now();
       const outcome = await this.#dispatch(targetId, actionType, payload, plan, prepared, dispatchedAt);
       const messages = addedMessages(before, await this.pageMessages());
-      return messages.length ? { ...outcome, page_messages: messages } : outcome;
+      const withMessages = messages.length ? { ...outcome, page_messages: messages } : outcome;
+      if (!options.captureChanges) return withMessages;
+      return { ...withMessages, action_trace: await this.#captureActionTrace(beforeMap, targetId, outcome) };
     } finally {
       this.busy = false;
+    }
+  }
+  /**
+   * Capture a bounded before/after semantic record. A reset after navigation is
+   * reported as a full snapshot, not mislabeled as a delta. The record is browser
+   * evidence only; callers still need an independent business-state assertion.
+   * @param {NaviActionMap | null} before
+   * @param {string} requestedTarget
+   * @param {AdapterResult} outcome
+   */
+  async #captureActionTrace(before, requestedTarget, outcome) {
+    if (!outcome.ok || outcome.result?.dispatched !== true) return { available: false, reason: "action_not_dispatched" };
+    if (!before) return { available: false, reason: "pre_action_map_unavailable" };
+    try {
+      const after = (
+        /** @type {NaviActionMap | NaviDifferentialMap} */
+        await this.discover({
+          viewportOnly: false,
+          limit: 5e3,
+          since_version: before.state_version
+        })
+      );
+      const targetId = outcome.result?.target_id ?? requestedTarget;
+      const target = before.actions.find((action) => action.target_id === targetId);
+      const actions = after.actions;
+      const changes = actions.slice(0, 12);
+      const targets = [];
+      for (const action of changes) {
+        if ("removed" in action) continue;
+        targets.push({
+          target_id: action.target_id,
+          role: action.role,
+          name: action.name,
+          state: action.state,
+          suggested_action: action.suggested_action
+        });
+      }
+      const removed = changes.filter((action) => "removed" in action).map((action) => action.target_id);
+      return {
+        available: true,
+        before_state_version: before.state_version,
+        target: target ? { target_id: target.target_id, role: target.role, name: target.name, state: target.state } : null,
+        after: {
+          state_version: after.state_version,
+          reset: after.reset,
+          targets,
+          removed,
+          total: actions.length,
+          truncated: actions.length > 12
+        }
+      };
+    } catch {
+      return { available: false, reason: "post_action_map_unavailable" };
     }
   }
   /**
@@ -652,6 +733,7 @@ var NaviPlaywrightAdapter = class {
         settled: true,
         elapsed_ms: Date.now() - dispatchedAt,
         final_url: this.page.url(),
+        ...receipt.navigated !== void 0 ? { navigated: receipt.navigated } : {},
         ...receipt.reason ? { reason: receipt.reason } : {}
       }
     });
@@ -736,6 +818,7 @@ var NaviPlaywrightAdapter = class {
         settled: receipt.settled,
         elapsed_ms: Date.now() - dispatchedAt,
         final_url: this.page.url(),
+        ...receipt.navigated !== void 0 ? { navigated: receipt.navigated } : {},
         ...receipt.reason ? { reason: receipt.reason } : {}
       }
     };

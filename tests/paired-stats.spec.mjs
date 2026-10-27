@@ -64,6 +64,9 @@ test('a paired model analysis matches trials by iteration and names what it cann
   expect(verdictFor({ observed: 0.1, low: -0.02, high: 0.2 }, 0.4, 80)).toBe('not worse than baseline (within 10 points)');
   expect(verdictFor({ observed: 0.15, low: 0.02, high: 0.28 }, 0.01, 80)).toBe('superior');
   expect(verdictFor({ observed: -0.2, low: -0.3, high: -0.1 }, 0.01, 80)).toBe('worse than baseline');
+  // A negative sample estimate whose interval overlaps zero is not labelled a
+  // regression unless the paired test establishes the directional effect.
+  expect(verdictFor({ observed: -0.125, low: -0.25, high: 0 }, 0.125, 40)).toBe('inconclusive');
   expect(verdictFor({ observed: 0.5, low: 0.4, high: 0.6 }, 0.001, 4)).toBe('inconclusive (only 4 pairs)');
   // A model that completes nothing on either path has no comparison to report,
   // even though its interval is technically above the margin.

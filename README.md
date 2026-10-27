@@ -154,7 +154,7 @@ Exit codes: `0` success, `1` flow/assertion failure, `2` usage or invalid flow, 
 | `navi_navigate` | Open an http(s) URL and wait for Navi initialization. Reports which SDK install strategy was used. |
 | `navi_get_actions` | Return the current action map. Viewport-filtered by default; `all: true` returns the whole document. `page_messages` carries the page's rendered live-region text (an alert, a validation reason, a status line) when it is saying anything. |
 | `navi_scroll_to` | Scroll a unique top-document `target_id` into view and return fresh state. Use `navi_get_actions({all:true})` to discover off-screen targets first. |
-| `navi_execute_action` | Run `click`/`type`/`select` on a `target_id`, or on a control's exact accessible name when it matches exactly one actionable control (reported back as `resolved_from`; an ambiguous or unknown handle is refused with `candidates`). Falls back to trusted native input at live coordinates for `data-navi-trusted="true"` controls. Pass `settle` to wait for a requested page condition before the call returns; the receipt also carries `page_messages`, the live-region text the action made the page say. |
+| `navi_execute_action` | Run `click`/`type`/`select` on a `target_id`, or on a control's exact accessible name when it matches exactly one actionable control (reported back as `resolved_from`; an ambiguous or unknown handle is refused with `candidates`). Falls back to trusted native input at live coordinates for `data-navi-trusted="true"` controls. Pass `settle` to wait for a requested page condition. Optional `capture_changes: true` adds the pre-action target identity/state and a bounded post-action semantic diff; navigation resets are marked explicitly. |
 | `navi_press_key` | Send Enter, Escape, Tab, arrows, or a supported key combination to current focus. Optional `target_id` checks focus and actionability first. Respects `--no-fallback`. |
 | `navi_read_text` | Read normalized, untrusted text from one top-level element, bounded to 2,000 characters by default and 4,000 maximum. |
 | `navi_assert_state` | Check that a target exists, is visible/enabled/in-viewport, and matches an expected accessible name. |
@@ -170,20 +170,21 @@ The default response remains the full map for existing clients. Compact observat
 
 #### Deterministic settlement
 
-An action returns when it is *dispatched*, which is not the same moment as the page having reacted. Pass `settle` to wait for one of three conditions before the call answers; the envelope then carries the receipt `{ executed: true, settled: true, elapsed_ms, final_url }`:
+An action returns when it is *dispatched*, which is not the same moment as the page having reacted. Pass `settle` to wait for one of three conditions before the call answers; the envelope then carries the receipt `{ executed: true, settled: true, elapsed_ms, final_url }`. Add `"capture_changes": true` to `navi_execute_action` to include the pre-action target identity/state and a bounded post-action list of changed or removed controls; full snapshots after navigation are marked `reset:true`. This costs an additional full-map read before dispatch and is intended for debugging, not normal operation. Accessible names may contain sensitive information, so review before logging or sharing the trace. It is DOM evidence—not an audit-grade durable log or proof of a saved transaction:
 
 ```jsonc
 { "target_id": "open-modal", "action_type": "click",
-  "settle": { "wait_for": "mutation_settle", "timeout_ms": 3000 } }
+  "settle": { "wait_for": "mutation_settle", "timeout_ms": 3000 },
+  "capture_changes": true }
 ```
 
 | `wait_for` | Waits until |
 |---|---|
 | `mutation_settle` (default) | the document, its open shadow roots and same-origin frames record no DOM mutation for 100 ms, or the action replaces the document outright, which settles as `settle_reason: "document_replaced"` |
-| `navigation` | the top-level URL changed, or the document reloaded |
+| `navigation` | the top-level URL changed, or the document reloaded; `navigated` reports whether that happened, so a submit handled in place is `settled: false, navigated: false` rather than an unexplained timeout |
 | `target_hidden` | the dispatched target left the action map, or Navi now reports it invisible or occluded (a dismissed modal) |
 
-A settlement is a **receipt, never a retry**. `settled: false` with `settle_reason: "timeout"` still reports `executed: true` and never re-dispatches; an invalid request (`INVALID_SETTLE`) is refused *before* anything is dispatched; and a call made without `settle` omits the receipt fields, so it cannot be mistaken for a verified one. `mutation_settle` observes the same surfaces Navi indexes — a mutation inside a *closed* root is invisible to the driver, so those actions should settle on `target_hidden` or be confirmed by re-reading the map. The adapter exposes the same option as a fourth argument: `tools.execute('open-modal', 'click', {}, { wait_for: 'target_hidden' })`.
+A settlement is a **receipt, never a retry**. `settled: false` with `settle_reason: "timeout"` still reports `executed: true` and never re-dispatches, and the MCP envelope carries `settle_hint` plus `page_messages`, so a caller sees that the dispatch landed, what the wait did not observe, and what the page said instead of having to guess; an invalid request (`INVALID_SETTLE`) is refused *before* anything is dispatched; and a call made without `settle` omits the receipt fields, so it cannot be mistaken for a verified one. `mutation_settle` observes the same surfaces Navi indexes — a mutation inside a *closed* root is invisible to the driver, so those actions should settle on `target_hidden` or be confirmed by re-reading the map. The adapter exposes the same option as a fourth argument: `tools.execute('open-modal', 'click', {}, { wait_for: 'target_hidden' })`.
 
 ```sh
 npx navi-mcp --version      # server and protocol version
@@ -475,7 +476,7 @@ A positional fingerprint cannot preserve business identity across arbitrary sort
 
 Actionability uses composed-ancestor styles and center-point hit tests. It is conservative around transformed frames and not a complete browser actionability algorithm. Native synthetic events have `isTrusted=false`; apps needing real gestures/pointer sequences must use browser automation. Two frames do not prove network/business completion. Page metadata and `window.Navi` are untrusted; executor authorization and outcome reconciliation remain necessary.
 
-The benchmark gates raw bytes <15,000, SDK ticks ≤6ms/<16ms and zero observed >50ms long tasks on the documented 10,000-element local fixture. It reports **elapsed completion as well as slices**: yielding reduces blocking, not necessarily end-to-end latency. No universal INP guarantee, zero-token claim, 100% determinism or 10× speedup is made. See final measured results in the report.
+The benchmark gates raw bytes <15,000, SDK ticks ≤6ms/<16ms and zero observed >50ms long tasks on the documented 10,000-element local fixture. It reports **elapsed completion as well as slices**: yielding reduces blocking, not necessarily end-to-end latency. No universal INP guarantee, zero-token claim, 100% determinism or 10× speedup is made. The live hard-checkout comparison is explicitly mixed: one model favoured Playwright numerically without a significant directional result, one met the pre-set non-inferiority rule, and one favoured Navi on that fixture; it is not customer evidence. See the [study and raw records](reports/LLM-TCR-BENCHMARK-MULTI.md), or [the proposed paid-pilot evaluation](docs/FIRST-PAID-PILOT.md).
 
 Real React 19 state/sorting/replacement, closed roots, iframe navigation, occlusion and execution regressions are verified with Chromium. Vue-style native listeners are exercised, not a complete Vue app. Puppeteer adapter uses the same evaluate API but is not separately integration-tested. Firefox/Safari and customer frameworks remain rollout work.
 

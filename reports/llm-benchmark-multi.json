@@ -1,88 +1,136 @@
 {
   "status": "measured",
-  "recordedAt": "2026-10-24T23:15:04.444Z",
-  "node": "v22.23.3",
-  "endpoint": "http://127.0.0.1:11434/v1",
+  "recordedAt": "2026-10-27T00:41:15.365Z",
+  "node": "v24.22.1",
+  "endpoint": "https://ollama.com/v1",
   "iterations": 40,
   "concurrency": null,
   "models": [
     {
-      "model": "beam:cloud",
-      "label": "beam-cloud",
+      "model": "beam",
+      "label": "beam",
       "wallMs": 0,
       "preflight": {
         "models": [
-          "gpt-oss:120b-cloud",
-          "gpt-oss:20b-cloud",
-          "beam:cloud",
-          "gemma4:31b-cloud",
-          "qwen2.5:7b",
-          "llama3.2:3b",
-          "qwen2.5-coder:7b"
+          "mistral-large-4",
+          "gemma4:31b",
+          "kimi-k3",
+          "minimax-m2.7",
+          "mistral-large-3:675b",
+          "nemotron-3-super",
+          "kimi-k2.6",
+          "deepseek-v4-pro:0813",
+          "deepseek-v4.1-flash",
+          "beam",
+          "muse-spark-open",
+          "glm-5.3-flash",
+          "nemotron-3-nano:30b",
+          "clef:27b",
+          "deepseek-v4.1-flash:1017",
+          "gpt-oss:120b",
+          "minimax-m3.1-flash",
+          "nemotron-3-ultra",
+          "glm-5.3",
+          "kimi-k2.7-code",
+          "gpt-oss:20b",
+          "glm-5.2",
+          "minimax-m3"
         ],
-        "modelCount": 7,
-        "probeMs": 840.6322079999999
+        "modelCount": 23,
+        "probeMs": 2816.961
       },
-      "report": "LLM-TCR-BENCHMARK-LIVE-HARD-beam-cloud.md",
-      "raw": "llm-benchmark-live-hard-beam-cloud.json",
+      "report": "LLM-TCR-BENCHMARK-LIVE-HARD-beam.md",
+      "raw": "llm-benchmark-live-hard-beam.json",
       "iterationPairs": 40,
       "paths": {
         "raw-playwright": {
-          "successes": 33,
+          "successes": 39,
           "trials": 40,
-          "rate": 0.825,
+          "rate": 0.975,
           "ci": [
-            0.6805000966821229,
-            0.9125458625396408
+            0.8711863103652591,
+            0.9955731684973186
           ],
-          "meanSteps": 19.475
+          "meanSteps": 19.65
         },
         "navi-differential": {
-          "successes": 23,
+          "successes": 34,
           "trials": 40,
-          "rate": 0.575,
+          "rate": 0.85,
           "ci": [
-            0.42195068541991065,
-            0.7149060744004962
+            0.709276756335103,
+            0.9293881228267964
           ],
-          "meanSteps": 15.725
+          "meanSteps": 17.7
         }
       },
       "cells": {
-        "both": 20,
-        "naviOnly": 3,
-        "rawOnly": 13,
-        "neither": 4
+        "both": 33,
+        "naviOnly": 1,
+        "rawOnly": 6,
+        "neither": 0
       },
       "difference": {
-        "observed": -0.25,
-        "low": -0.425,
-        "high": -0.075,
+        "observed": -0.125,
+        "low": -0.25,
+        "high": 0,
         "resamples": 20000,
         "level": 0.95
       },
-      "pValue": 0.021270751953125003,
-      "verdict": "worse than baseline"
+      "pValue": 0.12500000000000006,
+      "verdict": "inconclusive",
+      "failureBuckets": {
+        "raw-playwright": {
+          "SELECTOR_HALLUCINATION": 12,
+          "TIMEOUT_UNSETTLED": 24,
+          "SCHEMA_VIOLATION": 1,
+          "UNCLASSIFIED": 2,
+          "TASK_INCOMPLETE": 1
+        },
+        "navi-differential": {
+          "SELECTOR_HALLUCINATION": 45,
+          "TIMEOUT_UNSETTLED": 44,
+          "SCHEMA_VIOLATION": 15,
+          "PLANNER_STOPPED": 1,
+          "TASK_INCOMPLETE": 6
+        }
+      }
     },
     {
-      "model": "gemma4:31b-cloud",
-      "label": "gemma4-31b-cloud",
+      "model": "gemma4:31b",
+      "label": "gemma4-31b",
       "wallMs": 0,
       "preflight": {
         "models": [
-          "gpt-oss:120b-cloud",
-          "gpt-oss:20b-cloud",
-          "beam:cloud",
-          "gemma4:31b-cloud",
-          "qwen2.5:7b",
-          "llama3.2:3b",
-          "qwen2.5-coder:7b"
+          "gemma4:31b",
+          "kimi-k3",
+          "minimax-m3",
+          "glm-5.3-flash",
+          "mistral-large-3:675b",
+          "nemotron-3-super",
+          "beam",
+          "muse-spark-open",
+          "kimi-k2.6",
+          "kimi-k2.7-code",
+          "minimax-m3.1-flash",
+          "mistral-large-4",
+          "glm-5.2",
+          "nemotron-3-ultra",
+          "clef:27b",
+          "deepseek-v4.1-flash",
+          "deepseek-v4.1-flash:1017",
+          "gpt-oss:120b",
+          "minimax-m2.7",
+          "glm-5.3",
+          "gpt-oss:20b",
+          "deepseek-v4-pro:0813",
+          "nemotron-3-nano:30b"
         ],
-        "modelCount": 7,
-        "probeMs": 444.68487500000003
+        "modelCount": 23,
+        "probeMs": 502.8746670000255
       },
-      "report": "LLM-TCR-BENCHMARK-LIVE-HARD-gemma4-31b-cloud.md",
-      "raw": "llm-benchmark-live-hard-gemma4-31b-cloud.json",
+      "report": "LLM-TCR-BENCHMARK-LIVE-HARD-gemma4-31b.md",
+      "raw": "llm-benchmark-live-hard-gemma4-31b.json",
       "iterationPairs": 40,
       "paths": {
         "raw-playwright": {
@@ -93,7 +141,7 @@
             0.8349612263085903,
             0.9861793326138516
           ],
-          "meanSteps": 18.2
+          "meanSteps": 20.375
         },
         "navi-differential": {
           "successes": 40,
@@ -103,7 +151,7 @@
             0.9123783988027135,
             1
           ],
-          "meanSteps": 14.9
+          "meanSteps": 14.5
         }
       },
       "cells": {
@@ -120,65 +168,111 @@
         "level": 0.95
       },
       "pValue": 0.5,
-      "verdict": "not worse than baseline (within 10 points)"
+      "verdict": "not worse than baseline (within 10 points)",
+      "failureBuckets": {
+        "raw-playwright": {
+          "SELECTOR_HALLUCINATION": 33,
+          "TIMEOUT_UNSETTLED": 40,
+          "TASK_INCOMPLETE": 2
+        },
+        "navi-differential": {
+          "TIMEOUT_UNSETTLED": 9,
+          "SCHEMA_VIOLATION": 1
+        }
+      }
     },
     {
-      "model": "qwen2.5:7b",
-      "label": "qwen2-5-7b",
+      "model": "gpt-oss:20b",
+      "label": "gpt-oss-20b",
       "wallMs": 0,
       "preflight": {
         "models": [
-          "gpt-oss:120b-cloud",
-          "gpt-oss:20b-cloud",
-          "beam:cloud",
-          "gemma4:31b-cloud",
-          "qwen2.5:7b",
-          "llama3.2:3b",
-          "qwen2.5-coder:7b"
+          "gpt-oss:20b",
+          "nemotron-3-ultra",
+          "clef:27b",
+          "kimi-k2.6",
+          "nemotron-3-nano:30b",
+          "gpt-oss:120b",
+          "minimax-m3",
+          "deepseek-v4.1-flash:1017",
+          "mistral-large-4",
+          "muse-spark-open",
+          "glm-5.2",
+          "glm-5.3",
+          "glm-5.3-flash",
+          "kimi-k3",
+          "deepseek-v4-pro:0813",
+          "minimax-m3.1-flash",
+          "deepseek-v4.1-flash",
+          "minimax-m2.7",
+          "mistral-large-3:675b",
+          "gemma4:31b",
+          "nemotron-3-super",
+          "beam",
+          "kimi-k2.7-code"
         ],
-        "modelCount": 7,
-        "probeMs": 606.7916250000001
+        "modelCount": 23,
+        "probeMs": 1000.7231670003384
       },
-      "report": "LLM-TCR-BENCHMARK-LIVE-HARD-qwen2-5-7b.md",
-      "raw": "llm-benchmark-live-hard-qwen2-5-7b.json",
+      "report": "LLM-TCR-BENCHMARK-LIVE-HARD-gpt-oss-20b.md",
+      "raw": "llm-benchmark-live-hard-gpt-oss-20b.json",
       "iterationPairs": 40,
       "paths": {
         "raw-playwright": {
-          "successes": 0,
+          "successes": 5,
           "trials": 40,
-          "rate": 0,
+          "rate": 0.125,
           "ci": [
-            0,
-            0.08762160119728664
+            0.05459500250945401,
+            0.261121198388511
           ],
-          "meanSteps": 12.625
+          "meanSteps": 23.625
         },
         "navi-differential": {
-          "successes": 0,
+          "successes": 21,
           "trials": 40,
-          "rate": 0,
+          "rate": 0.525,
           "ci": [
-            0,
-            0.08762160119728664
+            0.3749736210669248,
+            0.670645298873211
           ],
-          "meanSteps": 11.65
+          "meanSteps": 19.3
         }
       },
       "cells": {
-        "both": 0,
-        "naviOnly": 0,
-        "rawOnly": 0,
-        "neither": 40
+        "both": 3,
+        "naviOnly": 18,
+        "rawOnly": 2,
+        "neither": 17
       },
       "difference": {
-        "observed": 0,
-        "low": 0,
-        "high": 0,
+        "observed": 0.4,
+        "low": 0.225,
+        "high": 0.575,
         "resamples": 20000,
         "level": 0.95
       },
-      "pValue": 1,
-      "verdict": "inconclusive (both paths failed every trial)"
+      "pValue": 0.0004024505615234372,
+      "verdict": "superior",
+      "failureBuckets": {
+        "raw-playwright": {
+          "SELECTOR_HALLUCINATION": 191,
+          "TIMEOUT_UNSETTLED": 7,
+          "SCHEMA_VIOLATION": 137,
+          "UNCLASSIFIED": 105,
+          "HARNESS_OR_PROVIDER_ERROR": 1,
+          "PLANNER_STOPPED": 4,
+          "TASK_INCOMPLETE": 34
+        },
+        "navi-differential": {
+          "SELECTOR_HALLUCINATION": 22,
+          "DETERMINISTIC_REFUSAL": 10,
+          "TIMEOUT_UNSETTLED": 36,
+          "SCHEMA_VIOLATION": 132,
+          "PLANNER_STOPPED": 6,
+          "TASK_INCOMPLETE": 19
+        }
+      }
     }
   ],
   "skipped": []

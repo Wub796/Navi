@@ -159,16 +159,20 @@ export function analyseModel(report) {
 }
 
 /**
- * The pre-specified decision rule. "Superior" needs a significant McNemar test in
- * Navi's favour; "not worse" only needs the paired lower bound above the margin.
+ * The pre-specified decision rule. A directional verdict (superior or worse)
+ * needs a significant exact McNemar test in that path's favour; "not worse" only
+ * needs the paired lower bound above the margin. Otherwise the comparison is
+ * inconclusive rather than treating a sample difference as a proven effect.
  * @param {{observed: number, low: number, high: number} | null} difference @param {number | null} pValue @param {number} pairs
  */
 export function verdictFor(difference, pValue, pairs) {
   if (!difference || !pairs) return 'no pairs';
   if (pairs < MIN_PAIRS) return `inconclusive (only ${pairs} pairs)`;
-  if (pValue !== null && pValue < 0.05 && difference.observed > 0) return 'superior';
+  if (pValue !== null && pValue < 0.05) {
+    if (difference.observed > 0) return 'superior';
+    if (difference.observed < 0) return 'worse than baseline';
+  }
   if (difference.low > -NON_INFERIORITY_MARGIN) return 'not worse than baseline (within 10 points)';
-  if (difference.high < NON_INFERIORITY_MARGIN && difference.observed < 0) return 'worse than baseline';
   return 'inconclusive';
 }
 

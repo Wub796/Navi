@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { artifactPaths, childEnvironment, countUsage, LOCAL_INFERENCE_PRESETS, modelTurn, percentile, preflightEndpoint, resolveConfig } from './llm-agent-benchmark.mjs';
+import { parseArgs as parseMultiArgs } from '../scripts/tcr-multimodel.mjs';
 import { createMockLlmServer } from './fixtures/mock-llm-server.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -66,11 +67,24 @@ test('LLM HTTP contract sends model tools and preserves provider usage without e
     const response = await modelTurn({ baseUrl: `http://127.0.0.1:${address.port}/v1`, model: 'test-stub-not-live-llm', apiKey: 'test-only', iterations: 1, maxTurns: 1 }, [{ role: 'user', content: 'Test' }], tools);
     expect(received.path).toBe('/v1/chat/completions');
     expect(received.authorized).toBe(true);
+    expect(received.body.max_tokens).toBe(4096);
     expect(received.body.tools).toEqual(tools);
     expect(received.body.model).toBe('test-stub-not-live-llm');
     expect(response.usage).toEqual({ prompt_tokens: 100, completion_tokens: 25, prompt_tokens_details: { cached_tokens: 40 } });
     expect(response.message.tool_calls[0].function.name).toBe('observe_page');
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('multi-model report-only selects records without requiring run concurrency', () => {
+  expect(parseMultiArgs(['--report-only', '--models', 'beam,gemma4:31b,gpt-oss:20b', '--concurrency', '0'])).toMatchObject({
+    reportOnly: true,
+    concurrency: 0,
+    models: ['beam', 'gemma4:31b', 'gpt-oss:20b']
+  });
+  expect(parseMultiArgs(['--report-only']).concurrency).toBe(3);
+  expect(() => parseMultiArgs(['--report-only', '--models', 'beam,,gemma4:31b'])).toThrow(/non-empty/);
+  expect(() => parseMultiArgs(['--models', 'beam,beam'])).toThrow(/must not repeat/);
+  expect(() => parseMultiArgs(['--report-only', '--models', 'beam,beam'])).toThrow(/must not repeat/);
 });
 
 test('provider usage is accounted verbatim: prompt, completion and cached tokens stay unknown when absent', () => {

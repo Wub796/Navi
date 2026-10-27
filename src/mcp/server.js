@@ -156,6 +156,28 @@ const GUIDANCE = {
   HOST_ASSET_BLOCKED: 'The host published a runtime endpoint, but injecting it was refused (most likely the page Content-Security-Policy forbids that script origin), so the packaged runtime was injected instead. Allow the script origin in script-src, or omit the manifest and let the packaged runtime be used deliberately.'
 };
 
+/**
+ * What an unsettled receipt means, in the receipt itself.
+ *
+ * `settled:false` is not a failed action: it says the condition the caller asked
+ * for never held, while the action was dispatched. A caller that reads only the
+ * flag has no way to tell a form that rejected its submit in place from a page
+ * that is still working, and the safe-looking response - retry - is the wrong
+ * one when the action may already have applied. The hint names the observation
+ * that distinguishes them without prescribing a blind retry.
+ * @param {{mode: string, reason?: string}} receipt
+ * @returns {string}
+ */
+export function settleHint(receipt) {
+  if (receipt.mode === 'navigation') {
+    return 'The action was dispatched, but no URL change or reload was observed within the deadline. A form that handles submit in place reports its answer in page_messages; read that and navi_get_actions before deciding whether the page accepted the action.';
+  }
+  if (receipt.mode === 'mutation_settle') {
+    return 'The action was dispatched, but the DOM was still changing at the deadline, so a request may still be in flight. Read page_messages and navi_get_actions before deciding whether to wait or act again.';
+  }
+  return 'The action was dispatched, but the target never became hidden. Read navi_get_actions before acting again.';
+}
+
 /** @param {string} code @param {string} message */
 function guidance(code, message) {
   const hint = GUIDANCE[code];
@@ -449,7 +471,7 @@ export const TOOLS = [
   {
     name: 'navi_get_actions',
     title: 'Read the Navi action map',
-    description: 'Return the current NaviActionMap: target_id, role, accessible name, live visible/enabled/in-viewport/occluded state, CSS-pixel coordinates and the suggested action for each interactive control. Viewport-only by default; pass all=true for the whole document, including off-screen controls. When the page is currently telling the reader something in a live region (an alert, a validation reason, a status line), page_messages carries that text: it is where a rejecting form explains itself, and no action map of controls can carry it.',
+    description: 'Return the current NaviActionMap: target_id, role, accessible name, live visible/enabled/in-viewport/occluded state, CSS-pixel coordinates and the suggested action for each interactive control. Viewport-only by default; pass all=true for the whole document, including off-screen controls. With since_version, an empty actions array means nothing changed since that cursor, not that the page has no controls: keep the targets you already know. When the page is currently telling the reader something in a live region (an alert, a validation reason, a status line), page_messages carries that text: it is where a rejecting form explains itself, and no action map of controls can carry it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -475,7 +497,7 @@ export const TOOLS = [
   {
     name: 'navi_execute_action',
     title: 'Execute an action on a target',
-    description: 'Run click, type or select on a target_id from the action map. Uses the guarded synthetic path first; controls marked data-navi-trusted="true" automatically fall back to trusted native driver input at the target\'s live coordinates. Failed actions are never retried automatically, because they may already have applied - the one exception is a handle that matched no control at all, which dispatched nothing: target_id may also be the control\'s exact accessible name, and a name matching exactly one actionable control is resolved and reported as resolved_from, while an ambiguous or unknown one is answered with candidates. Pass settle to wait deterministically for the action\'s effect before this call returns; the receipt reports whether the requested condition held, and page_messages carries any live-region text the page started saying in response, such as the reason a submission was rejected. Settlement proves the DOM went quiet, not that the business effect succeeded.',
+    description: 'Run click, type or select on a target_id from the action map. Uses the guarded synthetic path first; controls marked data-navi-trusted="true" automatically fall back to trusted native driver input at the target\'s live coordinates. Failed actions are never retried automatically, because they may already have applied - the one exception is a handle that matched no control at all, which dispatched nothing: target_id may also be the control\'s exact accessible name, and a name matching exactly one actionable control is resolved and reported as resolved_from, while an ambiguous or unknown one is answered with candidates. Pass settle to wait deterministically for the action\'s effect before this call returns; the receipt reports whether the requested condition held, and page_messages carries any live-region text the page started saying in response. Set capture_changes=true to add a bounded before/after semantic trace; this is DOM evidence, not proof of a server-side outcome.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -489,9 +511,10 @@ export const TOOLS = [
           },
           additionalProperties: false
         },
+        capture_changes: { type: 'boolean', description: 'Opt in to a bounded before/after semantic action-map trace for debugging and auditability. Adds a pre-action discovery; unavailable traces are marked instead of failing the action. DOM evidence is not business-outcome verification.' },
         settle: {
           type: 'object',
-          description: 'Deterministic post-action settlement. Optional and omittable: a call without it executes and returns no receipt. mutation_settle waits for DOM silence (>=100ms with no mutation, including open shadow roots and same-origin frames); navigation waits for a URL change or document reload; target_hidden waits for the target to be removed, invisible or occluded. An action that replaces the document, a full-page navigation, settles mutation_settle too and reports settled:true with settle_reason document_replaced, because the effect it was observing committed as a new document. A timeout reports settled:false and never re-runs the action.',
+          description: 'Deterministic post-action settlement. Optional and omittable: a call without it executes and returns no receipt. mutation_settle waits for DOM silence (>=100ms with no mutation, including open shadow roots and same-origin frames); navigation waits for a URL change or document reload; target_hidden waits for the target to be removed, invisible or occluded. An action that replaces the document, a full-page navigation, settles mutation_settle too and reports settled:true with settle_reason document_replaced, because the effect it was observing committed as a new document. A timeout reports settled:false and never re-runs the action; it does not mean the action failed, so read settle_hint and page_messages before deciding what to do. navigated says whether a URL change or reload actually happened, which distinguishes a navigation from a submit handled in place.',
           properties: {
             timeout_ms: { type: 'number', description: `Settlement deadline in milliseconds, 1-${MAX_SETTLE_TIMEOUT_MS}. Default ${DEFAULT_SETTLE_TIMEOUT_MS}.` },
             wait_for: { type: 'string', enum: [...SETTLE_MODES], description: 'Which condition to wait for. Default "mutation_settle".' }
@@ -1010,7 +1033,11 @@ export class NaviSession {
     const payload = /** @type {{text?: string, value?: string}} */ (args.payload && typeof args.payload === 'object' ? args.payload : {});
     try {
       const blockedBefore = this.blockedRequests;
-      const result = await adapter.execute(targetId, actionType, payload, args.settle);
+      const captureChanges = args.capture_changes === true;
+      if (args.capture_changes !== undefined && typeof args.capture_changes !== 'boolean') {
+        return toolError('INVALID_PAYLOAD', 'capture_changes must be a boolean.');
+      }
+      const result = await adapter.execute(targetId, actionType, payload, args.settle, { captureChanges });
       if (this.blockedRequests > blockedBefore) return toolError(CONTAINMENT_CODE, 'An action attempted blocked network access.', { may_have_applied: true });
       if (!result.ok) {
         const code = result.error?.code ?? 'EXECUTION_ERROR';
@@ -1028,6 +1055,7 @@ export class NaviSession {
         // What the page said in response, when it said anything new. A receipt that
         // reports only "the DOM went quiet" cannot tell a rejection from a pending request.
         ...(result.page_messages?.length ? { page_messages: result.page_messages } : {}),
+        ...(result.action_trace ? { action_trace: result.action_trace } : {}),
         mode: result.mode,
         trusted_fallback: result.mode === 'native-driver',
         dispatched: result.result?.dispatched === true,
@@ -1039,7 +1067,11 @@ export class NaviSession {
           elapsed_ms: settle.elapsed_ms,
           final_url: settle.final_url,
           settle: settle.mode,
-          ...(settle.reason ? { settle_reason: settle.reason } : {})
+          ...(settle.navigated !== undefined ? { navigated: settle.navigated } : {}),
+          ...(settle.reason ? { settle_reason: settle.reason } : {}),
+          // A timeout is not a failed action, and the caller needs the evidence
+          // that says so: what the page said, and what the wait did not observe.
+          ...(settle.settled === false ? { settle_hint: settleHint(settle) } : {})
         } : {})
       });
     } catch (error) {

@@ -524,7 +524,12 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   // No Payment Link is configured here: the page shows all four plans so a visitor
   // can compare them, without subscription links. The free quickstart is always available.
   expect(body).toContain('No hosted API key or payment is needed');
-  expect(body).not.toContain('Subscribe');
+  expect(body).toContain('discuss a paid pilot');
+  expect(body).toContain('Ask about Starter hosted access');
+  expect(body).toContain('Ask about Pro hosted access');
+  expect(body).toContain('Ask about Enterprise hosted access');
+  expect(body).toContain('mailto:wub67608@gmail.com?subject=Navi%20paid%20workflow%20pilot');
+  expect(body).not.toContain('Not configured on this deployment');
   for (const tier of ['Community', 'Starter', 'Pro', 'Enterprise']) {
     expect(body, `the pricing grid must name ${tier}`).toContain(`<h3>${tier}</h3>`);
   }
@@ -602,6 +607,15 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     '1.975 s',
     '1.764 s',
     'No LLM planner was used.',
+    'Live-model hard-checkout comparison',
+    '120 pairs, 240 path runs total',
+    '39 / 40 · 97.5%',
+    '21 / 40 · 52.5%',
+    'Superior on this task · McNemar p=0.000402',
+    'Inconclusive · Playwright higher in this sample',
+    'Beam shows a numerical Navi deficit, but the paired test is not significant',
+    'Provider-billed cost was not reported',
+    'customer-site benchmark',
     'Illustrative map entry and tool input',
 
   ]) {
@@ -688,6 +702,7 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(configuredBody).toContain('href="https://buy.stripe.com/test_enterprise"');
   expect(configuredBody.match(/Subscribe &rarr;/g) ?? []).toHaveLength(3);
   expect(configuredBody).toContain('No hosted API key or payment is needed');
+  expect(configuredBody).not.toContain('Ask about Starter hosted access');
 
   // A partial configuration shows only the cards it can actually sell.
   const starterOnly = await workerRequest('https://worker.example/', {}, { ...baseEnv, STRIPE_PAYMENT_LINK_STARTER: 'https://buy.stripe.com/test_starter' });
@@ -708,6 +723,7 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
     expect(fallbackBody, `STRIPE_PAYMENT_LINK_URL=${paymentLink} must not be rendered`).not.toContain('href="javascript:');
     expect(fallbackBody).not.toContain('Subscribe');
     expect(fallbackBody).toContain('No hosted API key or payment is needed');
+    expect(fallbackBody).toContain('discuss a paid pilot');
   }
 
   // The URL parser normalizes the characters that would close the attribute, so a

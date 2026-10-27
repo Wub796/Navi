@@ -189,6 +189,12 @@ const row = (method, path, detail) => `        <tr><td><span class="method">${me
  * @param {number} cents @returns {string} */
 const priceLabel = cents => `$${cents / 100}`;
 
+/** Public contact for hosted access and assisted workflow pilots. */
+const SALES_EMAIL = 'wub67608@gmail.com';
+
+/** A mailto link is the fallback purchase path until Stripe Payment Links are configured. @param {string} subject @returns {string} */
+const salesLink = subject => `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(subject)}`;
+
 /**
  * One column of the pricing grid.
  * @param {import('./pricing.js').Tier} tier @param {string | null} link
@@ -207,7 +213,7 @@ function renderTier(tier, link) {
     ? `<a class="cta" href="${escapeHtml(link)}">Subscribe &rarr;</a>`
     : tier.priceCents === 0
       ? '<p class="unavailable">Free forever · MIT</p>'
-      : '<p class="unavailable">Not configured on this deployment</p>';
+      : `<a class="cta" href="${escapeHtml(salesLink(`Navi ${tier.name} hosted plan`))}">Ask about ${escapeHtml(tier.name)} hosted access</a>`;
   return `    <section class="tier${featured ? ' featured' : ''}">${ribbon}
       <h3>${escapeHtml(tier.name)}</h3>
       <p class="price">${priceLabel(tier.priceCents)}<span>/mo</span></p>
@@ -266,10 +272,11 @@ npx -y -p navi-interaction-bridge -p playwright navi-mcp`;
   "coordinates": { "x": 412, "y": 288, "width": 140, "height": 44 }
 }`;
 
+  const pilotOffer = `For a two-week assisted evaluation of one recurring workflow, with an independently checked outcome against your current stack, <a href="${escapeHtml(salesLink('Navi paid workflow pilot'))}">discuss a paid pilot &rarr;</a>.`;
   const pricing = `  <section id="pricing">
     <h2>06 — Pricing</h2>
     <p class="section-title">Optional hosted plans</p>
-    <p class="section-sub">${purchasing ? 'Hosted plans meter browser-bundle serves and accepted sitemap writes together. Choose a plan and claim your API key after checkout; local MCP evaluation remains free.' : 'Hosted checkout is not configured on this deployment. Start locally or contact us about hosted access.'}</p>
+    <p class="section-sub">${purchasing ? `Hosted plans meter browser-bundle serves and accepted sitemap writes together. Choose a plan and claim your API key after checkout; local MCP evaluation remains free. ${pilotOffer}` : `Hosted checkout is not configured on this deployment. Self-hosting remains free under MIT. ${pilotOffer}`}</p>
     <div class="tiers">
 ${TIERS.map(tier => renderTier(tier, links[tier.id] ?? null)).join('\n')}
     </div>

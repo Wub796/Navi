@@ -108,17 +108,18 @@ if (!response.ok) throw new Error(response.error.code);
 **Settlement.** `execute(targetId, actionType, payload, settle)` takes the same optional fourth argument as the MCP tool. It is armed *before* dispatch and completed after it, inside the same busy window, so no other call can observe the page mid-action:
 
 ```js
-const settled = await tools.execute('open-modal', 'click', {}, { wait_for: 'mutation_settle', timeout_ms: 3000 });
-// settled.settle -> { mode, settled, elapsed_ms, final_url, reason? }
+const settled = await tools.execute('open-modal', 'click', {}, { wait_for: 'mutation_settle', timeout_ms: 3000 }, { captureChanges: true });
+// settled.settle -> { mode, settled, elapsed_ms, final_url, navigated?, reason? }
+// settled.action_trace -> pre-action target + bounded post-action semantic changes
 ```
 
 | `wait_for` | Holds when |
 |---|---|
 | `mutation_settle` | the document, its open shadow roots and same-origin frames record no mutation for 100 ms, or the action replaces the document outright (`settle_reason: 'document_replaced'`) |
-| `navigation` | the top-level URL changed, or the document reloaded (a reload that destroys the dispatch context is treated as the receipt) |
+| `navigation` | the top-level URL changed, or the document reloaded (a reload that destroys the dispatch context is treated as the receipt); `navigated` is `false` on a timeout, so a click that stayed on the page is never mistaken for one that left |
 | `target_hidden` | the target left the action map, or Navi reports it invisible or occluded |
 
-A settle never retries and never turns a dispatched action into an error: `{ settled: false, reason: 'timeout' }` still returns `ok: true` with the execution result. An invalid request returns `{ ok: false, error: { code: 'INVALID_SETTLE' } }` before anything is dispatched, and a call without a settle request carries no `settle` key at all. Treat the receipt as a scheduling signal, not as proof that the business outcome completed.
+A settle never retries and never turns a dispatched action into an error: `{ settled: false, reason: 'timeout' }` still returns `ok: true` with the execution result. A `settled: false` receipt is an observation about the wait, not the action: the dispatch happened, and `navigated` says whether the page left. The MCP envelope adds `settle_hint` on that receipt with the observation to make next: read `page_messages` and the map, then decide whether the page accepted the action; the adapter returns the raw receipt without prose. An invalid request returns `{ ok: false, error: { code: 'INVALID_SETTLE' } }` before anything is dispatched, and a call without a settle request carries no `settle` key at all. Treat the receipt as a scheduling signal, not as proof that the business outcome completed. The optional fifth adapter argument `{ captureChanges: true }` (MCP: `capture_changes: true`) adds the pre-action target identity/state and up to 12 changed and removed targets after dispatch; the response marks larger diffs `truncated` and navigation resets `reset:true`. Capturing changes adds a full pre-action map read, so it is opt-in. It is bounded DOM evidence for debugging, not a durable audit log or proof of a server-side transaction; verify business outcomes independently.
 
 **What the page said.** Because a quiet DOM is not an outcome, every dispatch also reads the page's live regions (`[role="alert"]`, `[role="status"]`, `[role="log"]`, `[aria-live]`) before and after the action and attaches `page_messages`: the rendered text that is new since the dispatch, at most four entries of 200 characters, absent when nothing is new. A rejected form explaining itself in an alert is exactly the case an action map cannot carry, and a caller that sees only "dispatched" reads a refusal as a page that has not finished. `navi_get_actions` returns the same field for the current page. It is page text: untrusted content, capped, and never a substitute for an independent check that the business outcome committed.
 

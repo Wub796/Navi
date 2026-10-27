@@ -100,11 +100,32 @@ export interface NaviAdapterOptions {
 
 export type AdapterMode = 'synthetic' | 'native-driver';
 
+export interface NaviActionTrace {
+  available: boolean;
+  reason?: 'action_not_dispatched' | 'pre_action_map_unavailable' | 'post_action_map_unavailable';
+  before_state_version?: number;
+  target?: Pick<NaviAction, 'target_id' | 'role' | 'name' | 'state'> | null;
+  after?: {
+    state_version: number;
+    reset: boolean;
+    targets: Pick<NaviAction, 'target_id' | 'role' | 'name' | 'state' | 'suggested_action'>[];
+    removed: string[];
+    total: number;
+    truncated: boolean;
+  };
+}
+
+export interface AdapterExecuteOptions { captureChanges?: boolean }
+
 export interface AdapterResult {
   ok: boolean;
   result?: { target_id?: string; action?: string; dispatched: boolean };
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; candidates?: { target_id: string; name: string; action: string }[] };
   mode?: AdapterMode;
+  resolved_from?: string;
+  page_messages?: string[];
+  action_trace?: NaviActionTrace;
+  settle?: { mode: string; settled: boolean; elapsed_ms: number; final_url: string; navigated?: boolean; reason?: string };
 }
 
 export declare class NaviPlaywrightAdapter {
@@ -121,7 +142,7 @@ export declare class NaviPlaywrightAdapter {
   scrollTo(targetId: string): Promise<NaviAction>;
   /** Native keyboard input; optional targetId checks the current top-document focus. */
   pressKey(key: string, targetId?: string): Promise<{ pressed: boolean; key: string; mode: string }>;
-  execute(targetId: string, actionType: 'click' | 'type' | 'select' | string, payload?: { text?: string; value?: string }): Promise<AdapterResult>;
+  execute(targetId: string, actionType: 'click' | 'type' | 'select' | string, payload?: { text?: string; value?: string }, settle?: unknown, options?: AdapterExecuteOptions): Promise<AdapterResult>;
 }
 
 export declare function naviAdapter(page: NaviPageLike, options?: NaviAdapterOptions): NaviPlaywrightAdapter;
