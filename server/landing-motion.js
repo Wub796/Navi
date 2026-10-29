@@ -51,6 +51,14 @@ export const LANDING_MOTION_STYLE = `
       from { translate: 0 2.4rem; }
       to { translate: 0 -2.4rem; }
     }
+    @keyframes heroDepth {
+      from { translate: 0 1rem -3.5rem; }
+      to { translate: 0 -1rem 3.5rem; }
+    }
+    @keyframes stageDepth {
+      from { translate: 0 1rem -56px; }
+      to { translate: 0 -1rem 56px; }
+    }
     @keyframes ruleIn {
       from { scale: 0 1; }
       to { scale: 1 1; }
@@ -146,9 +154,21 @@ export const LANDING_MOTION_STYLE = `
         .calc,
         .faq-item { animation: riseIn linear both; animation-timeline: view(); animation-range: entry 0% entry 94%; }
 
-        /* Named view-timeline on the 3D showcase synchronises the stage floor plane
-           with scroll progress while keeping pointer events pass-through. */
+        /* Each model gets its own view timeline. The independent translate property
+           moves the existing preserve-3d stack through depth without replacing the
+           camera and pointer-tilt transforms. */
+        .hero-object { view-timeline: --hero-view block; }
+        .hero-tilt {
+          animation: heroDepth linear both;
+          animation-timeline: --hero-view;
+          animation-range: entry 0% exit 100%;
+        }
         .showcase { view-timeline: --stage-view block; }
+        .stage-3d {
+          animation: stageDepth linear both;
+          animation-timeline: --stage-view;
+          animation-range: entry 0% exit 100%;
+        }
         .stage-viewport::before {
           animation: stageGridDrift linear both;
           animation-timeline: --stage-view;
@@ -262,6 +282,21 @@ export const LANDING_MOTION_STYLE = `
     }
     .topnav a:hover::after,
     .topnav a:focus-visible::after { scale: 1 1; }
+
+    body:has(#stage:target) .topnav a[href="#stage"],
+    body:has(#architecture:target) .topnav a[href="#architecture"],
+    body:has(#quickstart:target) .topnav a[href="#quickstart"],
+    body:has(#savings:target) .topnav a[href="#savings"],
+    body:has(#pricing:target) .topnav a[href="#pricing"],
+    body:has(#api:target) .topnav a[href="#api"],
+    body:has(#faq:target) .topnav a[href="#faq"] { color: var(--accent); }
+    body:has(#stage:target) .topnav a[href="#stage"]::after,
+    body:has(#architecture:target) .topnav a[href="#architecture"]::after,
+    body:has(#quickstart:target) .topnav a[href="#quickstart"]::after,
+    body:has(#savings:target) .topnav a[href="#savings"]::after,
+    body:has(#pricing:target) .topnav a[href="#pricing"]::after,
+    body:has(#api:target) .topnav a[href="#api"]::after,
+    body:has(#faq:target) .topnav a[href="#faq"]::after { scale: 1 1; }
 
     .tier { transition: background .35s ease; }
     .tier .price { transition: color .3s ease; }

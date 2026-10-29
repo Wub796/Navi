@@ -18,9 +18,20 @@ const RESPONSIVE_STYLE = `
       .tiers > section:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
     }
     @media (max-width: 860px) {
-      .topbar { gap: .75rem 1rem; padding: .75rem var(--pad); }
-      .topnav { gap: .35rem .75rem; }
-      .topnav a { min-height: 44px; padding: .5rem .35rem; }
+      .topbar { flex-wrap: nowrap; gap: .75rem 1rem; padding: .75rem var(--pad); }
+      .brand { flex: 0 0 auto; }
+      .topnav {
+        flex: 1 1 0;
+        min-width: 0;
+        flex-wrap: nowrap;
+        gap: .35rem .75rem;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scroll-snap-type: x proximity;
+        scrollbar-color: var(--accent) transparent;
+        scrollbar-width: thin;
+      }
+      .topnav a { flex: 0 0 auto; min-height: 44px; padding: .5rem .35rem; scroll-snap-align: center; }
       .hero { grid-template-columns: 1fr; align-items: start; min-height: auto; padding-top: 1.75rem; }
       .hero-object { order: -1; min-height: auto; padding-bottom: .5rem; }
       .hero-copy { padding-bottom: 1.25rem; }

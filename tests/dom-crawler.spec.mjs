@@ -681,6 +681,9 @@ test('the edge root serves the landing page and /healthz, and unknown paths stay
   expect(body).toContain(':has(.pad-9:is(:hover, :active)) .stage-tilt');
   expect(body).toContain('@supports ((animation-timeline: view()) and (animation-range: entry))');
   expect(body).toContain('@keyframes bendIn');
+  expect(body).toContain('@keyframes heroDepth');
+  expect(body).toContain('@keyframes stageDepth');
+  expect(body).toContain('view-timeline: --hero-view block');
   expect(body).toContain('view-timeline: --stage-view block');
   expect(body).toContain('@media (prefers-reduced-motion: reduce)');
 
@@ -1444,9 +1447,13 @@ test('the 3D surfaces reflow without sideways scroll and change state from the k
     await page.setViewportSize(viewport);
     for (const path of ['/', '/v1/billing/success']) {
       await page.goto(origin + path);
-      const measured = await page.evaluate(() => ({
+      const measured = await page.evaluate(currentPath => ({
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
+        nav: currentPath === '/' ? (() => {
+          const nav = /** @type {HTMLElement} */ (document.querySelector('.topnav'));
+          return { scrollWidth: nav.scrollWidth, clientWidth: nav.clientWidth, overflowX: getComputedStyle(nav).overflowX };
+        })() : null,
         // No visually-hidden control may be `display: none`, which would take it out
         // of the tab order and leave the label it drives unreachable.
         hidden: [...document.querySelectorAll('input[type=radio], input[type=checkbox]')].map(candidate => {
@@ -1462,8 +1469,12 @@ test('the 3D surfaces reflow without sideways scroll and change state from the k
         // a number does not shift width when it changes.
         untabbed: [...document.querySelectorAll('.stat-value, .slab-meta, .inspect-json, .hud, .vault-telemetry, .tier-price')]
           .filter(node => getComputedStyle(node).fontVariantNumeric !== 'tabular-nums').length
-      }));
+      }), path);
       expect(measured.scrollWidth, `${path} at ${viewport.width}px must not scroll sideways`).toBeLessThanOrEqual(measured.clientWidth);
+      if (path === '/' && viewport.width <= 860) {
+        expect(measured.nav?.overflowX).toBe('auto');
+        expect(measured.nav?.scrollWidth).toBeGreaterThan(measured.nav?.clientWidth ?? 0);
+      }
       for (const input of measured.hidden) {
         expect(input.display, `${path} ${input.id} must not use display:none`).not.toBe('none');
         expect(input.tabbable, `${path} ${input.id} must stay in the tab order`).toBe(true);
@@ -1474,6 +1485,24 @@ test('the 3D surfaces reflow without sideways scroll and change state from the k
   }
 
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(origin + '/');
+  const stageRange = await page.evaluate(() => {
+    const stage = /** @type {HTMLElement} */ (document.querySelector('.showcase'));
+    const top = stage.getBoundingClientRect().top + window.scrollY;
+    return { entry: top - window.innerHeight, exit: top + stage.offsetHeight };
+  });
+  /** @param {number} y */
+  const stageTranslateAt = async y => page.evaluate(async scrollY => {
+    window.scrollTo({ top: scrollY, behavior: 'instant' });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return getComputedStyle(/** @type {Element} */ (document.querySelector('.stage-3d'))).translate;
+  }, y);
+  const stageAtEntry = await stageTranslateAt(stageRange.entry);
+  const stageAtExit = await stageTranslateAt(stageRange.exit);
+  expect(stageAtExit, 'scrolling through the showcase must move the 3D model through depth').not.toBe(stageAtEntry);
+  await page.goto(origin + '/');
+  await page.locator('.topnav a[href="#stage"]').click();
+  await expect.poll(() => page.locator('.topnav a[href="#stage"]').evaluate(element => getComputedStyle(element).color)).toBe('rgb(255, 214, 0)');
   await page.goto(origin + '/');
 
   // Hero: Tab to the checked plane, confirm the label draws a focus ring, then move
